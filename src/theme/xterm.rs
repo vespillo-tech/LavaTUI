@@ -22,8 +22,9 @@
 //!
 //! Even the best single index can be far off: the cube has no dark tints,
 //! so dark purples and reds band (grey, then one loud row). [`dither`]
-//! picks a *pair* of indices and a mix level instead, which a 4×4 ordered
-//! dither, fixed in screen space, spreads over neighbouring cells.
+//! picks a *pair* of indices and a mix level instead, which an 8×8 Bayer
+//! dither anchored to the lamp (`render/dither256.rs`) spreads over
+//! neighbouring pixels.
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};

@@ -200,10 +200,11 @@ numbers); `docs/design.md` is the layout/visual contract.
                 are `#[inline]` (they sit in every style's pixel loop);
                 `fallback` deliberately isn't (see its doc).
 - `render/`   — render pipeline. `LampView { field, style, theme, time,
-                lighting }` is a `StatefulWidget` (state `LampState` = reused
-                scratch buffers); it samples the field at the style's `Grid`
-                (half-block 1×2, braille 2×4, …; >400k samples → coarse fill +
-                bilinear upsample), builds the glass mask, runs the optional
+                lighting, options }` is a `StatefulWidget` (`LampOptions`:
+                `reduced` grid for adaptive quality, `transparent`; state
+                `LampState` = reused scratch buffers); it samples the field
+                at the style's `Grid` (half-block 1×2, braille 2×4, …; >400k
+                samples → coarse fill + bilinear upsample), builds the glass mask, runs the optional
                 lighting pass, then calls the style's `draw(&Canvas, buf)`.
                 In 256-colour mode a final pass (`render/dither256.rs`) turns
                 blended RGB into xterm indices, Bayer-dithering dark tints the

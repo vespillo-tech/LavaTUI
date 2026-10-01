@@ -62,22 +62,23 @@ in minimal mode with lighting on:
   colours and in monochrome.
 - **Minimal mode** (`m` / `-m`) shows just the lamp, with a tiny clock
   under it.
-- **It's light on resources.** About 2 % of a core at 80×24 and about 5 %
+- **It's light on resources.** About 2 % of a core at 80×24 and 5–7 %
   at 200×60, at 60 fps. It drops to 10 fps when the terminal loses focus
   and sleeps while frozen. See [Performance](#performance).
 
 ## Install
 
-You need a Rust toolchain with edition 2024 support (Rust 1.85 or newer).
+You need Rust 1.88 or newer (`rustup update` if `cargo` says otherwise).
+There's no published crate yet, so build it from a checkout of this
+repository:
 
 ```sh
-git clone <this repo> lavatui && cd lavatui
-cargo install --path .
+cargo install --path .     # puts `lavatui` in ~/.cargo/bin
 lavatui
 ```
 
-Or run it in place with `cargo run --release`. The simulation wants a
-release build.
+Or run it in place with `cargo run --release`. Use a release build: the
+simulation is too slow in debug.
 
 **Terminal:** a truecolor terminal looks best (iTerm2, kitty, WezTerm,
 Alacritty, Ghostty, Windows Terminal, recent GNOME Terminal and others).
@@ -90,13 +91,14 @@ path.
 ## Usage
 
 ```
-lavatui [OPTIONS]
+Usage: lavatui [OPTIONS]
 
+Options:
   -m, --minimal         Just the lamp: no panels, status bar or hints
       --fps <N>         Target render frames per second (the simulation rate is fixed separately)
       --style <NAME>    Render style for this session (e.g. solid, outline, heatmap, ascii, chrome)
       --palette <NAME>  Palette for this session (lava, ultraviolet, abyss, toxic, synthwave, mono, paper, ansi)
-      --color <DEPTH>   Colour depth, instead of detecting it from the environment [auto, truecolor, 256, 16, none]
+      --color <DEPTH>   Colour depth, instead of detecting it from the environment [possible values: auto, truecolor, 256, 16, none]
       --seed <U64>      Seed the wax simulation: the same seed always plays out the same lamp (default: a new seed every launch)
       --config <PATH>   Read and write settings here instead of the XDG config dir
   -h, --help            Print help
@@ -145,8 +147,8 @@ open, `q` closes it instead of quitting.
   opening key again keeps the choice and closes the picker. In the tiny
   inline picker, `h`/`l` and `←`/`→` move too.
 - **Mouse** (opt-in, `input.mouse = true`): click or drag on the lamp to
-  heat the wax there, scroll and click in pickers and help, and
-  double-click to keep. It's off by default because mouse capture breaks
+  heat the wax there, scroll in help, and scroll or click in pickers
+  (a click previews, a double-click keeps). It's off by default because mouse capture breaks
   the terminal's text selection.
 
 This table matches the single `KEYMAP` table in `src/ui/keymap.rs`. That
@@ -157,7 +159,8 @@ actual bindings.
 
 Settings are saved on their own, 1 s after a change and on quit, to:
 
-- `$XDG_CONFIG_HOME/lavatui/config.toml` if `XDG_CONFIG_HOME` is set, else
+- `$XDG_CONFIG_HOME/lavatui/config.toml` if `XDG_CONFIG_HOME` is set to an
+  absolute path, else
 - `~/.config/lavatui/config.toml` on Linux, or
 - `~/Library/Application Support/lavatui/config.toml` on macOS,
 
@@ -254,34 +257,43 @@ regular file (`/dev/null`, a fifo), is never written; a toast says so once.
 
 ## Performance
 
-These numbers were measured on an Apple M5 laptop under background load
-(load average 4–8), so treat them as rough. The render times below are
-from after the lumpy-wax pass (lava-ebq.30); the rest are from `633113d`.
+Measured on `main` on an Apple M5 laptop under background load (load
+average 3–5), so treat them as rough. Real runs are the release binary in
+a pty (truecolor, glass frame, 60 fps, 15 s each); render times are
+`bench_lamp`, best of two runs.
 
 | Measurement | Result |
 |---|---|
-| Launch → first frame → exit (`--frames 1`, 80×24) | ~25 ms (min 22 ms). The sim starts pre-warmed. |
-| CPU at 80×24, 60 fps, glass, solid | ~2 % of one core (lighting on or off) |
-| CPU at 200×60, 60 fps, glass, solid / braille | ~4–6 % of one core |
-| Output at 80×24 / 200×60 (real run, glass) | ~5–10 KB/s / ~20–65 KB/s |
+| Launch → first frame → exit (`--frames 1`, 80×24) | ~30 ms (median 34, min 29). The sim starts pre-warmed. |
+| CPU at 80×24, solid or braille | ~2.3 % of one core, lighting on or off |
+| CPU at 200×60, solid / braille | 4.6 % / 4.9 % unlit, 5.8 % / 6.5 % lit |
+| Output at 80×24, solid | ~10 KB/s unlit, ~19 KB/s lit |
+| Output at 200×60, solid | ~55 KB/s unlit, ~107 KB/s lit |
+| Output in braille (80×24 / 200×60) | ~5 KB/s / ~21 KB/s, lit or not |
+
+Lighting costs bandwidth more than CPU: its soft shading changes more
+cells per frame. Braille changes few cells, so it is the cheapest to
+send.
 
 Here is the render time per frame at 200×60 in truecolor. This is the
-field sampling plus the style draw and lighting, as measured by
-`bench_lamp` (full-area bleed lamp, two sim steps per frame):
+field sampling plus the style draw and lighting (`bench_lamp`: a
+full-area bleed lamp, two sim steps per frame):
 
 | Style | Unlit | Lit | | Style | Unlit | Lit |
 |---|---|---|---|---|---|---|
 | solid | 0.37 ms | 0.43 ms | | halftone | 0.15 ms | 0.19 ms |
-| outline | 0.41 ms | 0.50 ms | | crt | 0.41 ms | 0.47 ms |
-| heatmap | 0.44 ms | 0.49 ms | | synthwave | 0.50 ms | 0.55 ms |
-| ascii | 0.15 ms | 0.19 ms | | matrix | 0.13 ms | 0.14 ms |
-| dither | 0.29 ms | 0.35 ms | | topo | 0.72 ms | 0.82 ms |
-| braille | 0.39 ms | 0.47 ms | | chrome | 0.46 ms | 0.51 ms |
+| outline | 0.40 ms | 0.48 ms | | crt | 0.40 ms | 0.45 ms |
+| heatmap | 0.52 ms | 0.57 ms | | synthwave | 0.63 ms | 0.68 ms |
+| ascii | 0.16 ms | 0.20 ms | | matrix | 0.13 ms | 0.14 ms |
+| dither | 0.29 ms | 0.34 ms | | topo | 0.72 ms | 0.81 ms |
+| braille | 0.42 ms | 0.50 ms | | chrome | 0.46 ms | 0.51 ms |
 
-Every style stays under 0.85 ms at 200×60. The design target is 8 ms. At
-80×24, every style takes 0.02–0.15 ms. If frames ever get slow, adaptive
-quality first lowers the sample grid and then drops to 30 fps. It
-recovers on its own and never changes your settings.
+Every style stays under 0.9 ms at 200×60, in truecolor and in 256
+colours (0.17–0.87 ms there, with the dither pass). The design target
+is 8 ms. At 80×24, every style takes 0.02–0.16 ms. If frames ever get
+slow, adaptive quality first lowers the sample grid and then halves the
+frame rate (never below 30 fps). It recovers on its own and never changes
+your settings.
 
 To reproduce:
 
@@ -313,4 +325,4 @@ terminal.
 
 ## License
 
-TODO: the author hasn't chosen a license yet.
+License: TODO — choose before publishing.

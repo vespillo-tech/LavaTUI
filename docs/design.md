@@ -845,7 +845,7 @@ ratatui `Color` name. `default` = terminal default (`Color::Reset`).
 | wax_hot | `#FF7AD9` | 212 | LightMagenta |
 | metal | `#4A4166` | 239 | DarkGray |
 | text | `#E4DDF5` | 254 | default |
-| dim | `#776E93` | 96 | DarkGray |
+| dim | `#776E93` | 60 | DarkGray |
 | accent | `#A78BFA` | 141 | LightBlue |
 
 **abyss**: deep sea. Teal wax glowing to seafoam in navy water.
@@ -854,12 +854,12 @@ ratatui `Color` name. `default` = terminal default (`Color::Reset`).
 |---|---|---|---|
 | bg | `#060B10` | 232 | default |
 | liquid | `#0B1A24` | 234 | default |
-| wax_cool | `#0B4F6C` | 23 | Blue |
+| wax_cool | `#0B4F6C` | 24 | Blue |
 | wax_mid | `#1A9BA8` | 31 | Cyan |
 | wax_hot | `#A8F5E4` | 158 | LightCyan |
 | metal | `#34495A` | 238 | DarkGray |
 | text | `#D6E7EE` | 254 | default |
-| dim | `#5F7785` | 66 | DarkGray |
+| dim | `#5F7785` | 67 | DarkGray |
 | accent | `#4FD1C5` | 80 | LightCyan |
 
 **toxic**: radioactive slime. Moss to acid yellow-green.
@@ -916,7 +916,7 @@ with an ink-blue accent.
 | wax_cool | `#7A2617` | 88 | Red |
 | wax_mid | `#C24D2C` | 130 | LightRed |
 | wax_hot | `#F08A3C` | 209 | Yellow |
-| metal | `#A8997E` | 138 | Gray |
+| metal | `#A8997E` | 137 | Gray |
 | text | `#3B342C` | 236 | default |
 | dim | `#8C8173` | 244 | Gray |
 | accent | `#1F6F8B` | 24 | Blue |
@@ -939,7 +939,7 @@ Detection order, overridable with `--color=auto|truecolor|256|16|none` /
 | Depth | Gradient | Background | Notes |
 |---|---|---|---|
 | truecolor | lerp across the 3 wax stops (a 64-step ramp LUT at every depth); blended colours are rounded to multiples of 4 per channel, so sub-visible drift doesn't repaint cells | `bg` painted (unless `theme.transparent = true`) | fades, dimming, glow all on |
-| 256 | blend in RGB, then match to the nearest xterm index by a hue- and lightness-weighted OKLab distance over the 6×6×6 cube and grey ramp only (the 16 system colours are themed by the terminal, so never picked); cached per 6-bit RGB bucket. Dark tints the cube lacks (colours that lose their hue when snapped to one index) are ordered-dithered between the two best indices with the 8×8 Bayer matrix, fixed to the lamp in screen space (`render/dither256.rs`, `Theme::dithering`). Unmixed roles use the §5.2 index | `bg` painted (index above) | toast fade → instant; help dim → cleared rect |
+| 256 | blend in RGB, then match to the nearest xterm index by a hue- and lightness-weighted OKLab distance over the 6×6×6 cube and grey ramp only (the 16 system colours are themed by the terminal, so never picked); cached per 6-bit RGB bucket. **Hue guard:** a chromatic index more than 30° off the input's hue is never picked, alone or as a dither end (greys always may be), so dark orange never goes olive and brown is never dithered from red and green dots. Dark tints the cube lacks (colours that lose their hue when snapped to one index) are ordered-dithered between the two best indices with the 8×8 Bayer matrix, fixed to the lamp in screen space (`render/dither256.rs`, `Theme::dithering`). Unmixed roles use the §5.2 index | `bg` painted (index above) | toast fade → instant; help dim → cleared rect |
 | 16 | 3 discrete steps; styles add glyph density (`░▒▓█`) to show temperature | always `default` | glass gets a thin `▕ │ ▏` edge in `metal` (§2.1); lighting adds density, not colour |
 | none | no colour at all; temperature shown only through glyph density and shape | `default` | `accent` → bold; `dim` → plain |
 
@@ -1037,8 +1037,8 @@ and help, click a picker item to preview, double-click to keep.
    frame budget for 2 s, the sampling grid drops one step (e.g. braille
    samples at half resolution and upsamples).
 2. Still over budget: fps halves (60 → 30, 120 → 60), never below 30
-   from adaptation alone. At ≤ 59 fps this step doesn't exist; the grid
-   step is all there is.
+   from adaptation alone (45 → 30). At ≤ 30 fps this step doesn't exist;
+   the grid step is all there is.
 3. Recovers one step at a time once the frame time is < 40 % of the
    budget *of the level it would return to* for 5 s, so it never comes
    back into a level it would immediately leave.
@@ -1050,11 +1050,14 @@ and help, click a picker item to preview, double-click to keep.
 The debug HUD shows when this is active (the whole readout turns
 `wax_hot`, §4.1).
 
-**Measured** (lava-h0f, main at `633113d`, Apple M5 under background
-load): launch → first frame ≈ 25 ms; ≈ 2 % of a core at 80×24 and
-≈ 4–6 % at 200×60 at 60 fps (glass, solid/braille, lit or not); lamp
-render ≤ 0.13 ms per frame at 80×24 and 0.11–0.67 ms at 200×60 for every
-style, lit or unlit (`bench_lamp`). Details in the README.
+**Measured** (lava-ebq.35, `main` before v1, Apple M5 under background
+load 3–5, real pty runs at 60 fps in glass): launch → first frame ≈ 30 ms;
+≈ 2.3 % of a core at 80×24 and 4.6–6.5 % at 200×60 (solid/braille, lit or
+not); output ≈ 10 KB/s (19 lit) at 80×24 and ≈ 55 KB/s (107 lit) at 200×60
+in solid, ≈ 5 / 21 KB/s in braille; lamp render 0.02–0.16 ms per frame at
+80×24 and 0.13–0.81 ms at 200×60 truecolor for every style, lit or unlit
+(0.17–0.87 ms in 256 colours; `bench_lamp`). All within the targets
+above. Details in the README.
 
 Speed changes (`-`/`+`/`0`) ease in over a fraction of a second rather
 than jumping.

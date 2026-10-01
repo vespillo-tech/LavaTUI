@@ -30,10 +30,9 @@
 //! or at the first save if it only happened while the lamp ran). A save
 //! that writes keeps comments, key order, formatting and unknown keys
 //! (`toml_edit`; a changed value keeps its trailing comment, in its
-//! column). Saves go
-//! through symlinks to the real file (dotfile managers) and are atomic: a
-//! temp file unique to this process in the target's directory, fsynced,
-//! then renamed over the target. Two lamps saving at once can't tear the
+//! column). Saves go through symlinks to the real file (dotfile managers)
+//! and are atomic: a temp file unique to this process in the target's
+//! directory, fsynced, then renamed over the target. Two lamps saving at once can't tear the
 //! file; for a key both changed, the last writer wins.
 
 use std::collections::hash_map::RandomState;
