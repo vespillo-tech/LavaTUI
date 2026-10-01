@@ -6,7 +6,7 @@
 //! the terminal: time and the local clock are passed in, and the side
 //! effects the loop must perform (bell, full clear) are flags it drains.
 
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use ratatui::layout::Rect;
 
@@ -32,6 +32,12 @@ pub const TOAST_TIME: Duration = Duration::from_millis(1400);
 pub const FLASH_TIME: Duration = Duration::from_millis(600);
 /// `r` must be pressed twice within this to reset the pomodoro.
 const RESET_WINDOW: Duration = Duration::from_secs(2);
+/// `r` presses closer together than this are a held key's auto-repeat
+/// (typically 30–90 ms apart), not a deliberate double press.
+const REPEAT_GAP: Duration = Duration::from_millis(150);
+/// Wall time running ahead of `Instant` by at least this between two
+/// frames means the machine was asleep (see [`Model::tick`]).
+const SLEEP_MIN: Duration = Duration::from_secs(2);
 /// Settings are written this long after the last change.
 const SAVE_DELAY: Duration = Duration::from_secs(1);
 /// Speed changes ease in with this time constant (~95 % in 0.5 s).
@@ -100,6 +106,9 @@ pub struct LocalTime {
     pub time: ClockTime,
     /// `thu 1 oct`.
     pub date: String,
+    /// The system clock when this was read. Unlike `Instant` it keeps
+    /// counting while the machine sleeps.
+    pub wall: SystemTime,
 }
 
 /// Measured per-frame numbers for the debug HUD.
@@ -133,7 +142,12 @@ pub struct Model {
     pub pomodoro: Pomodoro,
     pub local: LocalTime,
     pub flash: Option<Instant>,
+    /// First `r` of a reset double press.
     reset_armed: Option<Instant>,
+    /// Second `r`: the reset happens once no auto-repeat follows it.
+    reset_pending: Option<Instant>,
+    /// Latest `r` press, to tell auto-repeat from a double press.
+    last_reset_key: Option<Instant>,
 
     // Chrome.
     pub overlay: Overlay,
@@ -195,6 +209,8 @@ impl Model {
             local,
             flash: None,
             reset_armed: None,
+            reset_pending: None,
+            last_reset_key: None,
             overlay: Overlay::None,
             toast: None,
             hud: false,
@@ -294,11 +310,28 @@ impl Model {
     // --- per frame ---------------------------------------------------------
 
     /// Advance to `now` and lay out for `area`. Call once per frame, just
-    /// before drawing.
+    /// before drawing, with the area actually being drawn.
+    ///
+    /// Sleep: `Instant` stops while the machine is suspended (macOS, Linux),
+    /// so a wall clock that jumped ahead of it by [`SLEEP_MIN`] or more is
+    /// time spent asleep, and a running pomodoro counts it. The lamp
+    /// doesn't: it just carries on from where it was. A wall clock that
+    /// jumps *backwards* (NTP, a manual change) is ignored; the pomodoro
+    /// only ever moves forward. A manual forward change looks like a sleep
+    /// and is treated as one.
     pub fn tick(&mut self, now: Instant, area: Rect, local: LocalTime) {
         let elapsed = now.saturating_duration_since(self.last_tick);
         self.last_tick = now;
         self.now = now;
+        if let Some(asleep) = local
+            .wall
+            .duration_since(self.local.wall)
+            .ok()
+            .and_then(|wall| wall.checked_sub(elapsed))
+            .filter(|&asleep| asleep >= SLEEP_MIN)
+        {
+            self.pomodoro.slept(asleep);
+        }
         self.local = local;
 
         if let Some(end) = self.pomodoro.tick(now) {
@@ -317,6 +350,11 @@ impl Model {
         if self.reset_armed.is_some_and(|at| now - at >= RESET_WINDOW) {
             self.reset_armed = None;
         }
+        if self.reset_pending.is_some_and(|at| now - at >= REPEAT_GAP) {
+            self.reset_pending = None;
+            self.pomodoro.reset();
+            self.toast("pomodoro reset");
+        }
         if self.save_at.is_some_and(|at| now >= at) {
             self.save();
         }
@@ -326,7 +364,7 @@ impl Model {
         let ease = 1.0 - (-elapsed.as_secs_f64() / SPEED_EASE).exp();
         self.speed_factor += (self.speed.factor() - self.speed_factor) * ease;
         if !self.frozen {
-            let steps = self.sim_clock.advance(elapsed.mul_f64(self.speed_factor));
+            let steps = self.sim_clock.advance(elapsed, self.speed_factor);
             for _ in 0..steps {
                 self.world.step(self.sim_clock.dt_secs());
             }
@@ -336,6 +374,15 @@ impl Model {
 
     /// Recompute the layout for `area` from the current state.
     pub fn relayout(&mut self, area: Rect) {
+        self.layout = self.layout_for(area);
+        // A taller window shows more help: don't leave its top scrolled away.
+        if let Overlay::Help { scroll } = &mut self.overlay {
+            *scroll = (*scroll).min(crate::ui::help::max_scroll(area));
+        }
+    }
+
+    /// The layout the current state gets at `area` (pure).
+    pub fn layout_for(&self, area: Rect) -> Layout {
         let chip = self.chip_text();
         let input = LayoutInput {
             minimal: self.minimal(),
@@ -348,7 +395,7 @@ impl Model {
             minimal_clock: self.settings.minimal.clock,
             cell_aspect: self.cell_aspect,
         };
-        self.layout = layout::layout(area, &input);
+        layout::layout(area, &input)
     }
 
     /// Match the sim's container to the layout's lamp.
@@ -542,12 +589,25 @@ impl Model {
                 None => self.toast("pomodoro idle · ␣ to start"),
             },
             Action::PomodoroReset => {
-                if self.reset_armed.take().is_some() {
-                    self.pomodoro.reset();
-                    self.toast("pomodoro reset");
-                } else {
-                    self.reset_armed = Some(now);
-                    self.toast("press r again to reset");
+                // Terminals without key-release reports send a held key as
+                // a stream of presses. The second press only resets once
+                // `tick` sees no auto-repeat follow it, so holding r never
+                // resets (terminals that do report repeats are filtered in
+                // the keymap).
+                let repeat = self
+                    .last_reset_key
+                    .replace(now)
+                    .is_some_and(|last| now - last < REPEAT_GAP);
+                if repeat {
+                    self.reset_armed = None;
+                    self.reset_pending = None;
+                } else if self.reset_pending.is_none() {
+                    if self.reset_armed.take().is_some() {
+                        self.reset_pending = Some(now);
+                    } else {
+                        self.reset_armed = Some(now);
+                        self.toast("press r again to reset");
+                    }
                 }
             }
             Action::HeatDown | Action::HeatUp => {
@@ -595,8 +655,10 @@ impl Model {
                 self.toast("reseeding");
             }
             Action::DebugHud => self.hud = !self.hud,
+            // A resize needs no clear of its own: the terminal clears and
+            // repaints in full whenever the size it draws at changes.
             Action::Redraw => self.clear = true,
-            Action::Resize => self.clear = true,
+            Action::Resize => {}
             Action::Focus(focused) => self.focused = focused,
             Action::Poke { col, row } => self.poke(col, row),
         }

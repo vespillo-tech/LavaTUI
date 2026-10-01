@@ -8,23 +8,27 @@
 use std::time::{Duration, Instant};
 
 /// Fixed-timestep accumulator ("fix your timestep").
+///
+/// Sim time tracks real time × speed at any frame rate: a 10 fps frame at
+/// ×4 runs 48 steps, a 1 fps frame 120 × speed. Only a genuine stall
+/// (debugger, `SIGSTOP`, a frame far longer than any fps allows) is cut
+/// short, so the app doesn't freeze while the sim catches up.
 #[derive(Debug)]
 pub struct FixedStep {
     dt: Duration,
     accumulator: Duration,
-    max_steps: u32,
 }
 
 impl FixedStep {
-    /// Most steps run per `advance`. After a long stall (suspend, debugger)
-    /// the backlog is dropped instead of freezing the app to catch up.
-    const MAX_STEPS_PER_ADVANCE: u32 = 8;
+    /// Real time longer than this between two frames is a stall: only this
+    /// much of it is simulated and the rest is dropped. Above the slowest
+    /// frame period (`--fps 1`) with room for a late frame.
+    pub const STALL: Duration = Duration::from_millis(1500);
 
     pub fn new(hz: u32) -> Self {
         Self {
             dt: Duration::from_secs(1) / hz.max(1),
             accumulator: Duration::ZERO,
-            max_steps: Self::MAX_STEPS_PER_ADVANCE,
         }
     }
 
@@ -33,18 +37,13 @@ impl FixedStep {
         self.dt.as_secs_f64()
     }
 
-    /// Feed `elapsed` real time; returns how many fixed steps to run now.
-    pub fn advance(&mut self, elapsed: Duration) -> u32 {
-        self.accumulator += elapsed;
-        let mut steps = 0;
-        while self.accumulator >= self.dt {
-            if steps == self.max_steps {
-                self.accumulator = Duration::ZERO;
-                break;
-            }
-            self.accumulator -= self.dt;
-            steps += 1;
-        }
+    /// Feed `elapsed` real time played at `speed`× (≥ 0); returns how many
+    /// fixed steps to run now.
+    pub fn advance(&mut self, elapsed: Duration, speed: f64) -> u32 {
+        let elapsed = elapsed.min(Self::STALL);
+        self.accumulator += elapsed.mul_f64(speed.max(0.0));
+        let steps = (self.accumulator.as_nanos() / self.dt.as_nanos()) as u32;
+        self.accumulator -= self.dt * steps;
         steps
     }
 
@@ -124,19 +123,43 @@ mod tests {
     #[test]
     fn fixed_step_accumulates_partial_steps() {
         let mut clock = FixedStep::new(100); // 10ms steps
-        assert_eq!(clock.advance(MS * 4), 0);
-        assert_eq!(clock.advance(MS * 4), 0);
-        assert_eq!(clock.advance(MS * 4), 1); // 12ms total
+        assert_eq!(clock.advance(MS * 4, 1.0), 0);
+        assert_eq!(clock.advance(MS * 4, 1.0), 0);
+        assert_eq!(clock.advance(MS * 4, 1.0), 1); // 12ms total
         assert!((clock.alpha() - 0.2).abs() < 1e-9);
-        assert_eq!(clock.advance(MS * 25), 2); // 27ms banked
+        assert_eq!(clock.advance(MS * 25, 1.0), 2); // 27ms banked
+    }
+
+    /// Sim time ÷ real time is the speed factor at any frame rate (lava-ebq.8:
+    /// a per-frame step cap used to play 10 fps at ×0.67).
+    #[test]
+    fn sim_time_tracks_real_time_at_any_fps() {
+        for fps in [1, 2, 10, 30, 60, 144] {
+            for speed in [0.25, 1.0, 4.0] {
+                let mut clock = FixedStep::new(120);
+                let frame = Duration::from_secs(1) / fps;
+                let frames = 10 * fps; // 10 s of real time
+                let steps: u32 = (0..frames).map(|_| clock.advance(frame, speed)).sum();
+                let sim = f64::from(steps) * clock.dt_secs();
+                let ratio = sim / (10.0 * speed);
+                assert!(
+                    (ratio - 1.0).abs() < 0.02,
+                    "{fps} fps ×{speed}: sim/real = {ratio:.3}"
+                );
+            }
+        }
     }
 
     #[test]
     fn fixed_step_drops_backlog_after_stall() {
         let mut clock = FixedStep::new(100);
-        assert_eq!(clock.advance(Duration::from_secs(5)), 8);
-        assert_eq!(clock.alpha(), 0.0);
-        assert_eq!(clock.advance(MS * 10), 1);
+        // A 5 s stall only simulates the stall limit...
+        let steps = clock.advance(Duration::from_secs(5), 1.0);
+        assert_eq!(steps, (FixedStep::STALL.as_millis() / 10) as u32);
+        // ...and then it's back to normal, with no backlog left.
+        assert_eq!(clock.advance(MS * 10, 1.0), 1);
+        // A slow-but-honest frame (1 fps at ×4) is never cut.
+        assert_eq!(clock.advance(Duration::from_secs(1), 4.0), 400);
     }
 
     #[test]

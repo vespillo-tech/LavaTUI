@@ -696,6 +696,57 @@ fn without_auto_advance_the_next_phase_waits() {
     assert_eq!(p.remaining(t0 + secs(1005)), secs(15));
 }
 
+/// A 2 h suspend 10 min into a focus (lava-ebq.18): `Instant` doesn't see
+/// it, the model reports it via `slept`. Exactly one phase ends, and the
+/// next phase starts at wake, not back before the sleep.
+#[test]
+fn sleep_through_a_phase_ends_it_once_and_starts_the_next_at_wake() {
+    let t0 = Instant::now();
+    let mut p = Pomodoro::new(PomodoroConfig::default());
+    p.start(t0);
+    let before_sleep = t0 + secs(600);
+    assert_eq!(p.tick(before_sleep), None);
+    // On wake `Instant` has barely moved; the sleep arrives separately.
+    let wake = before_sleep + Duration::from_millis(16);
+    p.slept(secs(2 * 3600));
+    let end = p.tick(wake).expect("the focus ran out while asleep");
+    assert_eq!(
+        (end.ended, end.next, end.skipped),
+        (Phase::Focus, Phase::ShortBreak, false)
+    );
+    assert_eq!(p.status(), Status::Running);
+    assert_eq!(p.remaining(wake), secs(300), "the break starts at wake");
+    assert_eq!(p.tick(wake + secs(1)), None, "one phase end, not a cascade");
+    assert_eq!(p.remaining(wake + secs(60)), secs(240));
+}
+
+#[test]
+fn a_short_sleep_counts_as_run_time() {
+    let t0 = Instant::now();
+    let mut p = Pomodoro::new(quick());
+    p.start(t0);
+    p.slept(secs(30));
+    assert_eq!(p.remaining(t0 + secs(10)), secs(60));
+    assert_eq!(p.tick(t0 + secs(69)), None);
+    let end = p.tick(t0 + secs(70)).unwrap();
+    assert_eq!(end.next, Phase::ShortBreak);
+    // Not slept through: the break is anchored on the deadline as usual.
+    assert_eq!(p.remaining(t0 + secs(75)), secs(15));
+}
+
+#[test]
+fn sleep_while_paused_or_idle_changes_nothing() {
+    let t0 = Instant::now();
+    let mut p = Pomodoro::new(quick());
+    p.slept(secs(500));
+    assert_eq!((p.status(), p.remaining(t0)), (Status::Idle, secs(100)));
+    p.start(t0);
+    p.pause(t0 + secs(10));
+    p.slept(secs(500));
+    assert_eq!(p.remaining(t0 + secs(999)), secs(90));
+    assert_eq!(p.tick(t0 + secs(999)), None);
+}
+
 #[test]
 fn a_long_gap_ends_only_one_phase() {
     let t0 = Instant::now();

@@ -118,20 +118,28 @@ reads your quit key; on macOS a read on the master after exit is EOF/EIO.
                 first save), atomic save.
 - `app/`      — `mod.rs` is the loop only: poll input until the frame
                 deadline → `Model::update(action)` (any input draws at once;
-                queued events are drained first) → `Model::tick(now, area,
-                local_time)` → `ui::draw`. It owns the terminal, reads local
-                time (jiff) and cell aspect (`window_size` pixels), rings the
-                bell, enables focus reports (+ mouse capture if
-                `input.mouse`). `model.rs`: all state (settings, world,
+                queued events are drained first; the wait is recomputed from
+                the deadline each event) → inside `terminal.draw`:
+                `Model::tick(now, frame.area(), local_time)` → `ui::draw`
+                (tick and draw always share the drawn size; `ui::draw` also
+                relayouts if they ever differ). It owns the terminal, reads
+                local time (jiff, + `SystemTime` for sleep detection) and
+                cell aspect (`window_size` pixels), rings the bell, enables
+                focus reports (+ mouse capture if `input.mouse`) behind a
+                Drop guard; `main`'s chained panic hook turns them off too.
+                ctrl-l repaints via `Terminal::resize`, never
+                `Terminal::clear` (that blocks on a cursor-position query). `model.rs`: all state (settings, world,
                 style/theme/face, pomodoro, overlay, toast, layout) and all
                 behaviour: `update` applies one `Action` (overlay keys first;
                 under an overlay only quit/resize/focus get through),
                 `tick` advances pomodoro/toasts/flash/eased speed/sim steps,
                 recomputes the layout, matches the sim's `Shape` to the frame,
                 and does the debounced (1 s) save. Fps: 10 unfocused, 2 frozen.
-- `timing.rs` — pure loop timing: `FixedStep` (accumulator, max 8 steps per
-                frame, `alpha()` for interpolation), `FramePacer` (fixed-grid
-                frame deadlines, resyncs when late), `FpsMeter` (EMA).
+- `timing.rs` — pure loop timing: `FixedStep` (accumulator, no per-frame
+                cap: sim time tracks real time × speed at any fps; only a
+                > 1.5 s `STALL` is cut short; `alpha()` for interpolation),
+                `FramePacer` (fixed-grid frame deadlines, resyncs when
+                late), `FpsMeter` (EMA).
 - `sim/`      — wax simulation (pure, seeded, deterministic). `World::new(seed,
                 aspect, Shape)` + `step(dt)` at the fixed `dt` (`SIM_HZ = 120`).
                 World units: height 1, width = visual aspect, x centred on 0.

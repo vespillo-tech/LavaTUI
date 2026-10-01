@@ -185,7 +185,10 @@ pub enum InputMode {
 
 pub fn action_for(event: &Event, mode: InputMode) -> Option<Action> {
     match event {
-        Event::Key(key) if key.kind != KeyEventKind::Release => key_action(key, mode),
+        // A held r must never reset the pomodoro (where the terminal tells
+        // repeats apart; the model guards the rest).
+        Event::Key(key) if key.kind != KeyEventKind::Release => key_action(key, mode)
+            .filter(|&a| !(key.kind == KeyEventKind::Repeat && a == Action::PomodoroReset)),
         Event::Mouse(mouse) => mouse_action(mouse, mode),
         Event::Resize(..) => Some(Action::Resize),
         Event::FocusGained => Some(Action::Focus(true)),
@@ -286,6 +289,31 @@ mod tests {
         opener: Action::StylePicker,
         inline: false,
     };
+
+    #[test]
+    fn a_reported_repeat_of_r_never_resets() {
+        let kind = |kind| {
+            Event::Key(KeyEvent::new_with_kind(
+                KeyCode::Char('r'),
+                KeyModifiers::NONE,
+                kind,
+            ))
+        };
+        let normal = InputMode::Normal;
+        assert_eq!(
+            action_for(&kind(KeyEventKind::Press), normal),
+            Some(Action::PomodoroReset)
+        );
+        assert_eq!(action_for(&kind(KeyEventKind::Repeat), normal), None);
+        assert_eq!(action_for(&kind(KeyEventKind::Release), normal), None);
+        // Other held keys still repeat.
+        let held = Event::Key(KeyEvent::new_with_kind(
+            KeyCode::Char(']'),
+            KeyModifiers::NONE,
+            KeyEventKind::Repeat,
+        ));
+        assert_eq!(action_for(&held, normal), Some(Action::HeatUp));
+    }
 
     #[test]
     fn quit_keys() {

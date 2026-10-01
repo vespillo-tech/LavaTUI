@@ -12,6 +12,7 @@ fn local() -> LocalTime {
     LocalTime {
         time: ClockTime::new(14, 32, 7).unwrap(),
         date: "thu 1 oct".into(),
+        wall: SystemTime::UNIX_EPOCH,
     }
 }
 
@@ -178,8 +179,99 @@ fn reset_needs_two_presses_within_two_seconds() {
         Status::Running,
         "window expired: re-armed"
     );
-    m.update(Action::PomodoroReset, t0 + Duration::from_secs(4));
+    let second = t0 + Duration::from_secs(4);
+    m.update(Action::PomodoroReset, second);
+    tick(&mut m, second + Duration::from_millis(100));
+    assert_eq!(
+        m.pomodoro.status(),
+        Status::Running,
+        "waits to see the second press isn't auto-repeat"
+    );
+    tick(&mut m, second + Duration::from_millis(160));
     assert_eq!(m.pomodoro.status(), Status::Idle);
+    assert_eq!(m.toast.as_ref().unwrap().text, "pomodoro reset");
+}
+
+/// lava-ebq.19 (2): terminals without key-release reports send a held key
+/// as presses: one, a pause (the repeat delay), then a fast stream. That
+/// must never reset, at any common repeat delay or rate.
+#[test]
+fn holding_r_never_resets() {
+    for delay in [150, 250, 500, 660] {
+        for rate in [16, 33, 50, 90] {
+            let (mut m, t0) = model(&format!("held-r-{delay}-{rate}"));
+            m.update(Action::PomodoroToggle, t0);
+            let mut at = t0;
+            m.update(Action::PomodoroReset, at);
+            at += Duration::from_millis(delay);
+            for _ in 0..60 {
+                m.update(Action::PomodoroReset, at);
+                at += Duration::from_millis(rate);
+                tick(&mut m, at);
+            }
+            tick(&mut m, at + Duration::from_secs(1));
+            assert_eq!(
+                m.pomodoro.status(),
+                Status::Running,
+                "held r reset it (delay {delay} ms, rate {rate} ms)"
+            );
+            // A deliberate double press afterwards still works.
+            let at = at + Duration::from_secs(3);
+            m.update(Action::PomodoroReset, at);
+            m.update(Action::PomodoroReset, at + Duration::from_millis(300));
+            tick(&mut m, at + Duration::from_millis(500));
+            assert_eq!(m.pomodoro.status(), Status::Idle);
+        }
+    }
+}
+
+/// lava-ebq.18: a suspend is seen as the wall clock jumping ahead of
+/// `Instant`. A running focus slept through ends once (one bell) and the
+/// break starts at wake.
+#[test]
+fn a_suspend_ends_the_running_phase_once() {
+    let (mut m, t0) = model("suspend");
+    m.update(Action::PomodoroToggle, t0);
+    let at = |secs: u64, wall_secs: u64| {
+        let mut l = local();
+        l.wall = SystemTime::UNIX_EPOCH + Duration::from_secs(wall_secs);
+        (t0 + Duration::from_secs(secs), l)
+    };
+    // 10 min of focus, then 2 h asleep: Instant moves 1 s, the wall 2 h.
+    let (now, l) = at(600, 600);
+    m.tick(now, m.layout.area, l);
+    assert!(!m.bell);
+    let (now, l) = at(601, 601 + 2 * 3600);
+    m.tick(now, m.layout.area, l);
+    assert!(std::mem::take(&mut m.bell), "the focus ended while asleep");
+    assert_eq!(m.toast.as_ref().unwrap().text, "break · 5:00");
+    assert_eq!(format_remaining(m.pomodoro.remaining(now)), "5:00");
+    for s in 1..=10 {
+        let (now, l) = at(601 + s, 601 + 2 * 3600 + s);
+        m.tick(now, m.layout.area, l);
+        assert!(!m.bell, "exactly one bell");
+    }
+    // The wall clock going backwards (NTP, a manual change) is ignored.
+    let (now, l) = at(620, 0);
+    m.tick(now, m.layout.area, l);
+    assert_eq!(format_remaining(m.pomodoro.remaining(now)), "4:41");
+}
+
+/// lava-ebq.19 (3): growing the window re-clamps the help scroll, so its
+/// top lines don't stay scrolled out of view.
+#[test]
+fn help_scroll_is_clamped_when_the_window_grows() {
+    let (mut m, t0) = model_with(Session::default(), temp_config("help-scroll"), 40, 14);
+    m.update(Action::Help, t0);
+    for _ in 0..50 {
+        m.update(Action::Down, t0);
+    }
+    let Overlay::Help { scroll } = m.overlay else {
+        panic!("help is open");
+    };
+    assert!(scroll > 0, "small help scrolls");
+    m.tick(t0, Rect::new(0, 0, 40, 60), local());
+    assert_eq!(m.overlay, Overlay::Help { scroll: 0 });
 }
 
 #[test]

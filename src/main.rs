@@ -16,7 +16,9 @@ use std::io;
 use clap::Parser;
 
 fn main() -> io::Result<()> {
-    let session = cli::Cli::parse().into_session();
+    let mut cli = cli::Cli::parse();
+    let panic_after = cli.panic_after.take();
+    let session = cli.into_session();
 
     // `try_init` enters raw mode + the alternate screen and installs a panic
     // hook that restores the terminal; `restore` undoes it on normal exit.
@@ -27,7 +29,15 @@ fn main() -> io::Result<()> {
             format!("lavatui needs an interactive terminal: {err}"),
         )
     })?;
-    let result = app::run(&mut terminal, &session);
+    // Chain onto ratatui's hook: switch our extra terminal modes (focus
+    // reports, mouse capture) off before it restores the screen and prints
+    // the panic, so the shell never receives focus or mouse escapes.
+    let restore_screen = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        app::disable_terminal_modes();
+        restore_screen(info);
+    }));
+    let result = app::run(&mut terminal, &session, panic_after);
     ratatui::restore();
     result
 }

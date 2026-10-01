@@ -43,6 +43,10 @@ pub struct Cli {
     /// Exit after rendering N frames (smoke tests / benchmarking).
     #[arg(long, value_name = "N", hide = true)]
     pub frames: Option<u64>,
+
+    /// Panic after rendering N frames, to check the terminal is restored.
+    #[arg(long, value_name = "N", hide = true)]
+    pub panic_after: Option<u64>,
 }
 
 impl Cli {

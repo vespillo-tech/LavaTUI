@@ -899,7 +899,7 @@ and help, click a picker item to preview, double-click to keep.
 
 | Target | Value |
 |---|---|
-| Sim timestep | fixed `SIM_HZ` (**120 Hz** in the scaffold, `timing::FixedStep`, max 8 steps/frame), decoupled from render; render interpolates with `alpha()` |
+| Sim timestep | fixed `SIM_HZ` (**120 Hz** in the scaffold, `timing::FixedStep`; sim time = real time × speed at any fps, only a > 1.5 s stall is cut short), decoupled from render; render interpolates with `alpha()` |
 | Render rate | default **60 fps** (`--fps 1..=240`, `display.fps`). Lava is slow, but 60 fps keeps input feeling instant and makes the slow motion buttery |
 | Wax tempo (×1, heat 3) | a blob takes **~20–40 s** to cross the lamp: slow, hypnotic, never jittery |
 | Startup → first frame | **< 100 ms**. The sim starts *pre-warmed*: ~600 headless steps at launch, so frame 1 already looks alive (no 2-hour warm-up) |
