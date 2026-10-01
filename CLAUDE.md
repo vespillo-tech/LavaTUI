@@ -184,8 +184,14 @@ reads your quit key; on macOS a read on the master after exit is EOF/EIO.
                 read via `Canvas::light`: dome normals from depth + density
                 gradient → half-Lambert key light (up-left) + small specular,
                 flattened on hot wax; glow from the kernel tail of hot wax;
-                warm base light in the bottom third. One branch-free,
-                vectorised sweep, no scratch; output quantised (bandwidth).
+                warm base light in the bottom third. One sweep down the
+                rows in 16-px runs that pay only for what reaches them
+                (open / glow tail / wax), every loop a vectorised zip, no
+                heap scratch; on fine grids (height ≥ 160, i.e. braille at
+                200×60) the dome shading comes from a half-res node grid,
+                interpolated (lava-je6). Output quantised (bandwidth).
+                Hot-loop rule: `f32::clamp` and float `max` folds don't
+                vectorise; use `max().min()` and integer-bit maxima.
                 Blending styles apply it with `paint.shade(light)` (eases
                 brightening by lightness; `scale` stays a plain multiply for a
                 style's own effects); glyph depths use `render::lit` to shift
