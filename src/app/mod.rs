@@ -16,7 +16,7 @@ use ratatui::DefaultTerminal;
 use ratatui::crossterm::{event, execute, terminal};
 use ratatui::layout::Rect;
 
-pub use model::{FLASH_TIME, LocalTime, Model, Overlay, Picker, TOAST_TIME, Toast};
+pub use model::{LocalTime, Model, Overlay, Picker, TOAST_TIME, Toast};
 
 use crate::clock::ClockTime;
 use crate::config::Session;

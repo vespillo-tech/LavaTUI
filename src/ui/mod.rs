@@ -21,7 +21,11 @@ use ratatui::style::{Color, Style};
 use crate::app::{Model, Overlay};
 use crate::light::{Lamplight, Lighting};
 use crate::render::{LampState, LampView};
-use crate::theme::Role;
+use crate::theme::{Ink, Role};
+
+/// How far the bleed liquid goes toward `accent` at the flash's peak. Under
+/// ½, so depths that can't blend (no liquid tint) never flip the whole tank.
+const BLEED_FLASH: f32 = 0.35;
 
 /// Draw one frame. `lamp` is the lamp's scratch state, kept by the caller.
 pub fn draw(frame: &mut Frame, model: &Model, lamp: &mut LampState) {
@@ -37,10 +41,24 @@ pub fn draw(frame: &mut Frame, model: &Model, lamp: &mut LampState) {
     buf.set_style(area, Style::new().bg(bg).fg(theme.role(Role::Text)));
 
     if let Some(l) = layout.lamp {
+        // Phase-change flash (§4.5): the glass flashes its metal; in bleed
+        // there's no metal, so the liquid pulses toward `accent` instead.
+        let flash = model.flash_level();
+        let flashed;
+        let lamp_theme = if l.glass.is_none() && flash > 0.0 {
+            let liquid = theme.paint(Ink::Role(Role::Liquid));
+            flashed = theme.with_role(
+                Role::Liquid,
+                liquid.mix(Ink::Role(Role::Accent), BLEED_FLASH * flash),
+            );
+            &flashed
+        } else {
+            theme
+        };
         let view = LampView {
             field: &model.field,
             style: model.style.style(),
-            theme,
+            theme: lamp_theme,
             time: model.time(),
             lighting: model
                 .settings

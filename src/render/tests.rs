@@ -607,3 +607,74 @@ fn lighting_stays_inside_the_glass() {
     }
     assert_ne!(plain, lit);
 }
+
+/// Bottle walls are cut at half columns: cells the wall passes through
+/// become quadrant glyphs in front of `bg`, mirrored left ↔ right, and
+/// only when the theme can show a liquid tint.
+#[test]
+fn bottle_walls_are_half_cells_and_mirrored() {
+    let mut world = World::new(9, 0.6, Shape::Bottle);
+    world.prewarm(300, 1.0 / 120.0);
+    let mut field = Field::default();
+    field.prepare(&world, 0.0);
+    let mut state = LampState::default();
+    let solid = StyleId::by_name("solid").unwrap().style();
+    let quadrant = |s: &str| "▗▖▄▝▐▞▟▘▚▌▙▀▜▛".contains(s) && s != " ";
+    for (cols, depth) in [
+        (23, ColorDepth::TrueColor),
+        (24, ColorDepth::Ansi256),
+        (23, ColorDepth::Ansi16),
+    ] {
+        let theme = theme(depth);
+        let area = Rect::new(0, 0, cols, 20);
+        let mut buf = Buffer::empty(area);
+        LampView {
+            field: &field,
+            style: solid,
+            theme: &theme,
+            time: 0.0,
+            lighting: None,
+        }
+        .render(area, &mut buf, &mut state);
+        let bg = theme.role(Role::Bg);
+        let mut edges = 0;
+        for y in 0..area.height {
+            for x in 0..cols {
+                let cell = &buf[(x, y)];
+                if !theme.blends() {
+                    // No liquid tint: no reshaping, the glass draws a
+                    // `▕ │ ▏` edge instead (ui::glass). Solid only uses
+                    // half blocks.
+                    assert!("▀▄█ ".contains(cell.symbol()), "{depth:?}");
+                    continue;
+                }
+                if cell.bg != bg || !quadrant(cell.symbol()) {
+                    continue;
+                }
+                edges += 1;
+                let other = buf[(cols - 1 - x, y)].symbol();
+                let mirrored: String = cell
+                    .symbol()
+                    .chars()
+                    .map(|c| match c {
+                        '▐' => '▌',
+                        '▌' => '▐',
+                        '▗' => '▖',
+                        '▖' => '▗',
+                        '▝' => '▘',
+                        '▘' => '▝',
+                        '▟' => '▙',
+                        '▙' => '▟',
+                        '▜' => '▛',
+                        '▛' => '▜',
+                        c => c,
+                    })
+                    .collect();
+                assert_eq!(other, mirrored, "{cols} cols, row {y}, cell {x}");
+            }
+        }
+        if theme.blends() {
+            assert!(edges > 5, "{depth:?}: only {edges} half-cell edges");
+        }
+    }
+}

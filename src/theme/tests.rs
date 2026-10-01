@@ -223,3 +223,61 @@ fn lighting_shade_darkens_and_eases_brightening() {
     let Rgb(r, g, b) = Rgb(226, 71, 27).shade(1.3);
     assert!(r > g && g > b && g < 100, "{:?}", (r, g, b));
 }
+
+#[test]
+fn with_role_repaints_the_role_and_its_ramps() {
+    let theme = Theme::new(lava(), ColorDepth::TrueColor);
+    let accent = theme.role(Role::Accent);
+    let liquid = theme.paint(Ink::Role(Role::Liquid));
+    let flash = liquid.mix(Ink::Role(Role::Accent), 1.0);
+    let flashed = theme.with_role(Role::Liquid, flash);
+    assert_eq!(flashed.role(Role::Liquid), flash.color());
+    // The thermal ramp starts at the liquid, so it follows (to within
+    // truecolor quantisation).
+    let (Color::Rgb(r, g, b), Color::Rgb(ar, ag, ab)) = (flashed.color(Ink::Heat(0.0)), accent)
+    else {
+        panic!("truecolor");
+    };
+    assert!(r.abs_diff(ar) <= 4 && g.abs_diff(ag) <= 4 && b.abs_diff(ab) <= 4);
+    // Everything else is untouched.
+    for role in Role::ALL.into_iter().filter(|&r| r != Role::Liquid) {
+        assert_eq!(flashed.role(role), theme.role(role), "{role:?}");
+    }
+    assert_eq!(flashed.color(Ink::Wax(0.3)), theme.color(Ink::Wax(0.3)));
+
+    // 256: an unmixed repaint keeps the hand-picked index.
+    let t256 = Theme::new(lava(), ColorDepth::Ansi256);
+    let same = t256.with_role(Role::Liquid, t256.paint(Ink::Role(Role::Metal)));
+    assert_eq!(same.role(Role::Liquid), t256.role(Role::Metal));
+
+    // 16: a mix under half never changes a colour that can't blend.
+    let t16 = Theme::new(lava(), ColorDepth::Ansi16);
+    let weak = t16.with_role(
+        Role::Liquid,
+        t16.paint(Ink::Role(Role::Liquid))
+            .mix(Ink::Role(Role::Accent), 0.35),
+    );
+    assert_eq!(weak.role(Role::Liquid), t16.role(Role::Liquid));
+}
+
+#[test]
+fn blend_mixes_resolved_colours_per_depth() {
+    let tc = Theme::new(lava(), ColorDepth::TrueColor);
+    let (a, b) = (Color::Rgb(0, 0, 0), Color::Rgb(200, 100, 40));
+    assert_eq!(tc.blend(a, b, 0.0), a);
+    assert_eq!(tc.blend(a, b, 1.0), b);
+    assert_eq!(tc.blend(a, b, 0.5), Color::Rgb(100, 52, 20));
+    // A terminal default can't be mixed: the dominant side wins.
+    assert_eq!(tc.blend(Color::Reset, b, 0.4), Color::Reset);
+
+    let t256 = Theme::new(lava(), ColorDepth::Ansi256);
+    // Black (16) half way to white (231) lands on a mid grey.
+    let Color::Indexed(i) = t256.blend(Color::Indexed(16), Color::Indexed(231), 0.5) else {
+        panic!("256 blends to an index");
+    };
+    assert!((240..=246).contains(&i), "{i}");
+
+    let t16 = Theme::new(lava(), ColorDepth::Ansi16);
+    assert_eq!(t16.blend(Color::Red, Color::Yellow, 0.4), Color::Red);
+    assert_eq!(t16.blend(Color::Red, Color::Yellow, 0.6), Color::Yellow);
+}

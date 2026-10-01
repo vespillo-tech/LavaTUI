@@ -9,6 +9,8 @@
 //! 3. An optional [`Lighting`] pass fills a per-sample brightness buffer.
 //! 4. The style draws the [`Canvas`] (samples + mask + light + theme) into
 //!    the buffer, cell by cell, inside its `Rect` only.
+//! 5. Cells the container's walls cut through are reshaped to half / quarter
+//!    cells (`walls`), so the bottle's silhouette is smooth.
 //!
 //! Adding a style: one file in `styles/` implementing [`Style`], plus one
 //! line in the `styles::ALL` registry.
@@ -17,6 +19,9 @@ mod cell;
 mod styles;
 #[cfg(test)]
 mod tests;
+mod walls;
+
+pub use walls::wall;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -241,14 +246,17 @@ impl StatefulWidget for LampView<'_> {
             upsample(&state.coarse, cw, ch, &mut state.samples, width, height);
         }
 
+        // Per cell row, so a cell the wall cuts through is wholly inside
+        // for the style; `walls::smooth` shapes it afterwards.
         let shape = self.field.shape();
         state.mask.clear();
-        state.mask.extend((0..height).map(|y| {
-            let world_y = 1.0 - (y as f64 + 0.5) / height as f64;
-            let half = shape.width_fraction(world_y) * width as f64 / 2.0;
-            let lo = (width as f64 / 2.0 - half).round().max(0.0) as usize;
-            (lo, width - lo.min(width / 2))
-        }));
+        for row in 0..area.height {
+            let (lo, hi) = walls::cells(walls::spans(shape, area.width, area.height, row));
+            let span = (lo * usize::from(grid.x), hi * usize::from(grid.x));
+            state
+                .mask
+                .extend(std::iter::repeat_n(span, usize::from(grid.y)));
+        }
 
         let light = match self.lighting {
             Some(lighting) => {
@@ -276,6 +284,9 @@ impl StatefulWidget for LampView<'_> {
             time: self.time,
         };
         self.style.draw(&canvas, area, buf);
+        if self.theme.blends() {
+            walls::smooth(shape, self.theme, area, buf);
+        }
     }
 }
 

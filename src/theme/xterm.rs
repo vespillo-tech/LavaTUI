@@ -41,3 +41,27 @@ fn dist(a: Rgb, b: Rgb) -> u32 {
     let d = |x: u8, y: u8| (i32::from(x) - i32::from(y)).pow(2) as u32;
     2 * d(a.0, b.0) + 4 * d(a.1, b.1) + 3 * d(a.2, b.2)
 }
+
+/// The colour of xterm index `i` (the 16 system colours as xterm's
+/// defaults; terminals theme those, so treat them as approximate).
+pub fn rgb(i: u8) -> Rgb {
+    const SYSTEM: [u32; 16] = [
+        0x000000, 0xcd0000, 0x00cd00, 0xcdcd00, 0x0000ee, 0xcd00cd, 0x00cdcd, 0xe5e5e5, 0x7f7f7f,
+        0xff0000, 0x00ff00, 0xffff00, 0x5c5cff, 0xff00ff, 0x00ffff, 0xffffff,
+    ];
+    match i {
+        0..=15 => Rgb::hex(SYSTEM[usize::from(i)]),
+        16..=231 => {
+            let i = i - 16;
+            Rgb(
+                CUBE[usize::from(i / 36)],
+                CUBE[usize::from(i / 6 % 6)],
+                CUBE[usize::from(i % 6)],
+            )
+        }
+        _ => {
+            let v = 8 + 10 * (i - 232);
+            Rgb(v, v, v)
+        }
+    }
+}

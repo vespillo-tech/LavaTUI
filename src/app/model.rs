@@ -708,6 +708,14 @@ impl Model {
         }
     }
 
+    /// The phase-change flash right now: 0 → 1 → 0 over [`FLASH_TIME`].
+    pub fn flash_level(&self) -> f32 {
+        self.flash.map_or(0.0, |at| {
+            let t = self.now.duration_since(at).as_secs_f32() / FLASH_TIME.as_secs_f32();
+            (t * std::f32::consts::PI).sin().max(0.0)
+        })
+    }
+
     /// Seconds since launch.
     pub fn time(&self) -> f64 {
         self.now.duration_since(self.started).as_secs_f64()
