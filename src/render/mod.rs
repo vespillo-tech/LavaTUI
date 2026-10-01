@@ -22,7 +22,7 @@ mod styles;
 mod tests;
 mod walls;
 
-pub use canvas::Canvas;
+pub use canvas::{At, Canvas};
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;

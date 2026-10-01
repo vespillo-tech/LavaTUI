@@ -41,6 +41,7 @@ pub static ALIASES: &[(&str, &str)] = &[("glass", "chrome")];
 
 /// A wax pixel with liquid on at least one side. Off-canvas counts as wax,
 /// so wax touching the walls or floor (the pool) isn't outlined there.
+#[inline]
 fn is_edge(c: &Canvas, x: usize, y: usize) -> bool {
     let wax = |x: usize, y: usize| x >= c.width || y >= c.height || c.at(x, y).density >= SURFACE;
     wax(x, y)

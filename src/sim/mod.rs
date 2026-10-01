@@ -204,6 +204,7 @@ impl Shape {
 }
 
 /// Liquid temperature at height `y`.
+#[inline]
 pub fn ambient_temp(y: f64) -> f64 {
     AMBIENT_BOTTOM + (AMBIENT_TOP - AMBIENT_BOTTOM) * y.clamp(0.0, 1.0)
 }

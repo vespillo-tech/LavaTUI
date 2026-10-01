@@ -70,31 +70,39 @@ impl Canvas<'_> {
         })
     }
 
-    /// Call `f` once for every cell of the area, row by row. The canvas
-    /// covers the area exactly, so the grid is its size over the area's.
+    /// Call `f` once for every cell of the area, row by row.
     #[inline]
     pub fn for_each_cell(&self, buf: &mut Buffer, mut f: impl FnMut(At, &mut Cell)) {
-        let area = self.area;
-        if area.is_empty() {
-            return;
-        }
-        let gx = self.width / usize::from(area.width);
-        let gy = self.height / usize::from(area.height);
-        for cy in 0..usize::from(area.height) {
-            for cx in 0..usize::from(area.width) {
-                let (x, y) = (gx * cx, gy * cy);
-                let backdrop = self.backdrop(x, y);
-                let at = At {
-                    cx,
-                    cy,
-                    x,
-                    y,
-                    backdrop,
-                    base: self.theme.color(backdrop),
-                };
-                f(at, &mut buf[(area.x + cx as u16, area.y + cy as u16)]);
+        for cy in 0..usize::from(self.area.height) {
+            for cx in 0..usize::from(self.area.width) {
+                let at = self.cell_at(cx, cy);
+                f(at, self.cell_mut(buf, &at));
             }
         }
+    }
+
+    /// Cell (`cx`, `cy`) of the area. The canvas covers the area exactly,
+    /// so the grid is its size over the area's.
+    #[inline]
+    pub fn cell_at(&self, cx: usize, cy: usize) -> At {
+        let gx = self.width / usize::from(self.area.width);
+        let gy = self.height / usize::from(self.area.height);
+        let (x, y) = (gx * cx, gy * cy);
+        let backdrop = self.backdrop(x, y);
+        At {
+            cx,
+            cy,
+            x,
+            y,
+            backdrop,
+            base: self.theme.color(backdrop),
+        }
+    }
+
+    /// The buffer cell `at` draws into.
+    #[inline]
+    pub fn cell_mut<'b>(&self, buf: &'b mut Buffer, at: &At) -> &'b mut Cell {
+        &mut buf[(self.area.x + at.cx as u16, self.area.y + at.cy as u16)]
     }
 
     /// Draw a half-block canvas (1×2 pixels per cell): `pixel(x, y)` is

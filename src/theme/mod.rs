@@ -70,6 +70,7 @@ impl Rgb {
     }
 
     /// `self` → `other` by `t` (0..=1).
+    #[inline]
     pub fn lerp(self, other: Rgb, t: f32) -> Rgb {
         let t = t.clamp(0.0, 1.0);
         let mix = |a: u8, b: u8| (f32::from(a) + (f32::from(b) - f32::from(a)) * t).round() as u8;
@@ -81,6 +82,7 @@ impl Rgb {
     }
 
     /// Multiply brightness by `k`; saturates at white.
+    #[inline]
     pub fn scale(self, k: f32) -> Rgb {
         let s = |c: u8| (f32::from(c) * k).round().clamp(0.0, 255.0) as u8;
         Rgb(s(self.0), s(self.1), s(self.2))
@@ -91,6 +93,7 @@ impl Rgb {
     /// dark liquid glows nearly the full amount while light colours barely
     /// move: highlights keep their hue and the light palette doesn't blow
     /// out into white halos.
+    #[inline]
     pub fn shade(self, k: f32) -> Rgb {
         if k <= 1.0 {
             return self.scale(k);
@@ -130,6 +133,7 @@ impl Palette {
         Self::all().iter().find(|p| p.name == name)
     }
 
+    #[inline]
     pub fn swatch(&self, role: Role) -> Swatch {
         self.swatches[role as usize]
     }
@@ -274,17 +278,20 @@ impl Theme {
 
     /// Whether colours blend smoothly. When false (16 colours, none, the
     /// `ansi` palette) styles should show gradients with glyph density.
+    #[inline]
     pub fn blends(&self) -> bool {
         self.blend
     }
 
     /// Whether there is any colour at all.
+    #[inline]
     pub fn has_color(&self) -> bool {
         self.depth != ColorDepth::None
     }
 
     /// Start a colour from `ink`; refine it with [`Paint::mix`] /
     /// [`Paint::scale`], then [`Paint::color`].
+    #[inline]
     pub fn paint(&self, ink: Ink) -> Paint<'_> {
         Paint {
             theme: self,
@@ -301,11 +308,13 @@ impl Theme {
     }
 
     /// Shorthand for `paint(ink).color()`.
+    #[inline]
     pub fn color(&self, ink: Ink) -> Color {
         self.paint(ink).color()
     }
 
     /// Shorthand for a role's colour.
+    #[inline]
     pub fn role(&self, role: Role) -> Color {
         self.color(Ink::Role(role))
     }
@@ -369,6 +378,7 @@ impl Theme {
         }
     }
 
+    #[inline]
     fn rgb(&self, ink: Ink) -> Rgb {
         let lut = |lut: &[Rgb; RAMP_STEPS], t: f32| {
             lut[(t.clamp(0.0, 1.0) * (RAMP_STEPS - 1) as f32).round() as usize]
@@ -384,6 +394,10 @@ impl Theme {
     }
 
     /// The colour used when blending is off.
+    ///
+    /// Deliberately not `#[inline]`, unlike the rest of the paint path:
+    /// every paint computes it, and inlining it into blended styles' pixel
+    /// loops costs heatmap ~12 % (bench_lamp).
     fn fallback(&self, ink: Ink) -> Color {
         if self.depth == ColorDepth::None {
             return TERMINAL_DEFAULT;
@@ -409,6 +423,7 @@ impl Theme {
 }
 
 /// The three discrete wax steps, for depths that can't blend.
+#[inline]
 fn wax_step(t: f32) -> Role {
     if t < 1.0 / 3.0 {
         Role::WaxCool
@@ -447,6 +462,7 @@ pub struct Paint<'t> {
 impl Paint<'_> {
     /// Move `amount` (0..=1) of the way toward `other`. Without blending,
     /// the dominant side wins.
+    #[inline]
     pub fn mix(self, other: Ink, amount: f32) -> Self {
         Paint {
             rgb: self.rgb.lerp(self.theme.rgb(other), amount),
@@ -462,6 +478,7 @@ impl Paint<'_> {
 
     /// Brighten (`k > 1`) or darken (`k < 1`). Only visible when blending;
     /// discrete depths show light through glyphs instead.
+    #[inline]
     pub fn scale(self, k: f32) -> Self {
         Paint {
             rgb: self.rgb.scale(k),
@@ -472,6 +489,7 @@ impl Paint<'_> {
 
     /// Apply a lighting factor (`Canvas::light`, see [`Rgb::shade`]).
     /// Like [`scale`](Self::scale), only visible when blending.
+    #[inline]
     pub fn shade(self, k: f32) -> Self {
         Paint {
             rgb: self.rgb.shade(k),
@@ -480,6 +498,7 @@ impl Paint<'_> {
         }
     }
 
+    #[inline]
     pub fn color(self) -> Color {
         if !self.theme.blend {
             return self.fallback;

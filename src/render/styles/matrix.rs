@@ -11,7 +11,7 @@ use ratatui::style::Color;
 
 use super::{hash, quantise};
 use crate::render::cell::mark;
-use crate::render::{Canvas, Grid, LampStyle, wax_heat};
+use crate::render::{At, Canvas, Grid, LampStyle, wax_heat};
 use crate::sim::SURFACE;
 use crate::theme::{Ink, Role};
 
@@ -26,28 +26,35 @@ const SPEED: (f64, f64) = (5.0, 13.0);
 const TRAIL: (u32, u32) = (5, 14);
 /// How often an idle glyph changes, per second.
 const MUTATE_HZ: f64 = 0.6;
-/// Streams per column.
+/// Streams per column, and a salt that keeps their hashes apart from the
+/// glyphs'.
 const STREAMS: u32 = 3;
+const STREAM_SALT: u32 = 0x9e37;
 
 impl LampStyle for Matrix {
     const NAME: &'static str = "matrix";
     const GRID: Grid = Grid::CELL;
 
     fn draw(c: &Canvas, buf: &mut Buffer) {
+        // Column by column, so each column's streams are placed once.
         let rows = usize::from(c.area.height);
-        c.for_each_cell(buf, |at, cell| {
-            let s = c.at(at.cx, at.cy);
-            let rain =
-                (s.density >= SURFACE).then(|| rain(c, at.cx, at.cy, rows, wax_heat(s.temp)));
-            mark(cell, rain, at.base);
-        });
+        for cx in 0..usize::from(c.area.width) {
+            let streams = Streams::new(cx, rows, c.time);
+            for cy in 0..rows {
+                let at = c.cell_at(cx, cy);
+                let s = c.at(cx, cy);
+                let rain = (s.density >= SURFACE).then(|| rain(c, &streams, &at, wax_heat(s.temp)));
+                mark(c.cell_mut(buf, &at), rain, at.base);
+            }
+        }
     }
 }
 
-/// The glyph and colour of wax cell (`cx`, `cy`) at `heat`.
-fn rain(c: &Canvas, cx: usize, cy: usize, rows: usize, heat: f32) -> (char, Color) {
+/// The glyph and colour of wax cell `at` at `heat`.
+fn rain(c: &Canvas, streams: &Streams, at: &At, heat: f32) -> (char, Color) {
+    let (cx, cy) = (at.cx, at.cy);
     let wax = c.theme.paint(Ink::Wax(heat));
-    match stream(cx, cy, rows, c.time) {
+    match streams.at(cy) {
         // The head: brightest, freshly changing glyph.
         Some(0.0) => {
             let fg = if c.theme.blends() {
@@ -79,25 +86,37 @@ fn rain(c: &Canvas, cx: usize, cy: usize, rows: usize, heat: f32) -> (char, Colo
     }
 }
 
-/// Where cell (`cx`, `cy`) sits in a falling stream: `Some(0)` at a head,
-/// `Some(f)` in a trail (`f` 0 → 1 fading toward its end), `None` if no
-/// stream is passing.
-fn stream(cx: usize, cy: usize, rows: usize, time: f64) -> Option<f32> {
-    (0..STREAMS)
-        .filter_map(|k| {
-            let h = hash(cx as u32 * STREAMS + k + 0x9e37);
+/// One column's falling streams right now: each head's row and trail
+/// length.
+struct Streams([(i64, u32); STREAMS as usize]);
+
+impl Streams {
+    fn new(cx: usize, rows: usize, time: f64) -> Self {
+        Streams(std::array::from_fn(|k| {
+            let h = hash(cx as u32 * STREAMS + k as u32 + STREAM_SALT);
             let unit = |shift: u32| f64::from((h >> shift) & 0xff) / 255.0;
             let speed = SPEED.0 + (SPEED.1 - SPEED.0) * unit(0);
             let trail = TRAIL.0 + (h >> 8) % (TRAIL.1 - TRAIL.0 + 1);
             // A gap between passes, so columns don't all look busy.
             let period = rows as f64 + f64::from(trail) + 6.0 + 30.0 * unit(16);
             let head = ((time * speed + unit(24) * period) % period).floor() as i64;
-            let behind = head - cy as i64;
-            (0..i64::from(trail))
-                .contains(&behind)
-                .then(|| quantise(behind as f32 / trail as f32, 8.0))
-        })
-        .reduce(f32::min)
+            (head, trail)
+        }))
+    }
+
+    /// Where row `cy` sits in a stream: `Some(0)` at a head, `Some(f)` in
+    /// a trail (`f` 0 → 1 fading toward its end), `None` if none is passing.
+    fn at(&self, cy: usize) -> Option<f32> {
+        self.0
+            .iter()
+            .filter_map(|&(head, trail)| {
+                let behind = head - cy as i64;
+                (0..i64::from(trail))
+                    .contains(&behind)
+                    .then(|| quantise(behind as f32 / trail as f32, 8.0))
+            })
+            .reduce(f32::min)
+    }
 }
 
 /// A glyph for the cell that changes `rate`-wise over time, each cell on
