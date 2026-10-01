@@ -6,14 +6,21 @@
 //! The lamp is always 1.0 tall: `y` runs from 0 (base, the heater) to 1
 //! (top). Width is the lamp's *visual* aspect (on-screen width ÷ height),
 //! centred on `x = 0`, so a blob that is round in world units is round on
-//! screen whatever the window size. A terminal resize only changes the view
-//! width; the walls then ease to it over ~250 ms and push blobs along, so
-//! nothing teleports (docs/design.md §2.2).
+//! screen whatever the window size. In the tank (bleed) a terminal resize
+//! only changes the view width; the walls then ease to it over ~250 ms and
+//! push blobs along, so nothing teleports (docs/design.md §2.2). The bottle
+//! (glass) has a fixed aspect: resizing it only changes the sampling.
+//! Switching between the two keeps every blob that fits where it is (see
+//! [`World::set_shape`]).
 //!
 //! # Model
 //!
-//! - A **pool** of molten wax sits on the heater. It buds: a blob swells out
-//!   of it, necks off and rises.
+//! - A thin **pool** of molten wax sits on the heater. It buds: a wide bulge
+//!   swells out of it, necks off and rises. The deeper the pool, the sooner
+//!   it buds, so wax never piles up into a slab.
+//! - A few big blobs of quite different sizes, not many equal ones. Moving
+//!   blobs stretch along their motion, and the field draws them as
+//!   teardrops trailing a tail (see `field.rs`).
 //! - Free blobs exchange heat with the liquid, which is warm at the base and
 //!   cool at the top (smaller blobs change temperature faster). Buoyancy is
 //!   proportional to `temp - NEUTRAL_TEMP`; strong, implicit viscous drag
@@ -71,16 +78,25 @@ const HEATER_RATE: f64 = 0.25;
 const POOL_HEAT_RATE: f64 = 0.6;
 
 /// Wax as a fraction of the container's area.
-const FILL: f64 = 0.22;
+const FILL: f64 = 0.26;
 /// Pool depth (lamp heights) the world aims for, and the least it keeps.
-const POOL_DEPTH: f64 = 0.07;
-const MIN_POOL_DEPTH: f64 = 0.03;
+const POOL_DEPTH: f64 = 0.045;
+const MIN_POOL_DEPTH: f64 = 0.022;
+/// Bud sizes, as a range of multiples of the typical radius: with merges
+/// and splits on top, the lamp shows a 3:1 spread or more.
+const BUD_SIZE: (f64, f64) = (0.35, 1.5);
+/// Largest bud, as a fraction of the largest blob.
+const MAX_BUD: f64 = 0.95;
 /// Pool surface ripple amplitude.
 const POOL_WAVE: f64 = 0.006;
 /// Seconds a bud takes to grow to full size.
 const BUD_TIME: f64 = 6.0;
-/// Seconds between bud attempts (random in range).
+/// Seconds between bud attempts (random in range). A pool deeper than
+/// `POOL_DEPTH` shortens the gap in proportion, and past `DEEP_POOL ×
+/// POOL_DEPTH` it buds even when the lamp already has its blob count
+/// (a cooler lamp lets more wax lie: see `heat_deep_pool`).
 const SPAWN_GAP: (f64, f64) = (1.5, 5.0);
+const DEEP_POOL: f64 = 1.5;
 /// Melting blobs lose this fraction of their area per second.
 const MELT_RATE: f64 = 0.5;
 /// A melting blob smaller than this is gone.
@@ -100,26 +116,33 @@ const MERGE_STRETCH: f64 = 0.35;
 /// Splits: blobs above `SPLIT_FRACTION × max radius`, hot and rising, split
 /// at up to `SPLIT_RATE` per second (scaled by how far over they are). Hot
 /// blobs never merge past that size, so split halves don't just re-fuse.
-const SPLIT_FRACTION: f64 = 0.6;
+const SPLIT_FRACTION: f64 = 0.85;
 const HOT: f64 = 0.6;
 const SPLIT_RATE: f64 = 0.15;
 const SPLIT_KICK: f64 = 0.008;
+/// Split halves start this far apart (× parent half-height) and overlap,
+/// so the field shows a neck that thins as they part.
+const SPLIT_REACH: f64 = 0.55;
 /// No merging/melting for this long after a split or detaching.
 const COOLDOWN: f64 = 3.0;
 
-/// Largest blob radius (lamp heights), and as a fraction of lamp width.
+/// Largest blob radius (lamp heights), as a fraction of the narrowest width
+/// (it must fit the bottle's neck), and of the widest (two must fit side by
+/// side, or a narrow lamp jams).
 const MAX_RADIUS: f64 = 0.16;
-const MAX_RADIUS_OF_WIDTH: f64 = 0.42;
+const MAX_RADIUS_OF_WIDTH: f64 = 0.48;
+const MAX_RADIUS_OF_WIDEST: f64 = 0.25;
 const MAX_BLOBS: usize = 40;
 
 /// Wall spring stiffness (1/s²).
 const WALL: f64 = 12.0;
 /// Hard caps that keep the sim sane whatever happens.
 const MAX_SPEED: f64 = 0.3;
-const STRETCH_RANGE: (f64, f64) = (0.7, 1.6);
+const STRETCH_RANGE: (f64, f64) = (0.65, 1.9);
 /// Stretch follows velocity: tall when moving vertically, wide when moving
-/// sideways, relaxing at `STRETCH_RELAX` per second.
-const STRETCH_GAIN: f64 = 3.0;
+/// sideways, relaxing at `STRETCH_RELAX` per second. A hot blob at full
+/// speed (~0.06/s) aims for about 1.4.
+const STRETCH_GAIN: f64 = 7.0;
 const STRETCH_RELAX: f64 = 0.8;
 
 /// Lateral meander acceleration amplitude, and frequency range (rad/s).
@@ -133,6 +156,9 @@ const FLOW_CELL: f64 = 0.8;
 const WALL_EASE: f64 = 0.08;
 /// Pool area eases toward the volume target at this rate (1/s).
 const POOL_EASE: f64 = 0.5;
+/// The bottle world's fixed aspect (bounding box width ÷ height): the
+/// §2.1 silhouette at the default cell aspect. Glass never resizes the sim.
+pub const BOTTLE_ASPECT: f64 = 0.5;
 /// Accepted lamp aspect range.
 const ASPECT_RANGE: (f64, f64) = (0.05, 20.0);
 
@@ -165,6 +191,15 @@ impl Shape {
                     1.0 + (top - 1.0) * (y - BULGE_Y) / (1.0 - BULGE_Y)
                 }
             }
+        }
+    }
+
+    /// World width for a lamp whose view is `aspect` wide: the bottle's is
+    /// fixed, the tank's follows the view.
+    fn world_width(self, aspect: f64) -> f64 {
+        match self {
+            Shape::Tank => aspect.clamp(ASPECT_RANGE.0, ASPECT_RANGE.1),
+            Shape::Bottle => BOTTLE_ASPECT,
         }
     }
 
@@ -230,11 +265,12 @@ pub struct World {
 }
 
 impl World {
-    /// A fresh lamp `aspect` wide (visual width ÷ height), seeded so the same
-    /// seed always plays out the same way. Starts with some wax already
+    /// A fresh lamp `aspect` wide (visual width ÷ height; ignored for the
+    /// bottle, see [`BOTTLE_ASPECT`]), seeded so the same seed always plays
+    /// out the same way. Starts with some wax already
     /// afloat; run [`World::prewarm`] to skip the opening entirely.
     pub fn new(seed: u64, aspect: f64, shape: Shape) -> Self {
-        let width = aspect.clamp(ASPECT_RANGE.0, ASPECT_RANGE.1);
+        let width = shape.world_width(aspect);
         let mut world = Self {
             time: 0.0,
             last_dt: 0.0,
@@ -310,9 +346,10 @@ impl World {
 
     /// The lamp's on-screen aspect changed. The view follows at once; walls
     /// ease over ~250 ms, pushing blobs, and the pool slowly adjusts so wax
-    /// stays at [`FILL`] of the container.
+    /// stays at [`FILL`] of the container. A no-op for the bottle, whose
+    /// world never resizes.
     pub fn set_aspect(&mut self, aspect: f64) {
-        let width = aspect.clamp(ASPECT_RANGE.0, ASPECT_RANGE.1);
+        let width = self.shape.world_width(aspect);
         if (width - self.view_width).abs() > 1e-9 {
             self.view_width = width;
             self.wax_target = FILL * self.shape.area(width);
@@ -353,7 +390,22 @@ impl World {
 
     fn max_radius(&self) -> f64 {
         let narrowest = self.wall_width * self.shape.width_fraction(1.0);
-        MAX_RADIUS.min(MAX_RADIUS_OF_WIDTH * narrowest)
+        MAX_RADIUS
+            .min(MAX_RADIUS_OF_WIDTH * narrowest)
+            .min(MAX_RADIUS_OF_WIDEST * self.wall_width)
+    }
+
+    /// Pool depth, in `POOL_DEPTH`s, past which the pool buds regardless
+    /// of the blob count.
+    fn deep_pool(&self) -> f64 {
+        DEEP_POOL * self.heat_deep_pool()
+    }
+
+    /// How deep the pool is relative to [`POOL_DEPTH`] (which a cooler lamp
+    /// lets grow), 1..=4: a deep pool buds this much more often and its buds
+    /// grow this much faster.
+    fn pool_surplus(&self) -> f64 {
+        (self.pool_level() / (POOL_DEPTH * self.heat_deep_pool())).clamp(1.0, 4.0)
     }
 
     fn min_pool_area(&self) -> f64 {
@@ -364,8 +416,8 @@ impl World {
     /// Scales with heat, which eases, so the count changes gradually.
     fn target_blobs(&self) -> usize {
         let base = match self.shape {
-            Shape::Tank => (5.0 * self.wall_width).clamp(4.0, 28.0),
-            Shape::Bottle => 8.0,
+            Shape::Tank => (3.5 * self.wall_width).clamp(3.0, 20.0),
+            Shape::Bottle => 5.0,
         };
         ((base * self.heat_blobs()).round() as usize).clamp(2, MAX_BLOBS)
     }
@@ -486,7 +538,7 @@ impl World {
         let (melt_rate, bud_time) = match self.reseed {
             Some(Reseed::Melting) => (controls::RESEED_MELT_RATE, BUD_TIME),
             Some(Reseed::Refill { .. }) => (MELT_RATE, BUD_TIME / controls::REFILL_BUD_SPEEDUP),
-            None => (MELT_RATE, BUD_TIME),
+            None => (MELT_RATE, BUD_TIME / self.pool_surplus()),
         };
         for blob in &mut self.blobs {
             if blob.phase == Phase::Free {
@@ -519,9 +571,10 @@ impl World {
                     self.pool_area -= grow;
                     blob.set_area(blob.area() + grow);
                     let g = (blob.radius / target).min(1.0);
-                    // Rises out of the pool as it swells, stretching at the neck.
+                    // A wide, low bulge on the pool that rises as it swells
+                    // and draws up tall at the neck before letting go.
                     blob.y = surface + blob.radius * (1.6 * g - 0.7);
-                    blob.stretch = 1.0 + 0.3 * g;
+                    blob.stretch = 0.7 + 0.65 * g * g;
                     if g >= 1.0 {
                         blob.phase = Phase::Free;
                         blob.cooldown = COOLDOWN;
@@ -618,7 +671,7 @@ impl World {
             // and faster, so they drift apart.
             let top_share = self.rng.range(0.4, 0.6);
             let parent = self.blobs[i].clone();
-            let reach = 0.9 * parent.radius * parent.stretch;
+            let reach = SPLIT_REACH * parent.radius * parent.stretch;
             let mut top = parent.clone();
             top.id = self.next_id;
             self.next_id += 1;
@@ -653,15 +706,17 @@ impl World {
         if self.spawn_timer > 0.0 {
             return;
         }
-        self.spawn_timer = self.rng.range(SPAWN_GAP.0, SPAWN_GAP.1) * gap_scale;
+        let surplus = self.pool_surplus();
+        self.spawn_timer = self.rng.range(SPAWN_GAP.0, SPAWN_GAP.1) * gap_scale / surplus;
 
         let buds = self
             .blobs
             .iter()
             .filter(|b| matches!(b.phase, Phase::Budding { .. }))
             .count();
-        let max_buds = (1.5 * self.wall_width).round().max(1.0) as usize;
-        if self.blobs.len() >= self.target_blobs() || buds >= max_buds {
+        let deep = self.pool_level() > self.deep_pool() * POOL_DEPTH;
+        let max_buds = (1.5 * self.wall_width).round().max(1.0) as usize + usize::from(deep);
+        if (self.blobs.len() >= self.target_blobs() && !deep) || buds >= max_buds {
             return;
         }
         self.bud_at(None);
@@ -673,8 +728,8 @@ impl World {
         if self.blobs.len() >= MAX_BLOBS {
             return;
         }
-        let target = (self.typical_radius() * self.rng.range(0.75, 1.2))
-            .min(0.7 * self.max_radius())
+        let target = (self.typical_radius() * self.rng.range(BUD_SIZE.0, BUD_SIZE.1))
+            .min(MAX_BUD * self.max_radius())
             .max(2.0 * MELTED_RADIUS);
         if self.pool_area - self.min_pool_area() < 0.5 * PI * target * target {
             return;
@@ -684,14 +739,9 @@ impl World {
             Some(x) => x.clamp(-half, half),
             None => self.rng.range(-half, half),
         };
-        let level = self.pool_level();
-        let blob = self.new_blob(
-            x,
-            level,
-            MELTED_RADIUS,
-            POOL_TEMP,
-            Phase::Budding { target },
-        );
+        // Just under the surface, where the bud's first step puts it.
+        let y = pool_surface(self.pool_level(), x, self.time) - 0.7 * MELTED_RADIUS;
+        let blob = self.new_blob(x, y, MELTED_RADIUS, POOL_TEMP, Phase::Budding { target });
         self.pool_area -= blob.area();
         self.blobs.push(blob);
     }
@@ -784,10 +834,10 @@ impl World {
     fn scatter_initial_blobs(&mut self) {
         let count = (self.target_blobs() * 3).div_ceil(4);
         let typical = self.typical_radius();
-        let max_radius = 0.7 * self.max_radius();
+        let max_radius = MAX_BUD * self.max_radius();
         let mut afloat = 0.0;
         for _ in 0..count {
-            let radius = (typical * self.rng.range(0.8, 1.15)).min(max_radius);
+            let radius = (typical * self.rng.range(BUD_SIZE.0, BUD_SIZE.1)).min(max_radius);
             // A few tries at a spot that doesn't overlap anything.
             let (mut x, mut y) = (0.0, 0.0);
             for _ in 0..8 {

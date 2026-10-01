@@ -1,13 +1,15 @@
 //! Responsive layout (docs/design.md §1): a pure function from the
 //! terminal size and a few settings to non-overlapping placed elements.
-//! No history, no hysteresis, no terminal access, so it is exhaustively
-//! testable (see `ui/tests.rs`).
+//! No terminal access and no history beyond the last frame's glass/bleed
+//! choice (passed in), so it is exhaustively testable (see `ui/tests.rs`).
 //!
 //! The rules, in brief:
 //!
 //! * The lamp is always placed (unless the screen is under 4×2).
 //! * Frame: `glass` (a lamp silhouette) when there are ≥ 20 content rows
 //!   and the content isn't wider than 2.2:1, else `bleed` (edge to edge).
+//!   Coming from bleed, glass needs ≥ 22 rows and ≤ 2.0:1, so a window
+//!   edge dragged across the line doesn't flap between the two.
 //! * The panel (clock + pomodoro) goes right of the lamp, else below it,
 //!   else it collapses into a one-line chip over the lamp's corner.
 //! * Things drop out whole in the §1.3 hide order: date line, then outer
@@ -35,6 +37,8 @@ pub struct LayoutInput<'a> {
     pub minimal_clock: MinimalClock,
     /// Cell height ÷ width (§2.3).
     pub cell_aspect: f64,
+    /// The frame the lamp had last time, for auto's hysteresis.
+    pub prev_frame: Option<LampFrame>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,6 +115,10 @@ pub struct Layout {
 
 /// Lamp width ÷ height in cells, at `cell_aspect` 2.0 (§1.4: `W = 0.8 Ht`).
 const GLASS_WIDTH: f64 = 0.8;
+/// Auto picks glass with at least this many content rows and at most this
+/// visual aspect (§2.1); coming from bleed it needs the stricter pair.
+const AUTO_GLASS: (u16, f64) = (20, 2.2);
+const AUTO_GLASS_ENTER: (u16, f64) = (22, 2.0);
 /// Smallest glass lamp. Auto only picks glass with ≥ 20 content rows; a
 /// forced glass below this becomes bleed (hide order 6).
 const MIN_GLASS_ROWS: u16 = 12;
@@ -207,8 +215,13 @@ pub fn layout(area: Rect, input: &LayoutInput) -> Layout {
         FrameMode::Bleed => false,
         FrameMode::Glass => true,
         FrameMode::Auto => {
-            content.height >= 20
-                && visual_aspect(content.width, content.height, input.cell_aspect) <= 2.2
+            // Stay glass down to the §2.1 line; re-enter it only well inside.
+            let (min_rows, max_aspect) = match input.prev_frame {
+                Some(LampFrame::Bleed) => (AUTO_GLASS_ENTER.0, AUTO_GLASS_ENTER.1),
+                _ => (AUTO_GLASS.0, AUTO_GLASS.1),
+            };
+            content.height >= min_rows
+                && visual_aspect(content.width, content.height, input.cell_aspect) <= max_aspect
         }
     };
     let margin_steps = [(vm, hm), (0, 0)];

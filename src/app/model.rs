@@ -394,6 +394,7 @@ impl Model {
             chip: chip.map(|(kind, text)| (kind, text.chars().count() as u16)),
             minimal_clock: self.settings.minimal.clock,
             cell_aspect: self.cell_aspect,
+            prev_frame: self.layout.lamp.map(|lamp| lamp.frame),
         };
         layout::layout(area, &input)
     }

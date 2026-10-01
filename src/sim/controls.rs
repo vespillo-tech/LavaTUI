@@ -4,6 +4,8 @@
 //! - **Heat** 1..=5 ([`World::set_heat`]): more heat = more, smaller,
 //!   faster blobs. The level the sim *uses* eases toward the chosen one over
 //!   a few seconds, so buoyancy, blob count and budding rate never jump.
+//! - **Shape** ([`World::set_shape`]): glass ↔ bleed keeps the blobs that
+//!   fit where they are.
 //! - **Reseed** ([`World::reseed`]): every blob melts into the pool in about
 //!   two seconds, then the pool buds a fresh lamp from the new seed.
 //! - **Heat pulse** ([`World::heat_pulse`]): warms the wax around a point
@@ -30,6 +32,9 @@ const HEAT_EASE: f64 = 0.75;
 const HEAT_BUOYANCY: f64 = 0.35;
 const HEAT_BLOBS: f64 = 0.4;
 const HEAT_SPAWN: f64 = 0.4;
+/// At heat 1 the pool may get this much deeper (relative to heat 3) before
+/// it buds past the blob count; at heat 5, this much shallower.
+const HEAT_DEEP_POOL: f64 = 0.5;
 
 /// Reseed: blobs melt at this fraction of their area per second, so even
 /// the largest is gone in under two seconds.
@@ -143,17 +148,33 @@ impl World {
     }
 
     /// Switch the container (glass bottle ↔ bleed tank) at a new `aspect`.
-    /// The two can differ several times over in area, so the wax melts back
-    /// into the pool (as in [`World::reseed`], ~2 s), the pool eases to the
-    /// new volume and buds a fresh lamp. Nothing pops or teleports.
+    ///
+    /// The lamp carries on: both containers share the centre line and the
+    /// height, so every blob whose centre is inside the new container stays
+    /// exactly where it is, at its size and temperature, still moving. The
+    /// walls (springs) ease any overhang back in. Blobs whose centre is
+    /// outside the new container can't be seen in the new view any more and
+    /// are dropped; the pool keeps its level. The total wax then eases to
+    /// [`super::FILL`] of the new container through the pool, which buds
+    /// sooner while it's deep, so a wider lamp fills up within seconds.
+    ///
+    /// Wax is conserved by every step, not across this call: the two
+    /// containers can differ several times over in area.
     pub fn set_shape(&mut self, shape: Shape, aspect: f64) {
         if shape != self.shape {
-            let seed = self.rng.next_u64();
-            self.reseed(seed);
+            let level = self.pool_level();
             self.shape = shape;
-            let width = aspect.clamp(super::ASPECT_RANGE.0, super::ASPECT_RANGE.1);
+            let width = shape.world_width(aspect);
             self.view_width = width;
+            self.wall_width = width;
             self.wax_target = super::FILL * shape.area(width);
+            self.blobs
+                .retain(|b| b.x.abs() <= 0.5 * width * shape.width_fraction(b.y));
+            self.pool_area = level.max(super::MIN_POOL_DEPTH) * self.bottom_width();
+            self.prev_pool_level = self.pool_level();
+            // Settle the count against the new container's: a lamp short
+            // of blobs buds at once.
+            self.spawn_timer = self.spawn_timer.min(0.5);
         }
         self.set_aspect(aspect);
     }
@@ -220,6 +241,11 @@ impl World {
 
     pub(super) fn heat_blobs(&self) -> f64 {
         1.0 + HEAT_BLOBS * self.heat_offset()
+    }
+
+    /// Multiplier on the pool depth that forces budding.
+    pub(super) fn heat_deep_pool(&self) -> f64 {
+        1.0 - HEAT_DEEP_POOL * self.heat_offset()
     }
 
     /// Multiplier on the gap between bud attempts.
