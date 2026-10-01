@@ -36,7 +36,6 @@ pub enum Role {
     /// Cap, base, overlay borders.
     #[cfg_attr(not(test), expect(dead_code, reason = "glass frame: lava-xxx"))]
     Metal,
-    #[cfg_attr(not(test), expect(dead_code, reason = "chrome: lava-xxx"))]
     Text,
     Dim,
     /// The one accent.

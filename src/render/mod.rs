@@ -38,7 +38,6 @@ pub struct Grid {
 }
 
 impl Grid {
-    #[cfg_attr(not(test), expect(dead_code, reason = "glyph styles: lava-y7g"))]
     pub const CELL: Grid = Grid { x: 1, y: 1 };
     pub const HALF_BLOCK: Grid = Grid { x: 1, y: 2 };
     pub const BRAILLE: Grid = Grid { x: 2, y: 4 };
@@ -107,7 +106,6 @@ pub struct Canvas<'a> {
     pub height: usize,
     pub theme: &'a Theme,
     /// Seconds since launch, for styles that animate on their own.
-    #[expect(dead_code, reason = "animated styles: lava-y7g")]
     pub time: f64,
 }
 
