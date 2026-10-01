@@ -146,7 +146,9 @@ reads your quit key; on macOS a read on the master after exit is EOF/EIO.
 - `theme/`    — palettes + colour depth: the only place colours are decided.
                 `Palette` (9 `Role`s × 8 palettes from design §5.2, hex/256/16),
                 `ColorDepth::detect()` (NO_COLOR → COLORTERM → TERM, §5.3),
-                `Theme::new(palette, depth)`. Styles ask for `Ink::Role(r)`,
+                `Theme::new(palette, depth)`; `theme.with_role(role, paint)`
+                repaints one role (ramps follow), e.g. the bleed phase-change
+                flash. Styles ask for `Ink::Role(r)`,
                 `Ink::Wax(t)` (cool→mid→hot) or `Ink::Heat(t)` (liquid→hot) via
                 `theme.color(ink)` / `theme.paint(ink).mix(..).scale(..).color()`;
                 16/none never blend (dominant side wins), 256 snaps to xterm.
@@ -159,8 +161,12 @@ reads your quit key; on macOS a read on the master after exit is EOF/EIO.
                 Styles live one per file in `render/styles/`, registered in
                 `styles::ALL` (`StyleId` cycles/looks up). Shared helpers:
                 `coverage` (quantised AA edge), `wax_heat`, `bayer`,
-                `cell::{half_block, braille}`. Snapshots: `render/snapshots/`
-                (`UPDATE_SNAPSHOTS=1 cargo test` to rewrite, then review).
+                `cell::{half_block, braille}`. `walls.rs`: the bottle's
+                walls at half-column / half-row precision; the mask is per
+                cell row (cut cells count as inside), then `smooth`
+                reshapes cut cells into quadrant glyphs (blending themes;
+                `ui::glass` draws `▕ │ ▏` otherwise). Snapshots:
+                `render/snapshots/` (`UPDATE_SNAPSHOTS=1 cargo test` to rewrite, then review).
 - `light/`    — `Lighting` trait + `Lamplight`, the lighting pass (lava-5ak).
                 Fills a per-sample brightness buffer (1.0 = unlit) that styles
                 read via `Canvas::light`: dome normals from depth + density
@@ -174,7 +180,8 @@ reads your quit key; on macOS a read on the master after exit is EOF/EIO.
                 density instead (§5.3). Styles with their own key light
                 (glass) take it on the liquid only. `LampView` resets light
                 to 1.0 outside the glass. Tuning at the top of the file.
-                `ui::draw` passes it when `lamp.lighting` is on (`l` toggles).
+                `ui::draw` passes it when `lamp.lighting` is on (`l` toggles);
+                `ui::glass` then adds the §2.1 highlight streak.
 - `clock/`    — clock faces (`Face` trait + `FACES` registry: blocks, segment,
                 analog, binary, words, text; each lists fixed-size `Form`s and
                 `fit()` picks the largest that fits) and the pomodoro state

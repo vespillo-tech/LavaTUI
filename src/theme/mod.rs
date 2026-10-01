@@ -205,28 +205,59 @@ pub struct Theme {
     blend: bool,
     wax: [Rgb; RAMP_STEPS],
     heat: [Rgb; RAMP_STEPS],
+    /// Per-role overrides of the palette ([`with_role`](Self::with_role)),
+    /// indexed by `Role as usize`.
+    repaint: [Option<Repaint>; 9],
+}
+
+/// A role's colour taken from a [`Paint`] instead of the palette.
+#[derive(Debug, Clone, Copy)]
+struct Repaint {
+    rgb: Rgb,
+    fallback: Color,
+    index: Option<u8>,
 }
 
 impl Theme {
     pub fn new(palette: &'static Palette, depth: ColorDepth) -> Self {
         let blend =
             palette.has_rgb() && matches!(depth, ColorDepth::TrueColor | ColorDepth::Ansi256);
-        let rgb = |r| palette.swatch(r).rgb.unwrap_or_default();
+        let mut theme = Theme {
+            palette,
+            depth,
+            blend,
+            wax: [Rgb::default(); RAMP_STEPS],
+            heat: [Rgb::default(); RAMP_STEPS],
+            repaint: [None; 9],
+        };
+        theme.build_ramps();
+        theme
+    }
+
+    /// This theme with `role` repainted as `paint` (any mix or scale of
+    /// inks), e.g. the liquid pulsing toward `accent` for the phase-change
+    /// flash (§4.5). Everything drawn in the role follows, ramps included.
+    pub fn with_role(&self, role: Role, paint: Paint<'_>) -> Theme {
+        let mut theme = self.clone();
+        theme.repaint[role as usize] = Some(Repaint {
+            rgb: paint.rgb,
+            fallback: paint.fallback,
+            index: paint.index,
+        });
+        theme.build_ramps();
+        theme
+    }
+
+    fn build_ramps(&mut self) {
+        let rgb = |r| self.rgb(Ink::Role(r));
         let (liquid, cool, mid, hot) = (
             rgb(Role::Liquid),
             rgb(Role::WaxCool),
             rgb(Role::WaxMid),
             rgb(Role::WaxHot),
         );
-        let wax = ramp(&[(0.0, cool), (0.5, mid), (1.0, hot)]);
-        let heat = ramp(&[(0.0, liquid), (HEAT_COOL_AT, cool), (0.7, mid), (1.0, hot)]);
-        Theme {
-            palette,
-            depth,
-            blend,
-            wax,
-            heat,
-        }
+        self.wax = ramp(&[(0.0, cool), (0.5, mid), (1.0, hot)]);
+        self.heat = ramp(&[(0.0, liquid), (HEAT_COOL_AT, cool), (0.7, mid), (1.0, hot)]);
     }
 
     pub fn palette(&self) -> &'static Palette {
@@ -256,7 +287,10 @@ impl Theme {
             rgb: self.rgb(ink),
             fallback: self.fallback(ink),
             index: match ink {
-                Ink::Role(role) => self.palette.swatch(role).x256,
+                Ink::Role(role) => match self.repaint[role as usize] {
+                    Some(r) => r.index,
+                    None => self.palette.swatch(role).x256,
+                },
                 _ => None,
             },
         }
@@ -270,6 +304,31 @@ impl Theme {
     /// Shorthand for a role's colour.
     pub fn role(&self, role: Role) -> Color {
         self.color(Ink::Role(role))
+    }
+
+    /// Mix two colours this theme produced (say, read back from a buffer),
+    /// `a` → `b` by `t`. Without blending, or with a terminal-default
+    /// colour on either side, the dominant side wins.
+    pub fn blend(&self, a: Color, b: Color, t: f32) -> Color {
+        let dominant = if t >= 0.5 { b } else { a };
+        if t <= 0.0 || t >= 1.0 || !self.blend {
+            return dominant;
+        }
+        let rgb = |c| match c {
+            Color::Rgb(r, g, b) => Some(Rgb(r, g, b)),
+            Color::Indexed(i) => Some(xterm::rgb(i)),
+            _ => None,
+        };
+        let (Some(a), Some(b)) = (rgb(a), rgb(b)) else {
+            return dominant;
+        };
+        Paint {
+            theme: self,
+            rgb: a.lerp(b, t),
+            fallback: dominant,
+            index: None,
+        }
+        .color()
     }
 
     /// A text style in `role`. In NO_COLOR, `accent` becomes bold (§5.3).
@@ -287,7 +346,10 @@ impl Theme {
             lut[(t.clamp(0.0, 1.0) * (RAMP_STEPS - 1) as f32).round() as usize]
         };
         match ink {
-            Ink::Role(role) => self.palette.swatch(role).rgb.unwrap_or_default(),
+            Ink::Role(role) => match self.repaint[role as usize] {
+                Some(r) => r.rgb,
+                None => self.palette.swatch(role).rgb.unwrap_or_default(),
+            },
             Ink::Wax(t) => lut(&self.wax, t),
             Ink::Heat(t) => lut(&self.heat, t),
         }
@@ -304,6 +366,9 @@ impl Theme {
             Ink::Heat(t) if t < HEAT_COOL_AT * 0.75 => Role::Liquid,
             Ink::Heat(t) => wax_step((t - HEAT_COOL_AT) / (1.0 - HEAT_COOL_AT)),
         };
+        if let Some(r) = self.repaint[role as usize] {
+            return r.fallback;
+        }
         let swatch = self.palette.swatch(role);
         match self.depth {
             ColorDepth::TrueColor => swatch

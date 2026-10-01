@@ -289,3 +289,16 @@ fn resize_across_the_glass_threshold_switches_the_container() {
     assert_eq!(m.layout.lamp.unwrap().frame, LampFrame::Bleed);
     assert_eq!(m.field.shape(), Shape::Tank);
 }
+
+#[test]
+fn flash_level_rises_and_falls_once() {
+    let (mut m, t0) = model("flash-level");
+    assert_eq!(m.flash_level(), 0.0);
+    m.flash = Some(t0);
+    m.now = t0 + FLASH_TIME / 2;
+    assert!(m.flash_level() > 0.99);
+    m.now = t0 + FLASH_TIME / 6;
+    assert!((m.flash_level() - 0.5).abs() < 0.01);
+    m.now = t0 + FLASH_TIME;
+    assert!(m.flash_level() < 0.01);
+}

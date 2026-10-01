@@ -1,9 +1,10 @@
 //! **crt**: an old phosphor monitor. Each cell row is one scanline: the top
 //! pixel is the lit beam, the bottom a dark gap. The wax glows with a soft
 //! phosphor bloom into the liquid, the picture falls off toward the
-//! corners, and a faint hum bar rolls slowly down the screen. Without
-//! blending the scanlines are drawn with glyphs instead: `▀` for hot wax,
-//! a thin `▔` for cool.
+//! corners, and a faint hum bar rolls slowly down the screen. The tube
+//! is the glass: outside it the app background stays plain. Without
+//! blending the wax is drawn with glyphs instead: `▀` scanlines for cool
+//! wax, solid `█` for hot.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -43,13 +44,23 @@ impl Style for Crt {
                 let (yt, yb) = (2 * cy, 2 * cy + 1);
                 let base = c.theme.color(c.backdrop(cx, yt));
                 let cell = &mut buf[(area.x + cx as u16, area.y + cy as u16)];
+                if !c.inside(cx, yt) {
+                    cell.set_char(' ').set_bg(base);
+                    continue;
+                }
                 if !c.theme.blends() {
-                    let s = c.at(cx, yt);
-                    if s.density < SURFACE {
+                    let (t, b) = (c.at(cx, yt), c.at(cx, yb));
+                    let wax = [t, b].map(|s| s.density >= SURFACE);
+                    if wax == [false, false] {
                         cell.set_char(' ').set_bg(base);
                     } else {
+                        let s = if wax[0] { t } else { b };
                         let heat = wax_heat(s.temp);
-                        let ch = if heat < 0.5 { '▔' } else { '▀' };
+                        let ch = match wax {
+                            [true, true] if heat >= 0.5 => '█',
+                            [false, true] => '▄',
+                            _ => '▀',
+                        };
                         let fg = c.theme.color(Ink::Wax(heat));
                         cell.set_char(ch).set_fg(fg).set_bg(base);
                     }
