@@ -1,0 +1,144 @@
+//! The help overlay (§4.3), generated from the keymap table so it can't
+//! drift from dispatch.
+//!
+//! * Roomy terminals: a centred sheet with a rounded `metal` border, two
+//!   columns (lamp | clock & pomodoro + app); the lamp keeps animating
+//!   behind it, dimmed in truecolor.
+//! * Smaller: a full-screen, one-column sheet, scrollable with `j k`.
+//! * Micro: the single line `? help · q quit · m mode`.
+
+pub mod sheet;
+
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
+use ratatui::style::Style;
+use ratatui::widgets::{Block, BorderType, Clear, Widget};
+
+use crate::app::Model;
+use crate::theme::{ColorDepth, Role, Theme};
+use crate::ui::chrome::fit_words;
+pub use sheet::footprint;
+use sheet::{Line, Mode, body, mode};
+
+/// How far the lamp behind the sheet fades toward `bg` (truecolor).
+const BEHIND_FADE: f32 = 0.65;
+
+pub fn draw(buf: &mut Buffer, area: Rect, scroll: u16, model: &Model) {
+    if area.is_empty() {
+        return;
+    }
+    let ink = Inks::new(model);
+    match mode(area) {
+        Mode::Line => return draw_line(buf, area, &ink),
+        Mode::Full => {
+            Clear.render(area, buf);
+            buf.set_style(area, ink.bg);
+            buf.set_string(area.x + 1, area.y, "keys", ink.accent);
+            let close = "esc close";
+            if area.width as usize > 6 + close.len() {
+                let x = area.right() - 1 - close.len() as u16;
+                buf.set_string(x, area.y, close, ink.dim);
+            }
+        }
+        Mode::Sheet(sheet) => {
+            dim_outside(buf, sheet, &model.theme);
+            Clear.render(sheet, buf);
+            buf.set_style(sheet, ink.bg);
+            Block::bordered()
+                .border_type(BorderType::Rounded)
+                .border_style(Style::new().fg(model.theme.role(Role::Metal)))
+                .title(ratatui::text::Line::styled(" keys ", ink.accent))
+                .title_bottom(ratatui::text::Line::styled(" esc close ", ink.dim).right_aligned())
+                .render(sheet, buf);
+        }
+    }
+    if let Some((cols, inner)) = body(area) {
+        draw_body(buf, &cols, inner, scroll, &ink);
+    }
+}
+
+/// The text styles the help draws in.
+struct Inks {
+    text: Style,
+    dim: Style,
+    accent: Style,
+    bg: Style,
+}
+
+impl Inks {
+    fn new(model: &Model) -> Self {
+        let theme = &model.theme;
+        Inks {
+            text: theme.text(Role::Text),
+            dim: theme.text(Role::Dim),
+            accent: theme.text(Role::Accent),
+            bg: Style::new().bg(super::background(model)),
+        }
+    }
+}
+
+/// Micro: as much of `? help · q quit · m mode` as fits, on the top row.
+fn draw_line(buf: &mut Buffer, area: Rect, ink: &Inks) {
+    let items = ["? help", "q quit", "m mode"];
+    for n in (1..=items.len()).rev() {
+        let s = items[..n].join(" · ");
+        if s.chars().count() <= usize::from(area.width) {
+            let line = Rect::new(area.x, area.y, area.width, 1);
+            Clear.render(line, buf);
+            buf.set_style(line, ink.bg);
+            buf.set_string(area.x, area.y, s, ink.dim.patch(ink.bg));
+            return;
+        }
+    }
+}
+
+/// The key columns in `inner`, scrolled down `scroll` lines.
+fn draw_body(buf: &mut Buffer, cols: &[Vec<Line>], inner: Rect, scroll: u16, ink: &Inks) {
+    let col_w = inner.width / cols.len() as u16;
+    for (c, lines) in cols.iter().enumerate() {
+        let x = inner.x + c as u16 * col_w;
+        let shown = lines
+            .iter()
+            .skip(usize::from(scroll))
+            .take(usize::from(inner.height));
+        for (row, line) in shown.enumerate() {
+            let y = inner.y + row as u16;
+            match *line {
+                Line::Header(s) => {
+                    buf.set_stringn(x, y, s.title(), usize::from(col_w), ink.dim);
+                }
+                Line::Key { keys, label, key_w } => {
+                    // Never a key without its label: a long label sheds
+                    // trailing words (`frame: auto/glass/bleed` → `frame`),
+                    // and a key with no room for any is left out.
+                    let lx = x + key_w as u16 + 2;
+                    let room = usize::from((x + col_w).saturating_sub(lx + 1));
+                    if let Some(label) = fit_words(label, room) {
+                        buf.set_string(x, y, keys, ink.accent);
+                        buf.set_string(lx, y, label.trim_end_matches(':'), ink.text);
+                    }
+                }
+                Line::Blank => {}
+            }
+        }
+    }
+}
+
+/// Fade everything outside `keep` toward the background (truecolor only).
+fn dim_outside(buf: &mut Buffer, keep: Rect, theme: &Theme) {
+    if theme.depth() != ColorDepth::TrueColor {
+        return;
+    }
+    let area = buf.area;
+    for y in area.top()..area.bottom() {
+        for x in area.left()..area.right() {
+            if keep.contains((x, y).into()) {
+                continue;
+            }
+            if let Some(cell) = buf.cell_mut((x, y)) {
+                cell.fg = theme.fade_to_bg(cell.fg, BEHIND_FADE);
+                cell.bg = theme.fade_to_bg(cell.bg, BEHIND_FADE);
+            }
+        }
+    }
+}

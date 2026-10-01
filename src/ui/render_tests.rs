@@ -290,7 +290,7 @@ fn help_shows_every_binding() {
     for (cols, rows) in [(80, 24), (120, 36), (50, 16), (30, 10)] {
         let (mut m, t0) = model(cols, rows, 7);
         m.update(Action::Help, t0);
-        let max = super::help::max_scroll(m.layout.area);
+        let max = super::help::sheet::max_scroll(m.layout.area);
         let mut seen = String::new();
         for scroll in 0..=max {
             m.overlay = Overlay::Help { scroll };

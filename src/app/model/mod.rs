@@ -418,7 +418,7 @@ impl Model {
         self.layout = self.layout_for(area);
         // A taller window shows more help: don't leave its top scrolled away.
         if let Overlay::Help { scroll } = &mut self.overlay {
-            *scroll = (*scroll).min(crate::ui::help::max_scroll(area));
+            *scroll = (*scroll).min(crate::ui::help::sheet::max_scroll(area));
         }
     }
 

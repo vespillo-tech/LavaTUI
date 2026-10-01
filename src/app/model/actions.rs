@@ -50,7 +50,7 @@ impl Model {
             }
             Action::Down => {
                 self.overlay = Overlay::Help {
-                    scroll: (scroll + 1).min(crate::ui::help::max_scroll(self.layout.area)),
+                    scroll: (scroll + 1).min(crate::ui::help::sheet::max_scroll(self.layout.area)),
                 }
             }
             Action::Close => self.overlay = Overlay::None,

@@ -147,7 +147,7 @@ fn global_keys_are_off_while_help_is_open() {
     let Overlay::Help { scroll } = m.overlay else {
         panic!("help closed")
     };
-    assert_eq!(scroll, crate::ui::help::max_scroll(m.layout.area));
+    assert_eq!(scroll, crate::ui::help::sheet::max_scroll(m.layout.area));
     m.update(Action::Close, t0);
     assert_eq!(m.overlay, Overlay::None);
 }
