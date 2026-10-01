@@ -39,10 +39,17 @@ fn at(buf: &[f32], dx: f32, dy: f32) -> f32 {
     buf[y * N + x]
 }
 
+/// The normal [`tilt`] describes.
+fn normal(g: [f32; 2], bend: [f32; 2], rise: f32, flat: f32) -> [f32; 3] {
+    let (k, z) = tilt(g, bend, rise, flat);
+    [-g[0] * k, -g[1] * k, z]
+}
+
 #[test]
 fn normals_point_outward_on_a_circle() {
     let samples = circle(0.25, 0.4);
     let c = N as f32 / 2.0;
+    let flat = Rig::new(N, N).flat_diff;
     let mut checked = 0;
     for y in 1..N - 1 {
         for x in 1..N - 1 {
@@ -51,9 +58,14 @@ fn normals_point_outward_on_a_circle() {
                 continue;
             }
             // Same differences as `shade`, y up.
-            let gx = (d(x + 1, y) - d(x - 1, y)) * 0.5 * N as f32;
-            let gy = (d(x, y - 1) - d(x, y + 1)) * 0.5 * N as f32;
-            let n = normal(gx, gy, (d(x, y) - SURFACE) / DOME, FLAT);
+            let (left, right) = (d(x - 1, y), d(x + 1, y));
+            let (up, down, here) = (d(x, y - 1), d(x, y + 1), d(x, y));
+            let n = normal(
+                [right - left, up - down],
+                [left + right - 2.0 * here, up + down - 2.0 * here],
+                here - SURFACE,
+                flat,
+            );
             assert!((dot(n, n) - 1.0).abs() < 1e-4, "unit length: {n:?}");
             assert!(n[2] >= 0.0, "faces the viewer: {n:?}");
             let (rx, ry) = (x as f32 + 0.5 - c, c - (y as f32 + 0.5));
@@ -68,9 +80,9 @@ fn normals_point_outward_on_a_circle() {
     }
     assert!(checked > 100);
     // Rim is near edge-on, centre faces the viewer.
-    let rim = normal(-5.0, 0.0, 0.0, FLAT);
+    let rim = normal([-5.0, 0.0], [0.0, 0.0], 0.0, FLAT);
     assert!(rim[0] > 0.8, "{rim:?}");
-    assert_eq!(normal(0.0, 0.0, 0.0, FLAT), [0.0, 0.0, 1.0]);
+    assert_eq!(normal([0.0, 0.0], [0.0, 0.0], 0.0, FLAT), [0.0, 0.0, 1.0]);
 }
 
 #[test]
@@ -223,19 +235,27 @@ fn coarse_dome_matches_exact() {
             let (mut exact, mut coarse) = (vec![0.0; w * h], vec![0.0; w * h]);
             rig.shade_exact(&samples, &mut exact);
             rig.shade_coarse(&samples, &mut coarse);
-            // Off by a step at most, except where the exact light has a
-            // feature a pixel wide (a crease the dome model draws, see
-            // `FINE`), which nodes two pixels apart can't hold.
-            let (mut moved, mut far) = (0, 0);
+            // Off by a step at most, except where the exact light turns
+            // within a pixel or two (a small blob's highlight, a neck's
+            // saddle, see `FINE`), which nodes two pixels apart can't
+            // hold. The dome itself has no creases, so those are few and
+            // only a few steps off.
+            let (mut moved, mut far, mut most) = (0, 0, 0.0f32);
             for (e, c) in exact.iter().zip(&coarse) {
                 let d = (e - c).abs();
                 moved += usize::from(d > 0.0);
                 far += usize::from(d > 1.5 * step);
+                most = most.max(d);
             }
-            assert!(moved * 50 < w * h, "seed {seed}: {moved} pixels moved");
+            assert!(moved * 100 < w * h, "seed {seed}: {moved} pixels moved");
             assert!(
-                far * 2_000 < w * h,
+                far * 3_000 < w * h,
                 "seed {seed}: {far} pixels moved > a step"
+            );
+            assert!(
+                most <= 4.5 * step,
+                "seed {seed}: off by {} steps",
+                most / step
             );
             let lost = unexplained_pixels(&exact, &coarse, w, h);
             assert!(

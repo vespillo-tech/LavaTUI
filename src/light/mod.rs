@@ -8,9 +8,11 @@
 //! down the rows, with no heap scratch:
 //!
 //! * **Shape.** Each wax pixel gets a normal: its tilt comes from how deep
-//!   it sits inside the surface (rim = edge-on, core = facing you), its
-//!   direction from the density gradient (outward). So every blob reads as
-//!   a soft dome whatever its size or the resolution.
+//!   it sits inside the surface against how far the field still climbs
+//!   (rim = edge-on, top of a blob or ridge = facing you), its direction
+//!   from the density gradient (outward). So every blob reads as a soft
+//!   dome, and every tail or neck as a rounded ridge, whatever its size
+//!   or the resolution, with no creases.
 //! * **Key light.** Half-Lambert from a fixed light up and to the left, so
 //!   the lower-right of each blob falls into a gentle shadow, plus a small
 //!   Blinn-Phong highlight near the top-left of each dome. Hot wax glows on
@@ -54,8 +56,9 @@ const DIFFUSE: f32 = 0.6;
 /// Peak specular brightness added on blob tops.
 const SPECULAR: f32 = 0.32;
 /// Density above the surface over which a dome rises from edge-on (at the
-/// surface) to facing the viewer: about a lone blob's peak, so each blob
-/// curves like a sphere all the way to its centre.
+/// surface) toward facing the viewer where the field gives no top to aim
+/// at (see [`tilt`]): about a lone blob's peak. Wax rising on past it
+/// eases face-on by twice this.
 const DOME: f32 = 0.5;
 /// Gradient magnitude (density per world unit) below which the wax counts
 /// as flat (deep inside merged wax, the pool's interior).
@@ -88,14 +91,12 @@ const RUN: usize = 16;
 /// this resolution (braille at 200×60 is 240); the sharp wax/liquid edge,
 /// the glow and the base light stay per pixel.
 ///
-/// What nodes can't hold are the creases the dome model draws a pixel
-/// wide: where a core's normal snaps to face-on (density `SURFACE + DOME`)
-/// and along ridges and valleys that peak below it (tails, necks, where
-/// merged lobes meet), where the normal flips side within a pixel. Those
-/// come out two pixels wide and a few light steps softer. At cell size
-/// that's a shade in about one cell in a thousand and the odd braille
-/// stipple dot (measured on the live sim), so it isn't worth shading them
-/// exactly: catching them costs about as much as the exact pass.
+/// What nodes can't hold is shading that turns within a pixel or two:
+/// the highlight on a small blob, the saddle in a neck. Those come out
+/// two pixels wide and a light step or two softer, a shade in about one
+/// cell in a thousand (measured on the live sim), so it isn't worth
+/// shading them exactly: catching them costs about as much as the exact
+/// pass.
 ///
 /// Below this (half-block grids) interpolation starts to flip glyphs in
 /// the dithered styles, so it stays exact.
@@ -364,12 +365,21 @@ impl Rig {
     /// flattened on hot wax. Branch-free so the row loops vectorise.
     #[inline(always)]
     fn dome(&self, s: Sample, left: f32, right: f32, up: f32, down: f32) -> f32 {
-        // Raw differences: only the gradient's direction and its size
-        // against `FLAT` matter, so the scale goes on `flat_diff` instead.
-        let depth = (s.density - SURFACE) * (1.0 / DOME);
-        let n = normal(right - left, up - down, depth, self.flat_diff);
-        let shade = diffuse(dot(n, self.key)) - self.flat;
-        let spec = pow32(dot(n, self.half).max(0.0));
+        // Raw differences: only the gradient's direction, its size against
+        // `FLAT` and its ratio to the bend matter, so the scale goes on
+        // `flat_diff` instead.
+        let [gx, gy] = [right - left, up - down];
+        let twice = s.density + s.density;
+        let (k, z) = tilt(
+            [gx, gy],
+            [(left + right) - twice, (up + down) - twice],
+            s.density - SURFACE,
+            self.flat_diff,
+        );
+        // n · v for the normal [-gx · k, -gy · k, z], without building it.
+        let toward = |v: [f32; 3]| z * v[2] - k * (gx * v[0] + gy * v[1]);
+        let shade = diffuse(toward(self.key)) - self.flat;
+        let spec = pow32(toward(self.half).max(0.0));
         1.0 + (DIFFUSE * shade + SPECULAR * spec) * (1.0 - SELF_GLOW * heat(s.temp))
     }
 
@@ -501,25 +511,50 @@ fn spread(nodes: &[f32; NODES + 1], out: &mut [f32]) {
     }
 }
 
-/// Surface normal (x right, y up, z out of the screen) for a wax pixel
-/// with density gradient (`gx`, `gy`) (y up) and `depth` above the surface
-/// in [`DOME`]s, where a gradient of size `flat` is [`FLAT`]. Points
-/// outward (down the gradient), edge-on at the surface, facing the viewer
-/// at depth ≥ 1 or where the field is flat. Unit length; finite for finite
-/// input.
+/// Surface normal (x right, y up, z out of the screen) for a wax pixel,
+/// as its tilt `k` and facing `z`: the normal is `[-gx · k, -gy · k, z]`,
+/// unit length (finite for finite input). From the central differences
+/// of the density across the pixel, `[gx, gy]` (y up), its second
+/// differences `bend` (across, down), and its `rise` in density above the
+/// surface, where a gradient of size `flat` is [`FLAT`]. Points outward (down the gradient), edge-on at the surface,
+/// facing the viewer at the top of any dome or ridge, the bottom of any
+/// seam, at a rise of `2 · DOME` or where the field is flat, and turns
+/// smoothly between them.
 #[inline(always)]
-fn normal(gx: f32, gy: f32, depth: f32, flat: f32) -> [f32; 3] {
-    // Near a blob's centre density falls off with r², so `1 - depth` ∝ r²
-    // and its square root ∝ r: a sphere's profile.
-    let sphere = (1.0 - unit(depth)).sqrt();
+fn tilt([gx, gy]: [f32; 2], [bx, by]: [f32; 2], rise: f32, flat: f32) -> (f32, f32) {
+    // The surface is a dome from the rim (edge-on) to its top (facing
+    // you): sin² θ = top / (rise + top), with `top` the density still to
+    // climb to it. Near a top density falls off with r², so
+    // `top` ∝ r² and sin θ ∝ r: a sphere's (or across a ridge, a
+    // cylinder's) profile.
+    //
+    // The top is where the parabola through the pixel along the gradient
+    // levels off: (g²)² / (8 · |bend|) in central differences. That turns
+    // tails and necks (ridges that peak low) face-on along their centre
+    // line, and lobe seams (valleys, the parabola's bottom) likewise,
+    // instead of flipping side within a pixel. Near the rim the field
+    // straightens out, the top is far off, and the dome is capped: sin θ
+    // falls off as a sphere of height `DOME` would at the rim, but in a
+    // straight line, face-on at `2 · DOME`, so merged wax rising past
+    // `DOME` draws no ring.
+    //
+    // sin² θ is the smaller of the two, taken over the peak's denominator
+    // so it's one division (this loop is arithmetic-bound).
+    let g2 = gx * gx + gy * gy;
+    let rise = rise.max(0.0);
+    let peak = g2 * g2;
+    let to_peak = 8.0 * (gx * gx * bx + gy * gy * by).abs() * rise + peak;
+    let cap = unit(1.0 - rise * (0.5 / DOME));
+    let room = peak.min(cap * cap * to_peak);
     // Tilt fades out where the field is flat (no trustworthy direction):
-    // sin θ = sphere · len / (len + FLAT), so the direction (g / len)
-    // times sin θ needs no division by `len`.
-    let len = (gx * gx + gy * gy).sqrt();
-    let k = sphere / (len + flat);
+    // sin θ = sphere · len / (len + FLAT), with sphere² = room / to_peak,
+    // so the direction (g / len) times sin θ needs no division by `len`:
+    // k = sphere / (len + FLAT).
+    let len = g2.sqrt();
+    let reach = len + flat;
+    let k = (room / (to_peak * reach * reach).max(f32::MIN_POSITIVE)).sqrt();
     let sin = k * len;
-    let cos = (1.0 - sin * sin).max(0.0).sqrt();
-    [-gx * k, -gy * k, cos]
+    (k, (1.0 - sin * sin).max(0.0).sqrt())
 }
 
 /// As `render::wax_heat`, with the divide folded into a multiply (this
