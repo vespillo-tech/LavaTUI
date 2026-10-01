@@ -954,3 +954,259 @@ fn background_save_flushes_cli_overrides_on_quit() {
     assert_eq!(loaded.settings.lamp.heat, 4);
     assert_eq!(loaded.style.style().name(), "solid");
 }
+
+// --- lyrics (lava-75z.4) -------------------------------------------------
+
+mod lyrics {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    use super::*;
+    use crate::dock::{Lyrics, Music};
+    use crate::lyrics::client::tests::{Mock, ok, status};
+    use crate::lyrics::client::{Lrclib, Reply};
+    use crate::lyrics::{Lyrics as Words, LyricsService};
+    use crate::media::{FakeSource, Snapshot, Status as Player, Track, Unavailable};
+
+    const S: Duration = Duration::from_secs(1);
+    const LRC: &str =
+        "[00:05.00]first line\\n[00:10.00]second line\\n[00:15.00]\\n[00:20.00]third line";
+
+    fn record(synced: &str) -> Result<Reply, String> {
+        ok(&format!(
+            r#"{{"trackName":"Slow Rise","artistName":"The Paraffins","duration":214.0,
+                "instrumental":false,"plainLyrics":"x","syncedLyrics":"{synced}"}}"#
+        ))
+    }
+
+    fn track(id: &str, name: &str) -> Track {
+        Track {
+            id: id.into(),
+            name: name.into(),
+            artist: "The Paraffins".into(),
+            album: "Heat Rises".into(),
+            duration: S * 214,
+            artwork_url: String::new(),
+        }
+    }
+
+    fn playing(t: Track, position: Duration, at: Instant) -> Snapshot {
+        Snapshot {
+            player: Some("Spotify".into()),
+            track: Some(Arc::new(t)),
+            position,
+            volume: 70,
+            ..Snapshot::new(Player::Playing, at)
+        }
+    }
+
+    /// A model with `source` as its player and `mock` as LRCLIB (no disk
+    /// cache, no retry waits). Returns how many services were started.
+    fn with(m: &mut Model, source: &FakeSource, mock: &Mock) -> Arc<AtomicUsize> {
+        let source = source.clone();
+        m.music.connect_with(
+            move || Box::new(source.clone()),
+            || {
+                crate::media::art::ArtLoader::preloaded(
+                    "none",
+                    crate::media::art::Art::solid(crate::theme::Rgb(0, 0, 0)),
+                )
+            },
+        );
+        let started = Arc::new(AtomicUsize::new(0));
+        let (mock, count) = (mock.clone(), Arc::clone(&started));
+        m.lyrics.start_with(move || {
+            count.fetch_add(1, Ordering::SeqCst);
+            LyricsService::spawn(
+                Lrclib::with_http(mock.clone(), "http://test"),
+                None,
+                Vec::new(),
+            )
+            .ok()
+        });
+        started
+    }
+
+    /// Ticks at `at` until the lookup has answered (real time passes for
+    /// the worker thread; the model's clock stays at `at`).
+    fn settle(m: &mut Model, at: Instant) {
+        for _ in 0..500 {
+            tick(m, at);
+            if !matches!(m.lyrics.found, Some(Fetch::Looking)) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        panic!("no answer from the lyrics worker");
+    }
+
+    fn placed(name: &str, cols: u16, rows: u16) -> (Model, Instant, FakeSource, Mock) {
+        let (mut m, t0) = model_with(Session::default(), temp_config(name), cols, rows);
+        let source = FakeSource::new(playing(track("t:1", "Slow Rise"), S * 3, t0), Vec::new());
+        let mock = Mock::new([record(LRC)]);
+        with(&mut m, &source, &mock);
+        (m, t0, source, mock)
+    }
+
+    #[test]
+    fn off_by_default_asks_nobody() {
+        let (mut m, t0) = model("lyrics-off");
+        let source = FakeSource::new(playing(track("t:1", "Slow Rise"), S, t0), Vec::new());
+        let mock = Mock::new([]);
+        let started = with(&mut m, &source, &mock);
+        tick(&mut m, t0);
+        assert_eq!(m.settings.dock.place(&Lyrics), Place::Off);
+        assert_eq!(started.load(Ordering::SeqCst), 0);
+        assert!(m.music.snapshot.is_none(), "no player either");
+        assert!(mock.urls().is_empty());
+    }
+
+    #[test]
+    fn placing_it_reads_the_player_and_syncs_the_lines() {
+        let (mut m, t0, _source, mock) = placed("lyrics-sync", 120, 36);
+        m.update(Action::Place("lyrics"), t0);
+        assert_eq!(
+            m.toast.as_ref().unwrap().text,
+            "lyrics · side panel · via lrclib.net"
+        );
+        assert_eq!(m.settings.dock.place(&Music), Place::Off, "music stays off");
+        settle(&mut m, t0);
+        assert!(m.music.snapshot.is_some(), "the player is read for lyrics");
+        assert!(matches!(
+            m.lyrics.found,
+            Some(Fetch::Lyrics(Words::Synced(_)))
+        ));
+        assert!(mock.urls()[0].contains("/api/get?track_name=Slow%20Rise"));
+        assert_eq!(m.lyrics.widest, 11);
+
+        // 3 s in: the intro (before the first line).
+        tick(&mut m, t0);
+        assert_eq!(m.lyrics.cursor.unwrap().index, None);
+        // 2.5 s later: the first line, fading in.
+        tick(&mut m, t0 + S * 2 + S / 2);
+        let cursor = m.lyrics.cursor.unwrap();
+        assert_eq!(cursor.index, Some(0));
+        assert!(m.lyrics.fade(m.now) < 1.0, "a line change fades");
+        tick(&mut m, t0 + S * 3);
+        assert_eq!(m.lyrics.fade(m.now), 1.0);
+        assert!(m.layout.placed(3).is_some(), "lyrics in the panel");
+        assert_eq!(Lyrics.rank(&m), 2);
+        assert_eq!(Lyrics.chip(&m).unwrap().text, "♪ first line");
+    }
+
+    #[test]
+    fn seeks_cut_and_track_changes_ask_again() {
+        let (mut m, t0, source, mock) = placed("lyrics-seek", 120, 36);
+        m.update(Action::Place("lyrics"), t0);
+        settle(&mut m, t0);
+        tick(&mut m, t0 + S * 3);
+        // A seek to the third line: no fade.
+        source.set(playing(track("t:1", "Slow Rise"), S * 21, t0 + S * 3));
+        tick(&mut m, t0 + S * 3);
+        let cursor = m.lyrics.cursor.unwrap();
+        assert_eq!(cursor.index, Some(3));
+        assert!(cursor.seeked);
+        assert_eq!(m.lyrics.fade(m.now), 1.0);
+
+        // The next track: looked up afresh; not found here.
+        mock.replies.lock().unwrap().extend([status(404), ok("[]")]);
+        source.set(playing(track("t:2", "Blob Merge"), S, t0 + S * 4));
+        tick(&mut m, t0 + S * 4);
+        assert_eq!(m.lyrics.found, Some(Fetch::Looking));
+        assert!(m.lyrics.cursor.is_none());
+        settle(&mut m, t0 + S * 4);
+        assert_eq!(m.lyrics.found, Some(Fetch::NotFound));
+        let forms = Lyrics.forms(&m, Place::Overlay);
+        assert_eq!(forms.len(), 1, "one calm message");
+        assert_eq!(Lyrics.rank(&m), 0);
+        assert!(Lyrics.chip(&m).is_none());
+    }
+
+    #[test]
+    fn every_state_has_a_calm_form() {
+        let (mut m, t0, source, mock) = placed("lyrics-states", 120, 36);
+        m.update(Action::Place("lyrics"), t0);
+        m.update(Action::Place("lyrics"), t0); // on the lava
+        settle(&mut m, t0);
+        let forms = Lyrics.forms(&m, Place::Overlay);
+        assert_eq!((forms[0].size.width, forms[0].size.height), (20, 5));
+
+        let instrumental =
+            r#"{"trackName":"x","artistName":"y","duration":214.0,"instrumental":true}"#;
+        let cases: [(Result<Reply, String>, Fetch); 2] = [
+            (ok(instrumental), Fetch::Lyrics(Words::Instrumental)),
+            (status(400), Fetch::Offline),
+        ];
+        for (n, (reply, want)) in cases.into_iter().enumerate() {
+            mock.replies.lock().unwrap().push_back(reply);
+            let at = t0 + S * (n as u32 + 1);
+            source.set(playing(
+                track(&format!("t:{n}x"), &format!("song {n}")),
+                S,
+                at,
+            ));
+            settle(&mut m, at);
+            assert_eq!(m.lyrics.found, Some(want));
+            assert_eq!(Lyrics.forms(&m, Place::Overlay).len(), 1);
+        }
+        source.set(Snapshot::new(
+            Player::Unavailable(Unavailable::NotRunning),
+            t0,
+        ));
+        tick(&mut m, t0);
+        let forms = Lyrics.forms(&m, Place::Side);
+        assert_eq!(forms.len(), 1);
+        assert!(forms[0].size.width <= 20);
+        assert!(Lyrics.chip(&m).is_none());
+    }
+
+    #[test]
+    fn plain_lyrics_when_there_is_no_sync() {
+        let (mut m, t0) = model_with(Session::default(), temp_config("lyrics-plain"), 120, 36);
+        let source = FakeSource::new(playing(track("t:1", "Slow Rise"), S * 100, t0), Vec::new());
+        let plain = r#"{"trackName":"Slow Rise","artistName":"The Paraffins","duration":214.0,
+            "instrumental":false,"plainLyrics":"one\ntwo\n\nthree","syncedLyrics":null}"#;
+        let mock = Mock::new([ok(plain)]);
+        with(&mut m, &source, &mock);
+        m.update(Action::Place("lyrics"), t0);
+        settle(&mut m, t0);
+        assert!(matches!(
+            m.lyrics.found,
+            Some(Fetch::Lyrics(Words::Plain(_)))
+        ));
+        assert!(m.lyrics.cursor.is_none());
+        assert_eq!(Lyrics.forms(&m, Place::Side).len(), 3);
+        assert_eq!(Lyrics.rank(&m), 2);
+        assert!(Lyrics.chip(&m).is_none(), "no current line to chip");
+    }
+
+    #[test]
+    fn placing_it_off_stops_the_lookups() {
+        let (mut m, t0, _source, _mock) = placed("lyrics-life", 120, 36);
+        for _ in 0..3 {
+            m.update(Action::Place("lyrics"), t0);
+        }
+        tick(&mut m, t0);
+        assert_eq!(m.settings.dock.place(&Lyrics), Place::Off);
+        assert!(m.lyrics.found.is_none());
+        assert!(m.music.snapshot.is_none(), "nothing holds the player");
+    }
+
+    #[test]
+    fn a_frozen_lamp_wakes_for_the_next_line() {
+        let (mut m, t0, _source, _mock) = placed("lyrics-frozen", 120, 36);
+        m.update(Action::Place("lyrics"), t0);
+        settle(&mut m, t0);
+        m.update(Action::Freeze, t0);
+        m.toast = None;
+        tick(&mut m, t0 + S * 3);
+        // At 6 s (+ the 150 ms lead) the next line is 3.85 s away; the
+        // player check each second comes first.
+        let wake = m.idle_until().unwrap() - (t0 + S * 3);
+        assert!(wake <= S + Duration::from_millis(20), "{wake:?}");
+        tick(&mut m, t0 + S * 7 + S * 85 / 100);
+        let wake = m.idle_until().unwrap() - (t0 + S * 7 + S * 85 / 100);
+        assert!(wake <= S / 3, "{wake:?}");
+    }
+}

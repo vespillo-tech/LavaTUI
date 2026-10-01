@@ -19,8 +19,8 @@ use serde::Deserialize;
 use super::{RawLyrics, Track};
 
 pub const BASE_URL: &str = "https://lrclib.net";
-/// LRCLIB asks clients to identify themselves.
-pub const USER_AGENT: &str = concat!("lavatui/", env!("CARGO_PKG_VERSION"), " (+repo TODO)");
+/// LRCLIB asks clients to identify themselves: `lavatui/<version>`.
+pub const USER_AGENT: &str = concat!("lavatui/", env!("CARGO_PKG_VERSION"));
 const TIMEOUT: Duration = Duration::from_secs(10);
 /// Search results further than this from the track's duration are another
 /// version (live, remix, radio edit) whose timings won't line up.

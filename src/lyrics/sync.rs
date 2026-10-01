@@ -38,10 +38,12 @@ impl Cursor {
         lyrics.lines.get(self.index?)
     }
 
+    #[cfg(test)]
     pub fn previous<'a>(&self, lyrics: &'a Synced) -> Option<&'a Line> {
         lyrics.lines.get(self.index?.checked_sub(1)?)
     }
 
+    #[cfg(test)]
     pub fn next<'a>(&self, lyrics: &'a Synced) -> Option<&'a Line> {
         lyrics.lines.get(self.index.map_or(0, |i| i + 1))
     }

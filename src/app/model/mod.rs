@@ -7,6 +7,7 @@
 //! effects the loop must perform (bell, full clear) are flags it drains.
 
 mod actions;
+mod lyrics;
 mod music;
 mod pickers;
 mod saving;
@@ -29,6 +30,7 @@ use crate::timing::{FixedStep, Quality};
 use crate::ui::keymap::InputMode;
 use crate::ui::layout::{self, DockItem, Layout, LayoutInput, SizeTier};
 
+pub use lyrics::{Fetch, LyricsState};
 pub use music::Music;
 pub use pickers::{Picker, PickerKind};
 
@@ -130,6 +132,8 @@ pub struct Model {
 
     /// The music widget's player, cover and keys.
     pub music: Music,
+    /// The lyrics widget's lookups and sync.
+    pub lyrics: LyricsState,
     /// The widget on the lava `l` moves (`L` picks another).
     pub lava_focus: Option<usize>,
 
@@ -202,6 +206,7 @@ impl Model {
             reset_pending: None,
             last_reset_key: None,
             music: Music::default(),
+            lyrics: LyricsState::default(),
             lava_focus: None,
             overlay: Overlay::None,
             toast: None,
@@ -316,10 +321,14 @@ impl Model {
         if let Some(at) = self.save_at {
             wake = wake.min(at);
         }
-        if self.music_on() {
+        if self.media_on() {
             // The player may change under us (a track ends, someone presses
             // pause in Spotify): look each second.
             wake = wake.min(self.now + second);
+        }
+        if let Some(at) = self.lyrics.wake(self.now) {
+            // The next line (or the end of a fade).
+            wake = wake.min(at);
         }
         if self.saver.as_ref().is_some_and(saving::Saver::busy) {
             // Frozen frames still collect save errors promptly.
