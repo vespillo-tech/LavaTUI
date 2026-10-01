@@ -6,9 +6,9 @@
 
 mod ascii;
 mod braille;
+mod chrome;
 mod crt;
 mod dither;
-mod glass;
 mod halftone;
 mod heatmap;
 mod matrix;
@@ -32,8 +32,12 @@ pub static ALL: &[StyleEntry] = &[
     StyleEntry::of::<synthwave::Synthwave>(),
     StyleEntry::of::<matrix::Matrix>(),
     StyleEntry::of::<topo::Topo>(),
-    StyleEntry::of::<glass::Glass>(),
+    StyleEntry::of::<chrome::Chrome>(),
 ];
+
+/// Old style names still accepted in config and on the command line, and
+/// the style each now means.
+pub static ALIASES: &[(&str, &str)] = &[("glass", "chrome")];
 
 /// A wax pixel with liquid on at least one side. Off-canvas counts as wax,
 /// so wax touching the walls or floor (the pool) isn't outlined there.

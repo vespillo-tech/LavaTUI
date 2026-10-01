@@ -319,6 +319,23 @@ fn cli_overrides_are_not_written_back() {
     assert_eq!(again.settings.lamp.heat, 4);
 }
 
+/// The 12th style was renamed glass → chrome (lava-ebq.23); the old name
+/// still works in config and on the command line.
+#[test]
+fn old_glass_style_name_means_chrome() {
+    let path = temp_config("glass-alias");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "[lamp]\nstyle = \"glass\"\n").unwrap();
+    let (m, _) = model_with(Session::default(), path, 80, 24);
+    assert_eq!(m.style.style().name(), "chrome");
+    let session = Session {
+        style: Some("glass".into()),
+        ..Session::default()
+    };
+    let (m, _) = model_with(session, temp_config("glass-alias-cli"), 80, 24);
+    assert_eq!(m.style.style().name(), "chrome");
+}
+
 #[test]
 fn corrupt_config_toasts_and_uses_defaults() {
     let path = temp_config("corrupt");

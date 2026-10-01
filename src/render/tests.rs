@@ -486,7 +486,7 @@ fn registry_cycles_and_names_are_unique() {
             "synthwave",
             "matrix",
             "topo",
-            "glass",
+            "chrome",
         ]
     );
     let n = names.len();
@@ -505,6 +505,8 @@ fn registry_cycles_and_names_are_unique() {
         assert!(name.chars().all(|c| c.is_ascii_lowercase()));
     }
     assert!(StyleId::by_name("nope").is_none());
+    // The 12th style was called glass before it was chrome (lava-ebq.23).
+    assert_eq!(StyleId::by_name("glass"), StyleId::by_name("chrome"));
     for id in StyleId::all() {
         let g = id.style().grid();
         assert!((1..=4).contains(&g.x) && (1..=4).contains(&g.y));

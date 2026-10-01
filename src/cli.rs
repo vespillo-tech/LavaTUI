@@ -19,7 +19,7 @@ pub struct Cli {
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..=240))]
     pub fps: Option<u32>,
 
-    /// Render style for this session (e.g. solid, outline, heatmap, ascii, dither).
+    /// Render style for this session (e.g. solid, outline, heatmap, ascii, chrome).
     #[arg(long, value_name = "NAME")]
     pub style: Option<String>,
 

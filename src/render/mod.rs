@@ -102,7 +102,12 @@ impl StyleId {
         (0..styles::ALL.len()).map(StyleId)
     }
 
+    /// The style called `name`, or that an old name (an alias) now means.
     pub fn by_name(name: &str) -> Option<StyleId> {
+        let name = styles::ALIASES
+            .iter()
+            .find(|(old, _)| *old == name)
+            .map_or(name, |(_, new)| new);
         Self::all().find(|id| id.style().name() == name)
     }
 

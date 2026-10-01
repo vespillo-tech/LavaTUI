@@ -1,4 +1,4 @@
-//! **glass**: wax as glossy blown glass. The density field is treated as a
+//! **chrome**: wax as glossy blown glass. The density field is treated as a
 //! height map, so each blob is a dome with a surface normal; it's lit from
 //! the upper left with a soft body shade, a sharp specular glint and a
 //! warm rim light where the surface turns away (fresnel), and the body is
@@ -14,7 +14,7 @@ use crate::render::{Canvas, Grid, LampStyle, coverage, wax_heat};
 use crate::sim::SURFACE;
 use crate::theme::{Ink, Role};
 
-pub struct Glass;
+pub struct Chrome;
 
 /// Direction to the light (x right, y down, z toward the viewer).
 const LIGHT: [f32; 3] = [-0.48, -0.62, 0.62];
@@ -22,8 +22,8 @@ const LIGHT: [f32; 3] = [-0.48, -0.62, 0.62];
 const RELIEF: f32 = 2.6;
 const SHINE: i32 = 24;
 
-impl LampStyle for Glass {
-    const NAME: &'static str = "glass";
+impl LampStyle for Chrome {
+    const NAME: &'static str = "chrome";
     const GRID: Grid = Grid::HALF_BLOCK;
 
     fn draw(c: &Canvas, buf: &mut Buffer) {
