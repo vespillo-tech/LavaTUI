@@ -172,30 +172,82 @@ fn live(w: usize, h: usize) -> Vec<Sample> {
     samples
 }
 
+/// Pixels where coarse shading is off the exact by more than a light
+/// step with no pixel-scale feature in the exact light to explain it: no
+/// second difference of a step or more (light is quantised to steps, so
+/// past three quarters of one), across or down, at or next to the pixel.
+fn unexplained_pixels(exact: &[f32], coarse: &[f32], w: usize, h: usize) -> Vec<(usize, usize)> {
+    let step = 1.0 / STEPS;
+    let at = |x: usize, y: usize| exact[y.min(h - 1) * w + x.min(w - 1)];
+    let bend = |x: usize, y: usize| {
+        let (l, r) = (at(x.saturating_sub(1), y), at(x + 1, y));
+        let (u, d) = (at(x, y.saturating_sub(1)), at(x, y + 1));
+        let c = at(x, y);
+        (c - 0.5 * (l + r)).abs().max((c - 0.5 * (u + d)).abs())
+    };
+    let mut out = Vec::new();
+    for y in 0..h {
+        for x in 0..w {
+            if (exact[y * w + x] - coarse[y * w + x]).abs() <= 1.5 * step {
+                continue;
+            }
+            let near = (y.saturating_sub(1)..=y + 1)
+                .flat_map(|y| (x.saturating_sub(1)..=x + 1).map(move |x| (x, y)))
+                .any(|(x, y)| bend(x, y) > 0.75 * step);
+            if !near {
+                out.push((x, y));
+            }
+        }
+    }
+    out
+}
+
 #[test]
 fn coarse_dome_matches_exact() {
-    // Braille at 200×60, which shades coarse.
+    // Braille at 200×60, which shades coarse, at a few moments of a few
+    // lamps.
+    use crate::sim::{Field, Shape, World};
     let (w, h) = (400, 240);
     assert!(h >= FINE);
-    let samples = live(w, h);
     let rig = Rig::new(w, h);
-    let (mut exact, mut coarse) = (vec![0.0; w * h], vec![0.0; w * h]);
-    rig.shade_exact(&samples, &mut exact);
-    rig.shade_coarse(&samples, &mut coarse);
     let step = 1.0 / STEPS;
-    let (mut moved, mut far) = (0, 0);
-    for (e, c) in exact.iter().zip(&coarse) {
-        let d = (e - c).abs();
-        moved += usize::from(d > 0.0);
-        far += usize::from(d > 1.5 * step);
-        assert!(d <= 2.5 * step, "{e} vs {c}");
-    }
-    assert!(moved * 100 < w * h, "{moved} of {} pixels moved", w * h);
-    assert!(far * 10_000 < w * h, "{far} pixels moved more than a step");
-    // The edge, glow and base light are exact: liquid is untouched.
-    for ((e, c), s) in exact.iter().zip(&coarse).zip(&samples) {
-        if s.density <= WAX_FROM {
-            assert_eq!(e, c);
+    for seed in [7, 42, 99] {
+        let mut world = World::new(seed, w as f64 / h as f64, Shape::Tank);
+        world.prewarm(600, 1.0 / 120.0);
+        for _ in 0..3 {
+            world.prewarm(360, 1.0 / 120.0);
+            let mut field = Field::default();
+            field.prepare(&world, 1.0);
+            let mut samples = vec![Sample::default(); w * h];
+            field.fill(&mut samples, w, h);
+            let (mut exact, mut coarse) = (vec![0.0; w * h], vec![0.0; w * h]);
+            rig.shade_exact(&samples, &mut exact);
+            rig.shade_coarse(&samples, &mut coarse);
+            // Off by a step at most, except where the exact light has a
+            // feature a pixel wide (a crease the dome model draws, see
+            // `FINE`), which nodes two pixels apart can't hold.
+            let (mut moved, mut far) = (0, 0);
+            for (e, c) in exact.iter().zip(&coarse) {
+                let d = (e - c).abs();
+                moved += usize::from(d > 0.0);
+                far += usize::from(d > 1.5 * step);
+            }
+            assert!(moved * 50 < w * h, "seed {seed}: {moved} pixels moved");
+            assert!(
+                far * 2_000 < w * h,
+                "seed {seed}: {far} pixels moved > a step"
+            );
+            let lost = unexplained_pixels(&exact, &coarse, w, h);
+            assert!(
+                lost.is_empty(),
+                "seed {seed}: smooth shading off at {lost:?}"
+            );
+            // The edge, glow and base light are exact: liquid is untouched.
+            for ((e, c), s) in exact.iter().zip(&coarse).zip(&samples) {
+                if s.density <= WAX_FROM {
+                    assert_eq!(e, c);
+                }
+            }
         }
     }
 }

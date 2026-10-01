@@ -85,9 +85,18 @@ const RUN: usize = 16;
 /// Canvas height (pixels per world unit) from which the dome shading is
 /// computed on nodes, every other pixel of every other row, and
 /// interpolated between. It varies over a blob's radius, many pixels at
-/// this resolution (braille at 200×60 is 240), so that's invisible (a few
-/// cells in a thousand shift a shade, by at most one light step mostly);
-/// the sharp wax/liquid edge, the glow and the base light stay per pixel.
+/// this resolution (braille at 200×60 is 240); the sharp wax/liquid edge,
+/// the glow and the base light stay per pixel.
+///
+/// What nodes can't hold are the creases the dome model draws a pixel
+/// wide: where a core's normal snaps to face-on (density `SURFACE + DOME`)
+/// and along ridges and valleys that peak below it (tails, necks, where
+/// merged lobes meet), where the normal flips side within a pixel. Those
+/// come out two pixels wide and a few light steps softer. At cell size
+/// that's a shade in about one cell in a thousand and the odd braille
+/// stipple dot (measured on the live sim), so it isn't worth shading them
+/// exactly: catching them costs about as much as the exact pass.
+///
 /// Below this (half-block grids) interpolation starts to flip glyphs in
 /// the dithered styles, so it stays exact.
 const FINE: usize = 160;
@@ -200,7 +209,7 @@ impl Rig {
                     continue;
                 }
                 if let Some(from) = stretch.take() {
-                    self.exact_span(samples, y, from..x0, base, out);
+                    self.exact_span(samples, y, from..x0, base, &mut out[from..x0]);
                 }
                 let out = &mut out[x0..x0 + run.len()];
                 if kind == Run::Open {
@@ -212,7 +221,7 @@ impl Rig {
                 }
             }
             if let Some(from) = stretch {
-                self.exact_span(samples, y, from..self.width, base, out);
+                self.exact_span(samples, y, from..self.width, base, &mut out[from..]);
             }
         }
     }
@@ -236,7 +245,7 @@ impl Rig {
             at((y + 1).min(self.height - 1)),
         );
         let (x0, x1, last) = (span.start, span.end, width - 1);
-        let out = &mut out[span];
+        debug_assert_eq!(out.len(), x1 - x0);
         let light = |s: Sample, left: f32, right: f32, up: f32, down: f32| {
             let dome = self.dome(s, left, right, up, down);
             quantize(self.blend(s, dome, self.liquid(self.glow(s), base), base))
@@ -266,7 +275,7 @@ impl Rig {
     /// As [`shade_exact`](Self::shade_exact), but the dome shading comes
     /// from [`Nodes`], interpolated, a run at a time.
     fn shade_coarse(&self, samples: &[Sample], out: &mut [f32]) {
-        let mut nodes = Nodes::new();
+        let mut nodes = Nodes::new(self.height);
         let rows = samples
             .chunks_exact(self.width)
             .zip(out.chunks_exact_mut(self.width));
@@ -394,6 +403,8 @@ impl Rig {
 /// each canvas row reads the node rows at and below it, so two rolling
 /// rows do. Lives on the stack (~16 KB).
 struct Nodes {
+    /// The canvas's last row: node rows past it clamp to it.
+    last: usize,
     /// `[j % 2][block]`.
     values: [[[f32; NODES]; BLOCKS]; 2],
     /// How much of each block is in: nothing, its first node only (all a
@@ -409,8 +420,9 @@ enum Done {
 }
 
 impl Nodes {
-    fn new() -> Self {
+    fn new(height: usize) -> Self {
         Nodes {
+            last: height - 1,
             values: [[[0.0; NODES]; BLOCKS]; 2],
             done: [[Done::None; BLOCKS]; 2],
         }
@@ -437,7 +449,10 @@ impl Nodes {
         mut one: impl FnMut(usize, usize) -> f32,
     ) -> [f32; NODES + 1] {
         let j = y / NODE_ROWS;
-        let t = (y % NODE_ROWS) as f32 / NODE_ROWS as f32;
+        // Node row `j + 1` sits on the last canvas row if it would fall
+        // past it, so weigh by where it really is.
+        let (top, bottom) = (NODE_ROWS * j, (NODE_ROWS * (j + 1)).min(self.last));
+        let t = (y - top) as f32 / (bottom - top).max(1) as f32;
         let rows: &[(usize, f32)] = if t == 0.0 {
             &[(j, 1.0)]
         } else {
@@ -447,11 +462,11 @@ impl Nodes {
         for &(j, weight) in rows {
             let (values, done) = (&mut self.values[j % 2], &mut self.done[j % 2]);
             if done[r] != Done::All {
-                block(NODE_ROWS * j, r * RUN, &mut values[r]);
+                block((NODE_ROWS * j).min(self.last), r * RUN, &mut values[r]);
                 done[r] = Done::All;
             }
             if done[r + 1] == Done::None {
-                values[r + 1][0] = one(NODE_ROWS * j, (r + 1) * RUN);
+                values[r + 1][0] = one((NODE_ROWS * j).min(self.last), (r + 1) * RUN);
                 done[r + 1] = Done::First;
             }
             for (o, v) in out.iter_mut().zip(&values[r]) {
