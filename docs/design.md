@@ -389,6 +389,11 @@ cols, 2-col side clearance). A right panel won't fit, so the panel goes
 * **glass** if `content_rows ≥ 20` **and** content-area visual aspect `A ≤ 2.2`
 * **bleed** otherwise (tiny/small windows and very wide strips)
 
+With hysteresis: coming *from* bleed, auto needs `content_rows ≥ 22` and
+`A ≤ 2.0` to go back to glass, so dragging a window edge across the line
+doesn't flap. Switching keeps the wax: blobs that fit the new container
+stay exactly where they are (§2.2).
+
 Minimal mode uses the same rule.
 
 **Glass silhouette.** Stylised, chunkier than a real lamp (a real one is
@@ -443,7 +448,7 @@ The sim lives in **world units**, independent of the terminal:
   glass mode, only the sampling does.
 * Bleed: world width follows the region. On resize the walls **ease** to
   the new width over 250 ms (the sim pushes blobs, so nothing teleports),
-  and total wax volume is kept at a constant **≈ 22 % of world area** by
+  and total wax volume is kept at a constant **≈ 26 % of world area** by
   slowly growing/shrinking the bottom pool (no blobs pop in or out).
 
 ### 2.3 Cell aspect
@@ -461,8 +466,11 @@ on every resize.
   That only happens at braille + huge sizes.
 * Sampling culls per blob: each blob only touches pixels inside its
   influence box. Cost scales with *blob area*, not blobs × pixels.
-* Blob count is set by the world, not the window: glass has **6–10**
-  blobs. Bleed has `≈ 5 × A_region` blobs, clamped to 4–28.
+* Blob count is set by the world, not the window: a few big, varied blobs
+  rather than many equal ones. Glass aims for **5** (about 3–6 at any
+  moment, radii spanning 3:1 or more). Bleed aims for `≈ 3.5 × A_region`,
+  clamped to 3–20. The pool stays thin (≈ 0.045 lamp heights) and buds
+  sooner the deeper it gets.
 
 ---
 

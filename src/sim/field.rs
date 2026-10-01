@@ -10,6 +10,11 @@
 //! `SURFACE` draws each lone blob at its true size, and nearby blobs fuse
 //! with a neck instead of just overlapping. The pool adds a soft slab along
 //! the base.
+//!
+//! Moving blobs are drawn as teardrops: the half of the ellipse ahead of
+//! the motion is shortened and the half behind lengthened by the same
+//! amount (`TAPER`), which keeps the area, so a rising blob trails a tail
+//! and one coming off the pool shows a neck.
 
 use super::{Shape, World, ambient_temp, pool_surface};
 
@@ -26,6 +31,10 @@ const PEAK: f32 = {
 };
 /// Half-thickness of the pool's soft surface.
 const POOL_BAND: f32 = 0.035;
+/// Teardrop taper per unit of vertical speed (lamp heights / s), and its
+/// cap: a hot blob at full speed is about 0.6 / 1.4 front / back.
+const TAPER: f64 = 7.0;
+const MAX_TAPER: f64 = 0.4;
 /// Weight given to the liquid's temperature when blending, so `temp` fades
 /// smoothly from wax to liquid at the edges.
 const LIQUID_WEIGHT: f32 = 0.02;
@@ -44,12 +53,14 @@ pub struct Sample {
 pub(super) struct Kernel {
     x: f32,
     pub(super) y: f32,
-    /// `1 / (SUPPORT · half-extent)²` per axis.
+    /// `1 / (SUPPORT · half-extent)²` across, and above / below the centre.
     inv_x2: f32,
-    inv_y2: f32,
+    inv_up2: f32,
+    inv_down2: f32,
     /// Support half-extents (bounding box for culling).
     reach_x: f32,
-    reach_y: f32,
+    reach_up: f32,
+    reach_down: f32,
     temp: f32,
 }
 
@@ -76,13 +87,18 @@ impl Field {
             let pose = blob.prev.lerp(blob.pose(), alpha);
             let reach = f64::from(SUPPORT) * pose.radius;
             let (reach_x, reach_y) = (reach / pose.stretch, reach * pose.stretch);
+            // Rising: the tail hangs below; sinking: it trails above.
+            let taper = (TAPER * blob.vy).clamp(-MAX_TAPER, MAX_TAPER);
+            let (reach_up, reach_down) = (reach_y * (1.0 - taper), reach_y * (1.0 + taper));
             Kernel {
                 x: pose.x as f32,
                 y: pose.y as f32,
                 inv_x2: (1.0 / (reach_x * reach_x)) as f32,
-                inv_y2: (1.0 / (reach_y * reach_y)) as f32,
+                inv_up2: (1.0 / (reach_up * reach_up)) as f32,
+                inv_down2: (1.0 / (reach_down * reach_down)) as f32,
                 reach_x: reach_x as f32,
-                reach_y: reach_y as f32,
+                reach_up: reach_up as f32,
+                reach_down: reach_down as f32,
                 temp: blob.temp as f32,
             }
         }));
@@ -119,8 +135,8 @@ impl Field {
         let mut acc = Sample::default();
         for k in &self.kernels {
             let (dx, dy) = (x - k.x, y - k.y);
-            if dx.abs() < k.reach_x && dy.abs() < k.reach_y {
-                add_kernel(&mut acc, k, dx * dx * k.inv_x2 + dy * dy * k.inv_y2);
+            if dx.abs() < k.reach_x && -k.reach_down < dy && dy < k.reach_up {
+                add_kernel(&mut acc, k, dx * dx * k.inv_x2 + k.qy(dy));
             }
         }
         if self.in_container(f64::from(x), f64::from(y)) {
@@ -155,15 +171,14 @@ impl Field {
                 continue;
             };
             let Some((j0, j1)) = span(
-                (1.0 - k.y - k.reach_y) / px_h,
-                (1.0 - k.y + k.reach_y) / px_h,
+                (1.0 - k.y - k.reach_up) / px_h,
+                (1.0 - k.y + k.reach_down) / px_h,
                 rows,
             ) else {
                 continue;
             };
             for j in j0..=j1 {
-                let dy = y_at(j) - k.y;
-                let qy = dy * dy * k.inv_y2;
+                let qy = k.qy(y_at(j) - k.y);
                 if qy >= 1.0 {
                     continue;
                 }
@@ -200,6 +215,19 @@ impl Field {
 
     fn in_container(&self, x: f64, y: f64) -> bool {
         x.abs() <= 0.5 * self.wall_width * self.shape.width_fraction(y)
+    }
+}
+
+impl Kernel {
+    /// Vertical part of the squared elliptical distance at offset `dy`.
+    #[inline]
+    fn qy(&self, dy: f32) -> f32 {
+        dy * dy
+            * if dy > 0.0 {
+                self.inv_up2
+            } else {
+                self.inv_down2
+            }
     }
 }
 

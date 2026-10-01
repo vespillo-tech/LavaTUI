@@ -21,6 +21,7 @@ fn input(face: &dyn Face) -> LayoutInput<'_> {
         chip: Some((ChipKind::Clock, 5)),
         minimal_clock: MinimalClock::Under,
         cell_aspect: 2.0,
+        prev_frame: None,
     }
 }
 
@@ -526,4 +527,24 @@ fn snapshots_at_mockup_sizes() {
             );
         }
     }
+}
+
+#[test]
+fn auto_frame_has_hysteresis() {
+    let face = blocks();
+    let from = |prev| LayoutInput {
+        prev_frame: prev,
+        ..input(face)
+    };
+    let frame = |cols, rows, prev| at(cols, rows, &from(prev)).lamp.unwrap().frame;
+    // 80x22: 21 content rows, aspect 1.9 — glass stays glass, bleed stays bleed.
+    assert_eq!(frame(80, 22, None), LampFrame::Glass);
+    assert_eq!(frame(80, 22, Some(LampFrame::Glass)), LampFrame::Glass);
+    assert_eq!(frame(80, 22, Some(LampFrame::Bleed)), LampFrame::Bleed);
+    // Well inside, bleed goes back to glass; past the line, glass gives up.
+    assert_eq!(frame(80, 24, Some(LampFrame::Bleed)), LampFrame::Glass);
+    assert_eq!(frame(80, 20, Some(LampFrame::Glass)), LampFrame::Bleed);
+    // Same band on width: aspect 2.1 at 23 content rows.
+    assert_eq!(frame(97, 24, Some(LampFrame::Glass)), LampFrame::Glass);
+    assert_eq!(frame(97, 24, Some(LampFrame::Bleed)), LampFrame::Bleed);
 }

@@ -246,9 +246,10 @@ fn resize_eases_walls_without_teleporting() {
             .iter()
             .any(|(id, ..)| world.blobs.iter().any(|b| b.id == *id))
     );
-    // Excess wax melts into the pool and drains away: back to 22 % of the
-    // new, 4× smaller lamp within a minute or two, never by deleting blobs.
-    world.run(120 * 90);
+    // Excess wax melts into the pool and drains away: back to the fill of
+    // the new, 4× smaller lamp within about two minutes (big blobs take a
+    // while to cycle back down), never by deleting blobs.
+    world.run(120 * 120);
     assert_close(world.wax_area(), FILL * 0.5, 0.01);
     assert_sane(&world);
 }
@@ -287,7 +288,8 @@ fn liquid_temp_where_there_is_no_wax() {
 
 #[test]
 fn pool_is_dense_at_the_base() {
-    let world = World::bare(1.0);
+    let mut world = World::bare(1.0);
+    world.pool_area = POOL_DEPTH * world.bottom_width();
     let s = world.sample(0.5, 0.999);
     assert!(s.density > 0.9);
     assert_close(f64::from(s.temp), POOL_TEMP, 0.02);
@@ -528,25 +530,163 @@ fn same_seed_and_controls_same_lamp() {
     assert_ne!(a.blobs, c.blobs);
 }
 
-#[test]
-fn switching_shape_keeps_the_lamp_and_eases_volume() {
-    let mut world = World::new(7, 2.0, Shape::Tank);
-    world.prewarm(600, DT);
-    let blobs = world.blobs().len();
-    let wax = world.wax_area();
-    world.set_shape(Shape::Bottle, 0.5);
-    assert_eq!(world.shape, Shape::Bottle);
-    assert_eq!(world.blobs().len(), blobs, "no blob pops on a shape switch");
-    world.step(DT);
-    assert_close(world.wax_area(), wax, wax * 0.01);
-    world.run(120 * 20);
-    let target = FILL * Shape::Bottle.area(0.5);
-    assert_close(world.wax_area(), target, target * 0.1);
-    for blob in world.blobs() {
+/// Blob state that must survive a container switch untouched.
+fn poses(world: &World) -> Vec<(u64, f64, f64, f64, f64, Phase)> {
+    world
+        .blobs
+        .iter()
+        .map(|b| (b.id, b.x, b.y, b.radius, b.temp, b.phase))
+        .collect()
+}
+
+/// Steps for `secs`, checking nothing moves more than a sliver per step
+/// and wax only changes through the pool's slow easing.
+fn run_smoothly(world: &mut World, secs: f64) {
+    for _ in 0..(secs * 120.0) as u32 {
+        let wax = world.wax_area();
+        let level = world.pool_level();
+        world.step(DT);
+        for b in &world.blobs {
+            let jump = (b.x - b.prev.x).hypot(b.y - b.prev.y);
+            assert!(jump < 0.01, "blob jumped {jump}: {b:?}");
+        }
+        let easing = POOL_EASE * (world.wax_target - wax).abs() * DT;
         assert!(
-            blob.x.abs() <= 0.25 + 1e-6,
-            "blob outside the bottle: {}",
-            blob.x
+            (world.wax_area() - wax).abs() <= easing + 1e-9,
+            "wax jumped"
         );
+        assert!((world.pool_level() - level).abs() < 0.01, "pool jumped");
     }
+}
+
+#[test]
+fn tank_to_bottle_keeps_every_blob_that_fits() {
+    let mut world = World::new(7, 2.0, Shape::Tank);
+    world.prewarm(1200, DT);
+    let level = world.pool_level();
+    let inside = |b: &Blob| b.x.abs() <= 0.5 * BOTTLE_ASPECT * Shape::Bottle.width_fraction(b.y);
+    let kept: Vec<_> = world
+        .blobs
+        .iter()
+        .filter(|b| inside(b))
+        .map(|b| b.id)
+        .collect();
+    let before: Vec<_> = poses(&world)
+        .into_iter()
+        .filter(|p| kept.contains(&p.0))
+        .collect();
+    assert!(
+        !kept.is_empty() && kept.len() < world.blobs.len(),
+        "a real crop"
+    );
+
+    world.set_shape(Shape::Bottle, 2.0);
+    assert_eq!(world.shape, Shape::Bottle);
+    // Same blobs, same places, sizes, temperatures and phases: nothing
+    // melts, pops or teleports. Only blobs outside the bottle (and its
+    // view) are gone. The pool keeps its level.
+    assert_eq!(poses(&world), before);
+    assert_close(world.pool_level(), level, 1e-12);
+    run_smoothly(&mut world, 3.0);
+
+    // Wax eases to the bottle's fill and the lamp keeps going inside it.
+    world.run(120 * 90);
+    let target = FILL * Shape::Bottle.area(BOTTLE_ASPECT);
+    assert_close(world.wax_area(), target, target * 0.1);
+    assert_sane(&world);
+    let (count, speed) = activity(&mut world, 30);
+    assert!(
+        count >= 3.0 && speed > 0.005,
+        "lamp alive: {count} blobs, {speed}"
+    );
+    assert!(world.pool_level() < 3.0 * POOL_DEPTH, "pool budded off");
+}
+
+#[test]
+fn glass_bleed_glass_round_trip_keeps_the_lamp() {
+    // The 80x24 → 40x14 → 80x24 resize: glass, bleed for 0.6 s, glass.
+    let mut world = World::new(7, 0.5, Shape::Bottle);
+    world.prewarm(120 * 30, DT);
+    let before = poses(&world);
+    let free_before = world
+        .blobs
+        .iter()
+        .filter(|b| b.phase == Phase::Free)
+        .count();
+    assert!(free_before >= 4, "{:?}", world.blobs);
+
+    world.set_shape(Shape::Tank, 40.0 / 28.0);
+    // Everything in the bottle fits in the wider tank, untouched.
+    assert_eq!(poses(&world), before);
+    run_smoothly(&mut world, 0.6);
+    world.set_shape(Shape::Bottle, 0.5);
+    run_smoothly(&mut world, 2.0);
+
+    let survivors = before
+        .iter()
+        .filter(|p| world.blobs.iter().any(|b| b.id == p.0))
+        .count();
+    assert!(survivors >= before.len() - 1, "the old blobs survive");
+    let free = world
+        .blobs
+        .iter()
+        .filter(|b| b.phase == Phase::Free)
+        .count();
+    assert!(free >= 4, "free blobs at 2 s: {free}");
+    assert!(
+        world.pool_level() < 2.0 * POOL_DEPTH,
+        "no melt into the pool"
+    );
+    assert_sane(&world);
+}
+
+#[test]
+fn bottle_world_has_a_fixed_aspect() {
+    let mut world = World::new(3, 1.7, Shape::Bottle);
+    assert_eq!(world.view_width, BOTTLE_ASPECT);
+    let wax = world.wax_target;
+    world.set_aspect(0.43);
+    world.set_shape(Shape::Bottle, 0.61);
+    assert_eq!(
+        (world.view_width, world.wall_width),
+        (BOTTLE_ASPECT, BOTTLE_ASPECT)
+    );
+    assert_eq!(world.wax_target, wax);
+}
+
+/// Look over a long run at the glass reference size: a few big blobs of
+/// varied size that stretch as they rise over a thin pool (lava-ebq.14).
+#[test]
+fn glass_lamp_has_big_varied_stretching_blobs() {
+    let mut world = World::new(5, BOTTLE_ASPECT, Shape::Bottle);
+    world.prewarm(120 * 20, DT);
+    let (mut big, mut samples, mut stretched) = (0, 0, 0);
+    let (mut smallest, mut largest) = (f64::MAX, 0.0_f64);
+    let mut pool: f64 = 0.0;
+    for _ in 0..240 {
+        world.run(60);
+        samples += 1;
+        let free = world.blobs.iter().filter(|b| b.phase == Phase::Free);
+        let widest = free.clone().map(|b| b.radius).fold(0.0, f64::max);
+        // ≥ 5 of the ~13 columns the bottle spans at 80x24.
+        big += usize::from(2.0 * widest >= 5.0 / 13.0 * BOTTLE_ASPECT);
+        for b in free {
+            smallest = smallest.min(b.radius);
+            largest = largest.max(b.radius);
+            stretched += usize::from(b.vy > 0.02 && b.stretch > 1.2);
+        }
+        pool = pool.max(world.pool_level());
+    }
+    assert!(
+        big * 3 >= samples * 2,
+        "big blob {big}/{samples} of the time"
+    );
+    assert!(
+        largest >= 3.0 * smallest,
+        "sizes {smallest:.3}..{largest:.3}"
+    );
+    assert!(stretched > 0, "rising blobs stretch");
+    // ≤ 2 rows of the ~14-row bottle at 80x24, even at its deepest.
+    assert!(pool <= 2.0 / 14.0, "pool {pool:.3}");
+    assert!(world.target_blobs() <= 6);
 }
