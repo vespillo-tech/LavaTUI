@@ -9,16 +9,13 @@ import argparse
 import csv
 from collections import Counter
 import errno
-import fcntl
 import json
 import math
 import os
 from pathlib import Path
-import pty
 import select
 import signal
 import struct
-import termios
 import time
 
 
@@ -51,13 +48,42 @@ def summarize(path):
             cause = 'preceding frame overrun / pacing'
         spikes.append(dict(frame=int(row['frame']), interval_ms=int(row['interval_us']) / 1000,
                            location=cause, wait_us=wait, deadline_miss_us=int(row['deadline_miss_us']), **components))
-    return dict(trace=str(path), frames=len(rows), seconds=(int(rows[-1]['end_us']) - int(rows[0]['end_us'])) / 1e6,
+    seconds = (int(rows[-1]['end_us']) - int(rows[0]['end_us'])) / 1e6
+    wait_cpu = sum(int(r.get('wait_cpu_us', 0)) for r in rows) / 1e6
+    wakes = sorted(int(r['deadline_miss_us']) for r in samples)
+    return dict(trace=str(path), frames=len(rows), seconds=seconds,
                 p50_ms=percentile(.5), p99_ms=percentile(.99), max_ms=max(intervals),
                 fps_counts=dict(Counter(int(r["fps"]) for r in rows)),
-                bytes=sum(int(r['bytes']) for r in rows), spikes=spikes)
+                bytes=sum(int(r['bytes']) for r in rows), spikes=spikes,
+                wake_p50_us=wakes[math.ceil(.5 * len(wakes)) - 1],
+                wake_p99_us=wakes[math.ceil(.99 * len(wakes)) - 1],
+                wake_max_us=max(wakes),
+                wait_cpu_s=wait_cpu if wait_cpu else None,
+                wait_cpu_percent_core=100 * wait_cpu / seconds if wait_cpu else None)
+
+
+def print_summary(path):
+    result = summarize(path)
+    print(f"{path}: {result['frames']:,} frames / {result['seconds']:.1f}s")
+    print(f"Interval ms: p50 {result['p50_ms']:.3f} | p99 {result['p99_ms']:.3f} | max {result['max_ms']:.3f}")
+    print(f"Wake lateness us: p50 {result['wake_p50_us']} | p99 {result['wake_p99_us']} | max {result['wake_max_us']}")
+    if result['wait_cpu_s'] is not None:
+        print(f"Input wait CPU: {result['wait_cpu_s']:.3f}s ({result['wait_cpu_percent_core']:.2f}% of one core; macOS thread clock)")
+    print(f"Gaps >2 frame periods: {len(result['spikes'])} (measured stage, not proven OS cause)")
+    for spike in result['spikes']:
+        print(f"  frame {spike['frame']:>6}: {spike['interval_ms']:>8.3f}ms | {spike['location']} | "
+              f"wake late {spike['deadline_miss_us'] / 1000:.3f}ms | "
+              f"tick/draw/diff/write/flush "
+              + '/'.join(f"{spike[k] / 1000:.3f}" for k in ('tick_us', 'draw_us', 'diff_us', 'write_us', 'flush_us')) + 'ms')
 
 
 def run(args):
+    if os.name != 'posix':
+        raise RuntimeError('pty capture requires Unix; --summarize works on any platform')
+    import fcntl
+    import pty
+    import termios
+
     args.output.mkdir(parents=True, exist_ok=True)
     binary = str(args.binary.resolve())
     children = {}
@@ -110,6 +136,7 @@ def run(args):
                 result = summarize(child['trace'])
                 result['pty_bytes'] = child['bytes']
                 result['process_cpu_s'] = usage.ru_utime + usage.ru_stime
+                result['process_cpu_percent_core'] = 100 * result['process_cpu_s'] / result['seconds']
                 result['load_start'] = child['load_start']
                 result['load_end'] = os.getloadavg()
                 results.append(result)
@@ -125,9 +152,19 @@ def run(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=Path('target/release/lavatui'))
-    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--output', type=Path, help='directory for pty captures (required unless --summarize)')
+    parser.add_argument('--summarize', type=Path, nargs='+', metavar='CSV', help='summarize existing native-terminal traces without launching a pty')
     parser.add_argument('--seconds', type=float, default=300)
     parser.add_argument('--sizes', nargs='+', default=['80x24', '160x40', '250x70'])
     parser.add_argument('--styles', nargs='+', default=['solid', 'braille'])
     parser.add_argument('--change', action='store_true', help='exercise a debounced config save after 3s')
-    run(parser.parse_args())
+    args = parser.parse_args()
+    if args.summarize:
+        for path in args.summarize:
+            print_summary(path)
+    elif args.output is None:
+        parser.error('--output is required for pty captures')
+    elif args.seconds <= 0:
+        parser.error('--seconds must be positive')
+    else:
+        run(args)

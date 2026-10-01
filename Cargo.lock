@@ -1522,6 +1522,7 @@ dependencies = [
  "image",
  "jiff",
  "keyring",
+ "libc",
  "ratatui",
  "serde",
  "serde_json",

@@ -16,6 +16,7 @@ mod sim;
 #[allow(dead_code)]
 mod spotify_web;
 mod theme;
+mod thread_qos;
 mod timing;
 mod ui;
 

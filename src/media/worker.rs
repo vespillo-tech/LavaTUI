@@ -116,7 +116,10 @@ impl Polled {
         };
         let spawned = thread::Builder::new()
             .name("lavatui-media".into())
-            .spawn(move || worker.run());
+            .spawn(move || {
+                crate::thread_qos::worker();
+                worker.run()
+            });
         match spawned {
             Ok(_) => Self {
                 state,

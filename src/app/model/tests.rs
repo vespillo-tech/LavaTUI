@@ -730,7 +730,13 @@ mod music {
 
     #[test]
     fn connects_while_placed_and_lets_go_when_off() {
-        let (mut m, t0) = model_with(Session::default(), temp_config("music-life"), 120, 36);
+        // This test requires a cover, regardless of the test runner's
+        // TERM / NO_COLOR environment.
+        let session = Session {
+            color: Some(crate::config::ColorChoice::Truecolor),
+            ..Session::default()
+        };
+        let (mut m, t0) = model_with(session, temp_config("music-life"), 120, 36);
         let alive = with(&mut m, &fake(t0));
         m.update(Action::Place("music"), t0);
         assert_eq!(m.toast.as_ref().unwrap().text, "music · side panel");

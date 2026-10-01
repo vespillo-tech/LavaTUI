@@ -161,7 +161,10 @@ impl ArtLoader {
         };
         let spawned = thread::Builder::new()
             .name("lavatui-art".into())
-            .spawn(move || worker.run());
+            .spawn(move || {
+                crate::thread_qos::worker();
+                worker.run()
+            });
         Self {
             requests: spawned.is_ok().then_some(tx),
             latest,

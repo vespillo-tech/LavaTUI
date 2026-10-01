@@ -24,6 +24,7 @@ impl Saver {
         let worker = thread::Builder::new()
             .name("config-save".into())
             .spawn(move || {
+                crate::thread_qos::worker();
                 let mut store = store;
                 while let Ok(settings) = incoming.recv() {
                     let result = store.save(&settings);

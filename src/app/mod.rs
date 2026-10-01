@@ -14,6 +14,7 @@ mod replies;
 #[cfg(test)]
 mod tests;
 mod trace;
+mod wake;
 
 use std::io::{self, Write};
 use std::time::{Duration, Instant, SystemTime};
@@ -131,14 +132,22 @@ fn run_loop(
     let mut meter = FpsMeter::default();
     let mut frames = 0;
     let mut lamp = LampState::default();
-    let mut events = TerminalEvents;
+    let mut events = TerminalEvents { precise: true };
+    let mut priority = crate::thread_qos::UiPriority::new();
     let mut replies = ReplyFilter::default();
     let mut last_drawn = None;
 
     loop {
-        let deadline = model.idle_until().unwrap_or_else(|| pacer.deadline());
+        let idle = model.idle_until();
+        events.precise = model.focused && idle.is_none();
+        priority.update(events.precise);
+        let deadline = idle.unwrap_or_else(|| pacer.deadline());
         let wait_start = Instant::now();
+        let wait_cpu_start = trace.enabled().then(crate::thread_qos::cpu_ns);
         let input = wait_for_input(&mut events, &mut replies, model, deadline)?;
+        let wait_cpu_us = wait_cpu_start.map_or(0, |start| {
+            crate::thread_qos::cpu_ns().saturating_sub(start) / 1000
+        });
         let wait_end = Instant::now();
         // Input draws immediately, while the scheduled grid stays put.
         if model.quit {
@@ -162,6 +171,7 @@ fn run_loop(
             frame: frames,
             wait_start,
             wait_end,
+            wait_cpu_us,
             started,
             drawn,
             deadline,
@@ -243,11 +253,17 @@ trait Events {
     fn now(&self) -> Instant;
 }
 
-struct TerminalEvents;
+struct TerminalEvents {
+    precise: bool,
+}
 
 impl Events for TerminalEvents {
     fn poll(&mut self, timeout: Duration) -> io::Result<bool> {
-        event::poll(timeout)
+        if self.precise {
+            wake::poll(timeout)
+        } else {
+            event::poll(timeout)
+        }
     }
 
     fn read(&mut self) -> io::Result<Event> {
