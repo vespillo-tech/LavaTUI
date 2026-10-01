@@ -60,47 +60,8 @@ pub fn draw(frame: &mut Frame, model: &Model, lamp: &mut LampState) {
             .fg(theme.role(Role::Text)),
     );
 
-    if let Some(l) = layout.lamp {
-        // Phase-change flash (§4.5): the glass flashes its metal; in bleed
-        // there's no metal, so the liquid pulses toward `accent` instead.
-        let flash = model.flash_level();
-        let flashed;
-        let lamp_theme = if l.glass.is_none() && flash > 0.0 {
-            let liquid = theme.paint(Ink::Role(Role::Liquid));
-            flashed = theme.with_role(
-                Role::Liquid,
-                liquid.mix(Ink::Role(Role::Accent), BLEED_FLASH * flash),
-            );
-            &flashed
-        } else {
-            theme
-        };
-        let view = LampView {
-            field: &model.field,
-            style: model.style.style(),
-            theme: lamp_theme,
-            time: model.time(),
-            lighting: model
-                .settings
-                .lamp
-                .lighting
-                .then_some(&Lamplight as &dyn Lighting),
-            options: LampOptions {
-                reduced: model.quality.reduced_grid(),
-                transparent: model.settings.theme.transparent,
-            },
-        };
-        frame.render_stateful_widget(view, l.view, lamp);
-        if let Some(g) = l.glass {
-            glass::draw(
-                frame.buffer_mut(),
-                &l,
-                g,
-                theme,
-                flash,
-                model.settings.lamp.lighting,
-            );
-        }
+    if let Some(l) = &layout.lamp {
+        draw_lamp(frame, l, model, lamp);
     }
 
     let buf = frame.buffer_mut();
@@ -135,6 +96,52 @@ pub fn draw(frame: &mut Frame, model: &Model, lamp: &mut LampState) {
         Overlay::None => {}
         Overlay::Help { scroll } => help::draw(buf, area, scroll, model),
         Overlay::Picker(p) => picker::draw(buf, area, layout, &p, model),
+    }
+}
+
+/// The lamp: the field in the current style and theme, then (in glass) the
+/// glass around it.
+fn draw_lamp(frame: &mut Frame, l: &layout::Lamp, model: &Model, lamp: &mut LampState) {
+    let theme = &model.theme;
+    // Phase-change flash (§4.5): the glass flashes its metal; in bleed
+    // there's no metal, so the liquid pulses toward `accent` instead.
+    let flash = model.flash_level();
+    let flashed;
+    let lamp_theme = if l.glass.is_none() && flash > 0.0 {
+        let liquid = theme.paint(Ink::Role(Role::Liquid));
+        flashed = theme.with_role(
+            Role::Liquid,
+            liquid.mix(Ink::Role(Role::Accent), BLEED_FLASH * flash),
+        );
+        &flashed
+    } else {
+        theme
+    };
+    let view = LampView {
+        field: &model.field,
+        style: model.style.style(),
+        theme: lamp_theme,
+        time: model.time(),
+        lighting: model
+            .settings
+            .lamp
+            .lighting
+            .then_some(&Lamplight as &dyn Lighting),
+        options: LampOptions {
+            reduced: model.quality.reduced_grid(),
+            transparent: model.settings.theme.transparent,
+        },
+    };
+    frame.render_stateful_widget(view, l.view, lamp);
+    if let Some(g) = l.glass {
+        glass::draw(
+            frame.buffer_mut(),
+            l,
+            g,
+            theme,
+            flash,
+            model.settings.lamp.lighting,
+        );
     }
 }
 
