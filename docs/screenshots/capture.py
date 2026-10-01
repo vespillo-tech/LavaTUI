@@ -10,10 +10,14 @@ a monospace font. Clock times are whatever the local time is.
     /tmp/v/bin/python docs/screenshots/capture.py            # all
     /tmp/v/bin/python docs/screenshots/capture.py hero help  # some
     /tmp/v/bin/python docs/screenshots/capture.py music      # needs Spotify playing
+    /tmp/v/bin/python docs/screenshots/capture.py lyrics     # Spotify + lrclib.net
 
-`music` (the now-playing widget, beside the lamp and on the lava) is
-never part of "all": it shows whatever Spotify is playing, cover art
-included, so it's for checking the widget, not for committing.
+`music` (the now-playing widget, beside the lamp and on the lava) and
+`lyrics` (the lyrics widget at three sizes, on the lava over several
+styles and in the side panel; it looks the playing track up on
+lrclib.net) are never part of "all": they show whatever Spotify is
+playing, so they're for checking the widgets, not for committing. They
+land in $LAVATUI_SHOT_OUT (default: the temp dir).
 
 Fonts default to macOS Menlo; set LAVATUI_SHOT_FONT to a .ttf/.ttc
 elsewhere (e.g. DejaVuSansMono.ttf).
@@ -250,6 +254,18 @@ LIVE = {
     "music-side": Shot(120, 36, '[lamp];style="solid";[dock];music="side"', frames=420),
     "music-lava": Shot(120, 36, '[lamp];style="braille";[theme];palette="abyss";[dock];music="overlay"', frames=420),
 }
+LYRICS = {
+    f"lyrics-{c}x{r}-{style}": Shot(c, r, f'[lamp];style="{style}";[dock];lyrics="overlay"', frames=600)
+    for (c, r) in [(80, 24), (120, 36), (200, 50)]
+    for style in ["solid", "braille", "ascii", "halftone", "synthwave"]
+}
+LYRICS |= {
+    f"lyrics-side-{c}x{r}": Shot(c, r, '[lamp];style="solid";[dock];lyrics="side"', frames=600)
+    for (c, r) in [(80, 24), (120, 36), (200, 50)]
+}
+LYRICS["lyrics-with-music-200x50"] = Shot(
+    200, 50, '[lamp];style="topo";[theme];palette="abyss";[dock];music="overlay";lyrics="overlay"', frames=600
+)
 TILES = {f"style-{s}": Shot(34, 30, TILE + f'style="{s}"') for s in STYLES}
 TILES |= {f"palette-{p}": Shot(34, 30, TILE + f'style="solid";[theme];palette="{p}"') for p in PALETTES}
 
@@ -260,6 +276,8 @@ def main(names):
     jobs = {n: s for n, s in SHOTS.items() if n in want}
     if "music" in want:
         jobs |= LIVE
+    if "lyrics" in want:
+        jobs |= LYRICS
     if "styles" in want:
         jobs |= {n: s for n, s in TILES.items() if n.startswith("style-")}
     if "palettes" in want:
@@ -268,8 +286,9 @@ def main(names):
     def one(item):
         name, shot = item
         out = os.path.join(HERE if name in SHOTS else tmp, name + ".png")
-        if name in LIVE:
-            out = os.path.join(tempfile.gettempdir(), name + ".png")
+        if name in LIVE or name in LYRICS:
+            live = os.environ.get("LAVATUI_SHOT_OUT", tempfile.gettempdir())
+            out = os.path.join(live, name + ".png")
         render(run(shot), out)
         return out
 

@@ -10,11 +10,12 @@ use super::chrome::{HINTS, fit_hints, fit_words};
 use super::layout::*;
 use crate::clock::{self, Face, Tier};
 use crate::dock::{
-    Anchor, Place, Show, WidgetForm, clock_forms, clock_parts, music_forms, pomodoro_forms,
+    Anchor, LyricsShow, Place, Show, WidgetForm, clock_forms, clock_parts, lyrics_forms,
+    music_forms, pomodoro_forms,
 };
 
 /// A dock setup to lay out: where the clock (index 0), the pomodoro (1),
-/// music (2) and a stand-in for the lyrics widget to come (3, only when
+/// music (2) and the lyrics widget (3, only when
 /// `lyrics`) go and at which anchors, the face, and which chips and ranks
 /// they have.
 #[derive(Clone, Copy)]
@@ -65,15 +66,6 @@ fn case(face: &'static dyn Face) -> Case {
     }
 }
 
-/// The lyrics stand-in's forms: a wide block, a narrower one, one line.
-fn lyrics_forms() -> Vec<WidgetForm> {
-    vec![
-        WidgetForm::fill(40, 5, 0),
-        WidgetForm::fill(28, 3, 1),
-        WidgetForm::fixed(24, 1, 2),
-    ]
-}
-
 impl Case {
     fn widgets(&self) -> usize {
         if self.lyrics { 4 } else { 3 }
@@ -112,7 +104,9 @@ impl Case {
             items.push(DockItem {
                 place: p[3],
                 anchor: self.anchors[3],
-                forms: forms(p[3], &|_| lyrics_forms()),
+                forms: forms(p[3], &|p| {
+                    lyrics_forms(&LyricsShow::Lines { widest: 44 }, p)
+                }),
                 chip: self.music_track.then_some(20),
                 rank: if self.music_track { 2 } else { 0 },
             });
@@ -1055,7 +1049,7 @@ fn toasts_drop_whole_words() {
 // --- snapshots ----------------------------------------------------------------
 
 /// A layout as a character map: `L` lamp, `P` panel padding, `f` face,
-/// `d` date, `o` pomodoro, `m` music, `y` the lyrics stand-in, `~` the
+/// `d` date, `o` pomodoro, `m` music, `y` lyrics, `~` the
 /// backing of the widgets on the lava (their own cells as in the panel),
 /// `S` status, `c` chip row, `t` toast row, `.` background.
 fn picture(l: &Layout, case: &Case) -> String {

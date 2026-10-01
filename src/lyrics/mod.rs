@@ -1,6 +1,6 @@
 //! Synced lyrics from LRCLIB (lrclib.net): fetch, cache, parse, sync.
 //!
-//! Pure core, no terminal: the widget (lava-75z.4, later) feeds it a
+//! Pure core, no terminal: the app (`app/model/lyrics.rs`) feeds it a
 //! [`Track`] when the song changes and a [`Playback`] sample each frame.
 //!
 //! - [`lrc`]: the LRC parser ([`Synced`]: timed lines, metadata, offset).
@@ -13,11 +13,7 @@
 //!   (newest request wins, transient failures retried).
 //!
 //! Privacy: a fetch sends title/artist/album/duration to lrclib.net, so the
-//! app only starts the service when the user opts in.
-
-// Wired into the app by the lyrics widget (lava-75z.4); until then only the
-// tests reach most of it.
-#![allow(dead_code, unused_imports)]
+//! app only starts the service when the user opts in (placing the widget).
 
 pub mod cache;
 pub mod client;
@@ -28,8 +24,8 @@ pub mod worker;
 use std::time::{Duration, Instant};
 
 pub use lrc::Synced;
-pub use sync::{Cursor, Syncer};
-pub use worker::{LyricsService, Response};
+pub use sync::Syncer;
+pub use worker::LyricsService;
 
 /// What the media source knows about the playing track: the lookup key.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
