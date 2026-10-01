@@ -103,6 +103,7 @@ impl Music {
         Capabilities {
             shuffle: own.shuffle || web.shuffle,
             repeat: own.repeat || web.repeat,
+            volume: own.volume,
         }
     }
 

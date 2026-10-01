@@ -528,6 +528,7 @@ impl Model {
         self.music.web_caps = state.map_or(Capabilities::NONE, |p| Capabilities {
             shuffle: !p.shuffle_blocked,
             repeat: !p.repeat_blocked,
+            volume: false,
         });
         if let (Some((shuffle, repeat)), Some(snap)) = (modes, &mut self.music.snapshot) {
             snap.shuffle = shuffle;

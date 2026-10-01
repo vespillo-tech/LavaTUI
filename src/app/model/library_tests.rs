@@ -286,7 +286,8 @@ fn shuffle_and_repeat_go_through_the_web_api_when_allowed() {
     let (mut m, t0, source) = rig("web-modes", &account);
     source.set_capabilities(Capabilities::NONE);
     tick(&mut m, t0);
-    assert_eq!(m.music.capabilities(), Capabilities::ALL);
+    let caps = m.music.capabilities();
+    assert!(caps.shuffle && caps.repeat, "{caps:?}");
     key(&mut m, t0, P::Shuffle);
     key(&mut m, t0, P::Repeat);
     assert!(source.sent().is_empty(), "nothing goes to the desktop app");
