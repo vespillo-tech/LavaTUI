@@ -1,0 +1,378 @@
+{
+  "before-runs": [
+    {
+      "trace": "/tmp/lavatui-trace-before-runs/160x40-braille.csv",
+      "frames": 17934,
+      "seconds": 304.630851,
+      "p50_ms": 16.671,
+      "p99_ms": 30.745,
+      "max_ms": 193.961,
+      "fps_counts": {
+        "60": 17934
+      },
+      "bytes": 25216040
+    },
+    {
+      "trace": "/tmp/lavatui-trace-before-runs/160x40-solid.csv",
+      "frames": 17000,
+      "seconds": 304.650888,
+      "p50_ms": 16.699,
+      "p99_ms": 45.862,
+      "max_ms": 184.38,
+      "fps_counts": {
+        "60": 16326,
+        "30": 674
+      },
+      "bytes": 59789443
+    },
+    {
+      "trace": "/tmp/lavatui-trace-before-runs/200x60-braille.csv",
+      "frames": 17696,
+      "seconds": 304.630279,
+      "p50_ms": 16.682,
+      "p99_ms": 37.509,
+      "max_ms": 192.515,
+      "fps_counts": {
+        "60": 17696
+      },
+      "bytes": 47413447
+    },
+    {
+      "trace": "/tmp/lavatui-trace-before-runs/200x60-solid.csv",
+      "frames": 14202,
+      "seconds": 304.660232,
+      "p50_ms": 16.882,
+      "p99_ms": 70.689,
+      "max_ms": 192.711,
+      "fps_counts": {
+        "60": 11277,
+        "30": 2925
+      },
+      "bytes": 108532038
+    },
+    {
+      "trace": "/tmp/lavatui-trace-before-runs/250x70-braille.csv",
+      "frames": 16047,
+      "seconds": 304.651407,
+      "p50_ms": 16.779,
+      "p99_ms": 50.981,
+      "max_ms": 186.323,
+      "fps_counts": {
+        "60": 14497,
+        "30": 1550
+      },
+      "bytes": 68602523
+    },
+    {
+      "trace": "/tmp/lavatui-trace-before-runs/250x70-solid.csv",
+      "frames": 13810,
+      "seconds": 304.674107,
+      "p50_ms": 16.947,
+      "p99_ms": 85.923,
+      "max_ms": 237.627,
+      "fps_counts": {
+        "60": 10968,
+        "30": 2842
+      },
+      "bytes": 167896290
+    },
+    {
+      "trace": "/tmp/lavatui-trace-before-runs/300x90-braille.csv",
+      "frames": 14338,
+      "seconds": 304.644114,
+      "p50_ms": 16.995,
+      "p99_ms": 64.438,
+      "max_ms": 217.461,
+      "fps_counts": {
+        "60": 11397,
+        "30": 2941
+      },
+      "bytes": 92151791
+    },
+    {
+      "trace": "/tmp/lavatui-trace-before-runs/300x90-solid.csv",
+      "frames": 12630,
+      "seconds": 304.651306,
+      "p50_ms": 17.131,
+      "p99_ms": 111.019,
+      "max_ms": 327.442,
+      "fps_counts": {
+        "60": 9239,
+        "30": 3391
+      },
+      "bytes": 229020765
+    },
+    {
+      "trace": "/tmp/lavatui-trace-before-runs/80x24-braille.csv",
+      "frames": 18133,
+      "seconds": 304.62625,
+      "p50_ms": 16.667,
+      "p99_ms": 23.542,
+      "max_ms": 184.473,
+      "fps_counts": {
+        "60": 18133
+      },
+      "bytes": 7605191
+    },
+    {
+      "trace": "/tmp/lavatui-trace-before-runs/80x24-solid.csv",
+      "frames": 18084,
+      "seconds": 304.628336,
+      "p50_ms": 16.671,
+      "p99_ms": 25.541,
+      "max_ms": 184.205,
+      "fps_counts": {
+        "60": 18084
+      },
+      "bytes": 15744758
+    }
+  ],
+  "after-runs": [
+    {
+      "trace": "/tmp/lavatui-trace-after-runs/160x40-braille.csv",
+      "frames": 18228,
+      "seconds": 304.729888,
+      "p50_ms": 16.665,
+      "p99_ms": 20.622,
+      "max_ms": 136.447,
+      "fps_counts": {
+        "60": 18228
+      },
+      "bytes": 23364587
+    },
+    {
+      "trace": "/tmp/lavatui-trace-after-runs/160x40-solid.csv",
+      "frames": 18190,
+      "seconds": 304.731055,
+      "p50_ms": 16.667,
+      "p99_ms": 21.874,
+      "max_ms": 136.71,
+      "fps_counts": {
+        "60": 18190
+      },
+      "bytes": 60363766
+    },
+    {
+      "trace": "/tmp/lavatui-trace-after-runs/200x60-braille.csv",
+      "frames": 18215,
+      "seconds": 304.73083,
+      "p50_ms": 16.663,
+      "p99_ms": 20.986,
+      "max_ms": 136.073,
+      "fps_counts": {
+        "60": 18215
+      },
+      "bytes": 36397474
+    },
+    {
+      "trace": "/tmp/lavatui-trace-after-runs/200x60-solid.csv",
+      "frames": 18173,
+      "seconds": 304.716222,
+      "p50_ms": 16.663,
+      "p99_ms": 21.353,
+      "max_ms": 135.776,
+      "fps_counts": {
+        "60": 18173
+      },
+      "bytes": 107440924
+    },
+    {
+      "trace": "/tmp/lavatui-trace-after-runs/250x70-braille.csv",
+      "frames": 18202,
+      "seconds": 304.718167,
+      "p50_ms": 16.67,
+      "p99_ms": 20.484,
+      "max_ms": 131.874,
+      "fps_counts": {
+        "60": 18202
+      },
+      "bytes": 52291721
+    },
+    {
+      "trace": "/tmp/lavatui-trace-after-runs/250x70-solid.csv",
+      "frames": 18156,
+      "seconds": 304.730874,
+      "p50_ms": 16.667,
+      "p99_ms": 21.516,
+      "max_ms": 135.164,
+      "fps_counts": {
+        "60": 18156
+      },
+      "bytes": 143472410
+    },
+    {
+      "trace": "/tmp/lavatui-trace-after-runs/300x90-braille.csv",
+      "frames": 18181,
+      "seconds": 304.736748,
+      "p50_ms": 16.657,
+      "p99_ms": 20.163,
+      "max_ms": 131.117,
+      "fps_counts": {
+        "60": 18181
+      },
+      "bytes": 78520935
+    },
+    {
+      "trace": "/tmp/lavatui-trace-after-runs/300x90-solid.csv",
+      "frames": 18126,
+      "seconds": 304.713408,
+      "p50_ms": 16.669,
+      "p99_ms": 21.285,
+      "max_ms": 135.779,
+      "fps_counts": {
+        "60": 18126
+      },
+      "bytes": 196514013
+    },
+    {
+      "trace": "/tmp/lavatui-trace-after-runs/80x24-braille.csv",
+      "frames": 18253,
+      "seconds": 304.716097,
+      "p50_ms": 16.666,
+      "p99_ms": 18.879,
+      "max_ms": 87.092,
+      "fps_counts": {
+        "60": 18253
+      },
+      "bytes": 6974754
+    },
+    {
+      "trace": "/tmp/lavatui-trace-after-runs/80x24-solid.csv",
+      "frames": 18240,
+      "seconds": 304.718088,
+      "p50_ms": 16.666,
+      "p99_ms": 19.473,
+      "max_ms": 78.388,
+      "fps_counts": {
+        "60": 18240
+      },
+      "bytes": 18371136
+    }
+  ],
+  "isolated-before": [
+    {
+      "trace": "/tmp/lavatui-trace-isolated-before/300x90-solid.csv",
+      "frames": 18275,
+      "seconds": 304.74046,
+      "p50_ms": 16.664,
+      "p99_ms": 20.702,
+      "max_ms": 52.287,
+      "fps_counts": {
+        "60": 18275
+      },
+      "bytes": 204130531
+    }
+  ],
+  "isolated-after": [
+    {
+      "trace": "/tmp/lavatui-trace-isolated-after/300x90-solid.csv",
+      "frames": 18270,
+      "seconds": 304.638142,
+      "p50_ms": 16.664,
+      "p99_ms": 20.671,
+      "max_ms": 56.701,
+      "fps_counts": {
+        "60": 18270
+      },
+      "bytes": 202314311
+    }
+  ],
+  "integrated-runs": [
+    {
+      "trace": "/tmp/lavatui-trace-integrated-runs/160x40-braille.csv",
+      "frames": 18261,
+      "seconds": 304.708024,
+      "p50_ms": 16.674,
+      "p99_ms": 21.374,
+      "max_ms": 84.281,
+      "fps_counts": {
+        "60": 18261
+      },
+      "bytes": 24423358
+    },
+    {
+      "trace": "/tmp/lavatui-trace-integrated-runs/160x40-solid.csv",
+      "frames": 18262,
+      "seconds": 304.700488,
+      "p50_ms": 16.672,
+      "p99_ms": 22.021,
+      "max_ms": 84.761,
+      "fps_counts": {
+        "60": 18262
+      },
+      "bytes": 61245348
+    },
+    {
+      "trace": "/tmp/lavatui-trace-integrated-runs/250x70-braille.csv",
+      "frames": 18260,
+      "seconds": 304.699248,
+      "p50_ms": 16.677,
+      "p99_ms": 21.263,
+      "max_ms": 83.61,
+      "fps_counts": {
+        "60": 18260
+      },
+      "bytes": 52017491
+    },
+    {
+      "trace": "/tmp/lavatui-trace-integrated-runs/250x70-solid.csv",
+      "frames": 18259,
+      "seconds": 304.704493,
+      "p50_ms": 16.668,
+      "p99_ms": 21.609,
+      "max_ms": 84.564,
+      "fps_counts": {
+        "60": 18259
+      },
+      "bytes": 135576031
+    },
+    {
+      "trace": "/tmp/lavatui-trace-integrated-runs/300x90-braille.csv",
+      "frames": 18253,
+      "seconds": 304.707977,
+      "p50_ms": 16.671,
+      "p99_ms": 21.132,
+      "max_ms": 81.068,
+      "fps_counts": {
+        "60": 18253
+      },
+      "bytes": 77078582
+    },
+    {
+      "trace": "/tmp/lavatui-trace-integrated-runs/300x90-solid.csv",
+      "frames": 18256,
+      "seconds": 304.714997,
+      "p50_ms": 16.69,
+      "p99_ms": 21.392,
+      "max_ms": 83.613,
+      "fps_counts": {
+        "60": 18256
+      },
+      "bytes": 202548438
+    },
+    {
+      "trace": "/tmp/lavatui-trace-integrated-runs/80x24-braille.csv",
+      "frames": 18274,
+      "seconds": 304.701381,
+      "p50_ms": 16.663,
+      "p99_ms": 18.678,
+      "max_ms": 45.791,
+      "fps_counts": {
+        "60": 18274
+      },
+      "bytes": 7278227
+    },
+    {
+      "trace": "/tmp/lavatui-trace-integrated-runs/80x24-solid.csv",
+      "frames": 18269,
+      "seconds": 304.708106,
+      "p50_ms": 16.665,
+      "p99_ms": 20.881,
+      "max_ms": 68.913,
+      "fps_counts": {
+        "60": 18269
+      },
+      "bytes": 18603653
+    }
+  ]
+}

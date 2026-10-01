@@ -78,11 +78,12 @@ impl FramePacer {
     }
 
     /// Mark a frame as drawn. Deadlines stay on a fixed grid while we keep
-    /// up; if we fall behind we resync to `now` rather than bursting frames.
+    /// up. Early input frames keep their next deadline; late frames skip
+    /// expired grid slots without adding a full period after the overrun.
     pub fn frame_done(&mut self, now: Instant) {
-        self.next += self.period;
-        if self.next <= now {
-            self.next = now + self.period;
+        if now >= self.next {
+            let slots = (now - self.next).as_nanos() / self.period.as_nanos() + 1;
+            self.next += Duration::from_nanos((slots * self.period.as_nanos()) as u64);
         }
     }
 }
@@ -297,7 +298,7 @@ mod tests {
     }
 
     #[test]
-    fn pacer_keeps_grid_and_resyncs_when_late() {
+    fn pacer_keeps_grid_and_skips_expired_slots() {
         let t0 = Instant::now();
         let period = Duration::from_secs(1) / 50; // 20ms
         let mut pacer = FramePacer::new(50, t0);
@@ -306,8 +307,27 @@ mod tests {
         pacer.frame_done(t0 + MS * 21); // slightly late: stay on the grid
         assert_eq!(pacer.deadline(), t0 + period * 2);
 
-        pacer.frame_done(t0 + MS * 100); // very late: resync
+        pacer.frame_done(t0 + MS * 100); // very late: skip expired slots
         assert_eq!(pacer.deadline(), t0 + MS * 100 + period);
+    }
+
+    #[test]
+    fn early_input_frame_does_not_skip_the_next_deadline() {
+        let t0 = Instant::now();
+        let mut pacer = FramePacer::new(60, t0);
+        let due = pacer.deadline();
+        pacer.frame_done(t0 + MS);
+        assert_eq!(pacer.deadline(), due);
+    }
+
+    #[test]
+    fn late_frame_skips_missed_deadlines_without_shifting_the_grid() {
+        let t0 = Instant::now();
+        let mut pacer = FramePacer::new(50, t0);
+        pacer.frame_done(t0 + MS * 45);
+        assert_eq!(pacer.deadline(), t0 + MS * 60);
+        pacer.frame_done(t0 + MS * 123);
+        assert_eq!(pacer.deadline(), t0 + MS * 140);
     }
 
     #[test]

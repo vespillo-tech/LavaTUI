@@ -9,6 +9,7 @@
 mod actions;
 mod music;
 mod pickers;
+mod saving;
 
 use std::time::{Duration, Instant, SystemTime};
 
@@ -87,6 +88,10 @@ pub struct LocalTime {
 pub struct FrameStats {
     pub fps: f64,
     pub frame_ms: f64,
+    pub sim_steps: u32,
+    pub sim_dt: f64,
+    pub sim_feed_s: f64,
+    pub save_us: u64,
 }
 
 pub struct Model {
@@ -94,7 +99,9 @@ pub struct Model {
     pub settings: Settings,
     file: Settings,
     overridden: Vec<Overridden>,
-    store: Store,
+    store: Option<Store>,
+    saver: Option<saving::Saver>,
+    config_notes: Vec<String>,
     save_at: Option<Instant>,
 
     // The lamp.
@@ -176,7 +183,9 @@ impl Model {
             cell_aspect: cell_aspect.unwrap_or(settings.display.cell_aspect),
             file: loaded.settings,
             overridden,
-            store,
+            store: Some(store),
+            saver: None,
+            config_notes: Vec::new(),
             save_at: None,
             world,
             sim_clock,
@@ -306,6 +315,10 @@ impl Model {
             // pause in Spotify): look each second.
             wake = wake.min(self.now + second);
         }
+        if self.saver.as_ref().is_some_and(saving::Saver::busy) {
+            // Frozen frames still collect save errors promptly.
+            wake = wake.min(self.now + Duration::from_millis(100));
+        }
         Some(wake + WAKE_SLACK)
     }
 
@@ -389,8 +402,12 @@ impl Model {
             self.pomodoro.reset();
             self.toast("pomodoro reset");
         }
+        self.poll_saves();
+        self.stats.save_us = 0;
         if self.save_at.is_some_and(|at| now >= at) {
+            let started = Instant::now();
             self.save();
+            self.stats.save_us = started.elapsed().as_micros() as u64;
         }
         self.sync_music();
 
@@ -400,8 +417,16 @@ impl Model {
         }
         let ease = 1.0 - (-elapsed.as_secs_f64() / SPEED_EASE).exp();
         self.speed_factor += (self.speed.factor() - self.speed_factor) * ease;
+        self.stats.sim_steps = 0;
+        self.stats.sim_feed_s = 0.0;
+        self.stats.sim_dt = self.sim_clock.dt_secs();
         if !self.frozen {
+            self.stats.sim_feed_s = elapsed
+                .min(FixedStep::STALL)
+                .mul_f64(self.speed_factor)
+                .as_secs_f64();
             let steps = self.sim_clock.advance(elapsed, self.speed_factor);
+            self.stats.sim_steps = steps;
             for _ in 0..steps {
                 self.world.step(self.sim_clock.dt_secs());
             }
@@ -483,15 +508,63 @@ impl Model {
             return;
         }
         let out = config::to_persist(&self.settings, &self.file, &self.overridden);
-        match self.store.save(&out) {
+        if let Some(saver) = &mut self.saver {
+            saver.submit(out);
+            return;
+        }
+        match self.store.as_mut().unwrap().save(&out) {
             Ok(()) => self.file = out,
             Err(problem) => self.toast(problem),
         }
     }
 
+    /// Start once, before entering the terminal loop. Tests keep the inline
+    /// Store so pure model tests never depend on thread scheduling.
+    pub fn background_saves(&mut self) -> std::io::Result<()> {
+        let store = self.store.take().unwrap();
+        self.config_notes = store.report();
+        self.saver = Some(saving::Saver::start(store)?);
+        Ok(())
+    }
+
+    fn poll_saves(&mut self) {
+        while let Some(saver) = &mut self.saver {
+            match saver.poll() {
+                Ok(Some((out, Ok(())))) => self.file = out,
+                Ok(Some((_, Err(problem)))) | Err(problem) => {
+                    self.toast(problem);
+                    break;
+                }
+                Ok(None) => break,
+            }
+        }
+    }
+
+    /// Join only after the loop exits; flush the final change on quit.
+    pub fn finish_saves(&mut self) {
+        self.save();
+        if let Some(saver) = self.saver.take() {
+            match saver.finish() {
+                Ok((store, results)) => {
+                    self.store = Some(store);
+                    self.config_notes.clear();
+                    for (out, result) in results {
+                        match result {
+                            Ok(()) => self.file = out,
+                            Err(problem) => self.config_notes.push(problem),
+                        }
+                    }
+                }
+                Err(problem) => self.config_notes.push(problem),
+            }
+        }
+    }
+
     /// Config problems to print once the terminal is restored.
     pub fn config_report(&self) -> Vec<String> {
-        self.store.report()
+        let mut notes = self.store.as_ref().map_or_else(Vec::new, Store::report);
+        notes.extend(self.config_notes.clone());
+        notes
     }
 
     /// The phase-change flash right now: 0 → 1 → 0 over [`FLASH_TIME`].

@@ -46,6 +46,10 @@ pub struct Cli {
     #[arg(long, value_name = "N", hide = true)]
     pub frames: Option<u64>,
 
+    /// Record frame timing to CSV (also accepts LAVATUI_TRACE).
+    #[arg(long, value_name = "PATH", hide = true)]
+    pub trace: Option<PathBuf>,
+
     /// Panic after rendering N frames, to check the terminal is restored.
     #[arg(long, value_name = "N", hide = true)]
     pub panic_after: Option<u64>,
@@ -109,6 +113,17 @@ mod tests {
         assert!(session.minimal);
         assert_eq!(session.fps, Some(30));
         assert!(Cli::parse_from(["lavatui", "-m"]).into_session().minimal);
+    }
+
+    #[test]
+    fn trace_is_hidden_and_session_only() {
+        let mut cli = Cli::parse_from(["lavatui", "--trace", "/tmp/frame.csv"]);
+        assert_eq!(cli.trace.take(), Some(PathBuf::from("/tmp/frame.csv")));
+        assert_eq!(cli.into_session(), Session::default());
+        let help = Cli::try_parse_from(["lavatui", "--help"])
+            .unwrap_err()
+            .to_string();
+        assert!(!help.contains("--trace"));
     }
 
     #[test]

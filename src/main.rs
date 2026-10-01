@@ -27,6 +27,10 @@ use clap::Parser;
 fn main() -> ExitCode {
     let mut cli = cli::Cli::parse();
     let panic_after = cli.panic_after.take();
+    let trace = cli
+        .trace
+        .take()
+        .or_else(|| std::env::var_os("LAVATUI_TRACE").map(Into::into));
     let session = cli.into_session();
 
     // Both ends must be the terminal: without stdin there are no keys, and
@@ -45,7 +49,7 @@ fn main() -> ExitCode {
 
     // `try_init` enters raw mode + the alternate screen and installs a panic
     // hook that restores the terminal; `restore` undoes it on normal exit.
-    let mut terminal = match ratatui::try_init() {
+    let mut terminal = match ratatui::try_init().and_then(|_| app::new_terminal(trace.is_some())) {
         Ok(terminal) => terminal,
         Err(err) => {
             ratatui::restore();
@@ -60,7 +64,7 @@ fn main() -> ExitCode {
         app::disable_terminal_modes();
         restore_screen(info);
     }));
-    let result = app::run(&mut terminal, &session, panic_after);
+    let result = app::run(&mut terminal, &session, panic_after, trace.as_deref());
     ratatui::restore();
     match result {
         Ok(report) => {

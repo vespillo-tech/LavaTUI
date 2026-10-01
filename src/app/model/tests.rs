@@ -922,3 +922,22 @@ mod music {
         assert!(on <= off);
     }
 }
+
+#[test]
+fn background_save_flushes_cli_overrides_on_quit() {
+    let path = temp_config("background-quit");
+    let session = Session {
+        minimal: true,
+        style: Some("braille".into()),
+        ..Session::default()
+    };
+    let (mut model, t0) = model_with(session, path.clone(), 80, 24);
+    model.background_saves().unwrap();
+    model.update(Action::HeatUp, t0);
+    // Quit before the debounce expires, without another tick.
+    model.finish_saves();
+    let (loaded, _) = model_with(Session::default(), path, 80, 24);
+    assert!(!loaded.minimal());
+    assert_eq!(loaded.settings.lamp.heat, 4);
+    assert_eq!(loaded.style.style().name(), "solid");
+}

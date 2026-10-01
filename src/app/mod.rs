@@ -9,18 +9,23 @@
 //! crossterm reads as keys are filtered out first ([`replies`]).
 
 mod model;
+mod output;
 mod replies;
 #[cfg(test)]
 mod tests;
+mod trace;
 
 use std::io::{self, Write};
 use std::time::{Duration, Instant, SystemTime};
 
+use output::AppTerminal;
+pub use output::new_terminal;
+use ratatui::Terminal;
 use ratatui::backend::Backend;
 use ratatui::crossterm::event::{self, Event};
-use ratatui::crossterm::{execute, terminal};
+use ratatui::crossterm::{execute, queue, terminal};
 use ratatui::layout::Rect;
-use ratatui::{DefaultTerminal, Terminal};
+use std::path::Path;
 
 pub use model::{LocalTime, Model, Overlay, Picker, PickerKind, TOAST_FADE, TOAST_TIME, Toast};
 
@@ -36,9 +41,10 @@ use replies::ReplyFilter;
 /// many frames, to check the terminal is restored on a crash. Returns the
 /// config problems to print after the terminal is restored.
 pub fn run(
-    terminal: &mut DefaultTerminal,
+    terminal: &mut AppTerminal,
     session: &Session,
     panic_after: Option<u64>,
+    trace_path: Option<&Path>,
 ) -> io::Result<Vec<String>> {
     let store = Store::new(session.config_path.clone());
     let size = terminal.size()?;
@@ -51,11 +57,20 @@ pub fn run(
         session.seed.unwrap_or_else(time_seed),
         Instant::now(),
     );
+    model.background_saves()?;
     let modes = TerminalModes::enable(model.settings.input.mouse)?;
-    let result = run_loop(terminal, &mut model, session.max_frames, panic_after);
-    model.save();
+    let mut trace = trace::Trace::new(trace_path)?;
+    let result = run_loop(
+        terminal,
+        &mut model,
+        session.max_frames,
+        panic_after,
+        &mut trace,
+    );
+    let traced = trace.finish();
+    model.finish_saves();
     drop(modes);
-    result.map(|()| model.config_report())
+    result.and(traced).map(|()| model.config_report())
 }
 
 /// Focus reports (always: they let us drop to 10 fps in the background;
@@ -86,18 +101,27 @@ impl Drop for TerminalModes {
 /// Switch off focus reports and mouse capture. Harmless if they're off:
 /// it's only a few escape codes, so it doesn't need to know what was on.
 pub fn disable_terminal_modes() {
-    let _ = execute!(
-        io::stdout(),
+    let _ = restore_modes(io::stdout());
+}
+
+fn restore_modes(mut writer: impl Write) -> io::Result<()> {
+    queue!(
+        writer,
         event::DisableMouseCapture,
         event::DisableFocusChange
-    );
+    )?;
+    if output::ansi_output() {
+        queue!(writer, terminal::EndSynchronizedUpdate)?;
+    }
+    execute!(writer, ratatui::crossterm::cursor::Show)
 }
 
 fn run_loop(
-    terminal: &mut DefaultTerminal,
+    terminal: &mut AppTerminal,
     model: &mut Model,
     max_frames: Option<u64>,
     panic_after: Option<u64>,
+    trace: &mut trace::Trace,
 ) -> io::Result<()> {
     let mut fps = model.target_fps();
     let mut pacer = FramePacer::new(fps, Instant::now());
@@ -110,26 +134,46 @@ fn run_loop(
 
     loop {
         let deadline = model.idle_until().unwrap_or_else(|| pacer.deadline());
-        if wait_for_input(&mut events, &mut replies, model, deadline)? {
-            // Input: draw now, not at the next deadline.
-            pacer = FramePacer::new(fps, Instant::now());
-        }
+        let wait_start = Instant::now();
+        let input = wait_for_input(&mut events, &mut replies, model, deadline)?;
+        let wait_end = Instant::now();
+        // Input draws immediately, while the scheduled grid stays put.
         if model.quit {
             return Ok(());
         }
+        let started = Instant::now();
+        terminal.backend_mut().writer_mut().begin_frame()?;
         if std::mem::take(&mut model.clear) {
             full_repaint(terminal)?;
         }
-
-        let started = Instant::now();
-        draw_frame(terminal, model, &mut lamp, started, local_time())?;
+        let timings = draw_frame(terminal, model, &mut lamp, started, local_time())?;
         if std::mem::take(&mut model.bell) {
-            io::stdout().write_all(b"\x07")?;
+            terminal.backend_mut().write_all(b"\x07")?;
         }
 
+        let output = terminal.backend_mut().writer_mut().finish_frame()?;
         let drawn = Instant::now();
         let dt = last_drawn.map_or(Duration::ZERO, |at| drawn - at);
         last_drawn = Some(drawn);
+        trace.record(trace::Frame {
+            frame: frames,
+            wait_start,
+            wait_end,
+            started,
+            drawn,
+            deadline,
+            interval: dt,
+            input,
+            tick_us: timings.0,
+            draw_us: timings.1,
+            total_us: (drawn - started).as_micros() as u64,
+            sim_steps: model.stats.sim_steps,
+            sim_dt: model.stats.sim_dt,
+            sim_feed_s: model.stats.sim_feed_s,
+            save_us: model.stats.save_us,
+            output,
+            fps,
+        });
         meter.tick(drawn);
         model.stats.fps = meter.fps();
         model.frame_drawn((drawn - started).as_secs_f64() * 1e3, dt, drawn);
@@ -161,12 +205,19 @@ fn draw_frame<B: Backend>(
     lamp: &mut LampState,
     now: Instant,
     local: LocalTime,
-) -> Result<(), B::Error> {
+) -> Result<(u64, u64), B::Error> {
+    let mut timings = (0, 0);
     terminal.draw(|frame| {
+        let tick = Instant::now();
         model.tick(now, frame.area(), local);
+        let draw = Instant::now();
         ui::draw(frame, model, lamp);
+        timings = (
+            (draw - tick).as_micros() as u64,
+            draw.elapsed().as_micros() as u64,
+        );
     })?;
-    Ok(())
+    Ok(timings)
 }
 
 /// Clear the screen and repaint every cell on the next draw (ctrl-l).
