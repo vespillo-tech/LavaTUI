@@ -5,7 +5,7 @@
 //!   columns (lamp | clock & pomodoro + app); the lamp keeps animating
 //!   behind it, dimmed in truecolor.
 //! * Smaller: a full-screen, one-column sheet, scrollable with `j k`.
-//! * Micro: the single line `? help · q quit · m mode`.
+//! * Micro: the single line `? close · too small for keys`.
 
 pub mod sheet;
 
@@ -77,9 +77,10 @@ impl Inks {
     }
 }
 
-/// Micro: as much of `? help · q quit · m mode` as fits, on the top row.
+/// Micro: as much of `? close · too small for keys` as fits, on the top
+/// row. Only help's own keys act under it, so it names no others.
 fn draw_line(buf: &mut Buffer, area: Rect, ink: &Inks) {
-    let items = ["? help", "q quit", "m mode"];
+    let items = ["? close", "too small for keys"];
     for n in (1..=items.len()).rev() {
         let s = items[..n].join(" · ");
         if s.chars().count() <= usize::from(area.width) {

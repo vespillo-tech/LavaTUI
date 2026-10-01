@@ -6,7 +6,8 @@
 //!
 //! Loading never fails the app. A missing file is the defaults. A bad
 //! value costs only its own key ([`Settings::parse`]); a file that isn't
-//! TOML at all is the defaults. Either way the toast says what was ignored.
+//! TOML at all is the defaults. Either way the toast says what was ignored
+//! (or, failing that, which keys it doesn't know; those are kept).
 //!
 //! The user's file is never lost:
 //! * Saving edits the file in place with `toml_edit`: comments, key order,
@@ -80,14 +81,14 @@ impl Store {
         let (text, utf8) = decode(&bytes);
         match Settings::parse(&text) {
             Ok(parsed) => {
+                // Unknown keys survive a save, so only dropped values and
+                // bytes need the backup.
                 self.backup_first = !utf8 || !parsed.ignored.is_empty();
-                let problem = match (&parsed.ignored[..], utf8) {
-                    ([], true) => None,
-                    ([], false) => Some("config: not UTF-8 · backed up on save".to_owned()),
-                    ([key], _) => Some(format!("config: ignored {key}")),
-                    ([key, rest @ ..], _) => {
-                        Some(format!("config: ignored {key} +{} more", rest.len()))
-                    }
+                let problem = match (&parsed.ignored[..], &parsed.unknown[..], utf8) {
+                    ([], [], true) => None,
+                    ([], _, false) => Some("config: not UTF-8 · backed up on save".to_owned()),
+                    ([], unknown, true) => Some(summary("config: unknown key", unknown)),
+                    (ignored, ..) => Some(summary("config: ignored", ignored)),
                 };
                 Loaded {
                     settings: parsed.settings,
@@ -134,6 +135,15 @@ impl Store {
         };
         self.backup_first = false;
         write_atomic(&target, text.as_bytes())
+    }
+}
+
+/// `what lamp.frame`, or `what lamp.frame +2 more`.
+fn summary(what: &str, keys: &[String]) -> String {
+    match keys {
+        [key] => format!("{what} {key}"),
+        [key, rest @ ..] => format!("{what} {key} +{} more", rest.len()),
+        [] => what.to_owned(),
     }
 }
 
@@ -423,11 +433,13 @@ mod tests {
         let loaded = store.load();
         assert_eq!(
             loaded.problem.as_deref(),
-            Some("config: ignored lamp.future_key")
+            Some("config: unknown key lamp.future_key")
         );
         let mut settings = loaded.settings;
         settings.lamp.heat = 2;
         store.save(&settings).unwrap();
+        // Nothing was dropped, so nothing was backed up.
+        assert!(!dir.join("config.toml.bak").exists());
 
         let saved = fs::read_to_string(&path).unwrap();
         assert!(saved.starts_with("# my lamp\n[lamp]\n"), "{saved}");

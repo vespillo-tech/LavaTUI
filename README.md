@@ -50,7 +50,8 @@ in minimal mode with lighting on:
 - **Glass or bleed.** The lamp is drawn as a lava-lamp silhouette, or the
   wax fills the whole window. `auto` chooses by window shape.
 - **Clock faces**: blocks, segment, analog, binary, words and text. Each
-  face comes in several sizes, and the largest one that fits is used.
+  face comes in several sizes, and the largest one that fits is used; on
+  a very large terminal the panel widens for the biggest ones.
 - **Pomodoro timer** (`space`) with focus and break phases, cycle dots,
   a phase-change flash and an optional bell.
 - **It looks right at any size.** It works from 1×1 to a 4K full-screen
@@ -103,7 +104,8 @@ lavatui [OPTIONS]
 ```
 
 Flags apply to the current session only and are never written back to
-the config file. A setting you change in the app is saved as usual.
+the config file. A setting you change in the app is saved as usual. An
+unknown `--style` or `--palette` name exits with the list of valid ones.
 
 ### Keys
 
@@ -202,9 +204,11 @@ clock = "under"          # under | corner | off
 mouse = false
 ```
 
-The file is meant to be edited by hand. A bad value is ignored (a toast
-names it) and the rest of the file still applies. If a save would drop
-anything, the file is first copied to `config.toml.bak`. Saves keep your
+The file is meant to be edited by hand. A bad value (or a style, palette
+or face that doesn't exist) is ignored, a toast names it, and the rest of
+the file still applies. Keys lavatui doesn't know are reported but kept.
+If a save would drop anything, the file is first copied to
+`config.toml.bak`. Saves keep your
 comments and write through symlinks, so a dotfile manager's link stays
 intact.
 

@@ -73,7 +73,7 @@ fn check(l: &Layout, input: &LayoutInput) {
         other => panic!("{ctx}: frame/glass mismatch {other:?}"),
     }
 
-    let micro = cols < 20 || rows < 8;
+    let micro = !reaches(cols, rows, TINY);
     if let Some(s) = l.status {
         inside(s, "status");
         assert!(
@@ -322,7 +322,33 @@ fn huge_250x70_is_glass_with_panel_and_date() {
     assert_eq!(l.lamp.unwrap().frame, LampFrame::Glass);
     let p = l.panel.unwrap();
     assert!(p.date.is_some());
-    assert!(face_tier(&l).unwrap().0 >= Tier::L);
+    // The panel grows past 36 for the blocks XL face (51×8), no further.
+    assert_eq!(face_tier(&l), Some((Tier::XL, 51, 8)));
+    assert_eq!(p.rect.width, 53);
+}
+
+#[test]
+fn wide_but_short_gets_blocks_l_with_seconds() {
+    // 200 cols lets the panel grow; 50 rows isn't Huge, so no XL.
+    let l = at(220, 50, &input(blocks()));
+    let p = l.panel.unwrap();
+    let (_, form) = p.face.unwrap();
+    assert_eq!(
+        (form.tier, form.seconds, form.size.width),
+        (Tier::L, true, 54)
+    );
+    assert_eq!(p.rect.width, 56);
+    // Below 200 cols the panel stays at 36 and seconds don't fit.
+    let l = at(199, 50, &input(blocks()));
+    assert_eq!(l.panel.unwrap().rect.width, 36);
+    assert_eq!(face_tier(&l), Some((Tier::L, 34, 5)));
+}
+
+#[test]
+fn narrow_faces_keep_the_36_col_panel_when_huge() {
+    let l = at(250, 70, &input(clock::face_by_name("analog").unwrap()));
+    assert_eq!(face_tier(&l), Some((Tier::XL, 31, 16)));
+    assert_eq!(l.panel.unwrap().rect.width, 36);
 }
 
 #[test]
@@ -507,6 +533,7 @@ fn snapshots_at_mockup_sizes() {
         ("80x24", 80, 24, full),
         ("120x36", 120, 36, full),
         ("160x22", 160, 22, full),
+        ("250x70", 250, 70, full),
         ("34x56", 34, 56, full),
         ("minimal_80x24", 80, 24, minimal),
     ];

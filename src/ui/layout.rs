@@ -125,9 +125,34 @@ const MIN_GLASS_ROWS: u16 = 12;
 const PANEL_GLASS_ROWS: u16 = 20;
 /// Panel width bounds (incl. 1-col padding each side).
 const PANEL_W: (u16, u16) = (22, 36);
+/// From Huge's column count up, the panel may grow to this so the widest
+/// faces fit (blocks XL 51, blocks L with seconds 54); it only grows as
+/// far as the face in it needs.
+const PANEL_W_WIDE: u16 = 56;
 /// Rows of the pomodoro block, and the gap above it.
 const POMODORO_ROWS: u16 = 3;
 const FACE_GAP: u16 = 2;
+
+/// Size cuts, `(cols, rows)`: a terminal is in a tier when it has at
+/// least both (§1.2). Below `TINY` is Micro; Huge is its own check
+/// ([`is_huge`]), as only the panel and face size care about it.
+pub const TINY: (u16, u16) = (20, 8);
+pub const SMALL: (u16, u16) = (40, 14);
+pub const MEDIUM: (u16, u16) = (80, 24);
+pub const HUGE: (u16, u16) = (200, 56);
+/// Overlays pick their form by their own cuts: the help's centred sheet
+/// (§4.3) and the picker's side sheet (§4.4).
+pub const HELP_SHEET: (u16, u16) = (68, 20);
+pub const PICKER_SHEET: (u16, u16) = (80, 16);
+/// §1.3: the status bar, toasts, and the panel's date line (rows only).
+const STATUS_BAR: (u16, u16) = (30, 14);
+const TOASTS: (u16, u16) = (16, 4);
+const DATE_ROWS: u16 = 36;
+
+/// Whether a `cols × rows` terminal reaches the cut `(min_cols, min_rows)`.
+pub fn reaches(cols: u16, rows: u16, (min_cols, min_rows): (u16, u16)) -> bool {
+    cols >= min_cols && rows >= min_rows
+}
 
 /// Which tiers a terminal is in, for overlays (§4.3, §4.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -141,14 +166,14 @@ pub enum SizeTier {
 impl SizeTier {
     pub fn of(area: Rect) -> Self {
         let (c, r) = (area.width, area.height);
-        if c < 20 || r < 8 {
-            SizeTier::Micro
-        } else if c < 40 || r < 14 {
-            SizeTier::Tiny
-        } else if c < 80 || r < 24 {
-            SizeTier::Small
-        } else {
+        if reaches(c, r, MEDIUM) {
             SizeTier::Medium
+        } else if reaches(c, r, SMALL) {
+            SizeTier::Small
+        } else if reaches(c, r, TINY) {
+            SizeTier::Tiny
+        } else {
+            SizeTier::Micro
         }
     }
 }
@@ -194,7 +219,7 @@ pub fn layout(area: Rect, input: &LayoutInput) -> Layout {
     };
 
     let k = silhouette::LAMP_WIDTH * 2.0 / input.cell_aspect.clamp(1.0, 4.0);
-    let micro = cols < 20 || rows < 8;
+    let micro = !reaches(cols, rows, TINY);
     let glass = !micro && wants_glass(content, input);
     let margin_steps = [(vm, hm), (0, 0)];
 
@@ -227,7 +252,7 @@ pub fn layout(area: Rect, input: &LayoutInput) -> Layout {
     if out.panel.is_none() && out.chip.is_none() {
         out.chip = corner_chip(area, content, &lamp, &margin_steps, input);
     }
-    if cols >= 16 && rows >= 4 {
+    if reaches(cols, rows, TOASTS) {
         out.toast = Some(toast_row(area, &lamp, out.panel.as_ref()));
     }
     out
@@ -236,7 +261,7 @@ pub fn layout(area: Rect, input: &LayoutInput) -> Layout {
 /// The status bar's row, if it's on and fits (§4.1).
 fn status_row(area: Rect, hm: u16, input: &LayoutInput) -> Option<Rect> {
     let (cols, rows) = (area.width, area.height);
-    let on = !input.minimal && input.status_bar && rows >= 14 && cols >= 30;
+    let on = !input.minimal && input.status_bar && reaches(cols, rows, STATUS_BAR);
     let inset = hm.max(1);
     on.then(|| Rect::new(area.x + inset, area.bottom() - 1, cols - 2 * inset, 1))
 }
@@ -391,13 +416,29 @@ fn place_panel(x: u16, y: u16, w: u16, form: Option<Form>, date: bool) -> Panel 
     }
 }
 
+/// The panel's width before the face is chosen (§1.4).
 fn panel_width(cols: u16) -> u16 {
     ((f64::from(cols) * 0.30).round() as u16).clamp(PANEL_W.0, PANEL_W.1)
 }
 
+/// The widest a panel `base` wide may grow for its face at `cols`: only
+/// from Huge's column count up.
+fn panel_max(cols: u16, base: u16) -> u16 {
+    if cols >= HUGE.0 {
+        base.max(PANEL_W_WIDE)
+    } else {
+        base
+    }
+}
+
+/// `w`, widened (up to `max`) to hold `form` with its padding.
+fn grow_for(w: u16, form: Option<Form>, max: u16) -> u16 {
+    form.map_or(w, |f| w.max(f.size.width + 2).min(max))
+}
+
 /// Date line candidates, preferred first: it's the first thing to go.
 fn date_options(area_rows: u16, show_clock: bool) -> &'static [bool] {
-    if show_clock && area_rows >= 36 {
+    if show_clock && area_rows >= DATE_ROWS {
         &[true, false]
     } else {
         &[false]
@@ -405,7 +446,7 @@ fn date_options(area_rows: u16, show_clock: bool) -> &'static [bool] {
 }
 
 fn is_huge(cols: u16, rows: u16) -> bool {
-    cols >= 200 && rows >= 56
+    reaches(cols, rows, HUGE)
 }
 
 /// A glass lamp with the panel beside it, else under it (hide order:
@@ -431,9 +472,11 @@ fn glass_right_panel(
 ) -> Option<(Lamp, Panel)> {
     let (cols, rows) = (area.width, area.height);
     let gutter = (cols / 16).clamp(4, 12);
-    let pw = panel_width(cols);
+    let base_w = panel_width(cols);
+    let max_w = panel_max(cols, base_w);
     let dates = date_options(rows, input.show_clock);
-    for form in panel_faces(input, pw - 2, is_huge(cols, rows)) {
+    for form in panel_faces(input, max_w - 2, is_huge(cols, rows)) {
+        let pw = grow_for(base_w, form, max_w);
         for &m in margin_steps {
             let Some(c) = shrink(content, m) else {
                 continue;
@@ -473,7 +516,8 @@ fn glass_bottom_panel(
 ) -> Option<(Lamp, Panel)> {
     let dates = date_options(area.height, input.show_clock);
     let huge = is_huge(area.width, area.height);
-    for form in panel_faces(input, PANEL_W.1.min(content.width).saturating_sub(2), huge) {
+    let widest = panel_max(area.width, PANEL_W.1).min(content.width);
+    for form in panel_faces(input, widest.saturating_sub(2), huge) {
         for &m in margin_steps {
             let Some(c) = shrink(content, m) else {
                 continue;
@@ -490,7 +534,8 @@ fn glass_bottom_panel(
                     continue;
                 }
                 let w = glass_width(ht, k);
-                let bw = w.clamp(PANEL_W.0, PANEL_W.1).min(c.width);
+                let base_w = w.clamp(PANEL_W.0, PANEL_W.1);
+                let bw = grow_for(base_w, form, panel_max(area.width, base_w)).min(c.width);
                 if bw < PANEL_W.0 || form.is_some_and(|f| f.size.width + 2 > bw) {
                     continue;
                 }
@@ -519,12 +564,16 @@ fn bleed_with_panel(area: Rect, content: Rect, input: &LayoutInput) -> Option<(L
 
     if visual_aspect(content.width, content.height, input.cell_aspect) >= 1.0 {
         // Right panel if the lamp keeps ≥ 60 % of the width and ≥ 24 cols.
-        let pw = panel_width(cols);
-        let lamp_w = content.width.checked_sub(pw)?;
-        if lamp_w < 24 || u32::from(lamp_w) * 10 < u32::from(content.width) * 6 {
-            return None;
-        }
-        for form in panel_faces(input, pw - 2, huge) {
+        let base_w = panel_width(cols);
+        let max_w = panel_max(cols, base_w);
+        for form in panel_faces(input, max_w - 2, huge) {
+            let pw = grow_for(base_w, form, max_w);
+            let Some(lamp_w) = content.width.checked_sub(pw) else {
+                continue;
+            };
+            if lamp_w < 24 || u32::from(lamp_w) * 10 < u32::from(content.width) * 6 {
+                continue;
+            }
             for &date in dates {
                 let ph = panel_height(form, date);
                 if ph > content.height {
@@ -540,11 +589,13 @@ fn bleed_with_panel(area: Rect, content: Rect, input: &LayoutInput) -> Option<(L
         }
     } else {
         // Bottom panel if the lamp keeps ≥ 60 % of the rows and ≥ 10 rows.
-        let bw = PANEL_W.1.min(content.width);
-        if bw < PANEL_W.0 {
+        let base_w = PANEL_W.1.min(content.width);
+        let max_w = panel_max(cols, base_w).min(content.width);
+        if base_w < PANEL_W.0 {
             return None;
         }
-        for form in panel_faces(input, bw - 2, huge) {
+        for form in panel_faces(input, max_w - 2, huge) {
+            let bw = grow_for(base_w, form, max_w);
             for &date in dates {
                 // One blank row between the tank and the panel.
                 let ph = panel_height(form, date) + 1;
@@ -579,7 +630,7 @@ fn corner_chip(
     input: &LayoutInput,
 ) -> Option<Chip> {
     let (kind, text_w) = input.chip?;
-    if area.width < 20 || area.height < 8 {
+    if !reaches(area.width, area.height, TINY) {
         return None;
     }
     if input.minimal && kind == ChipKind::Clock && input.minimal_clock == MinimalClock::Off {

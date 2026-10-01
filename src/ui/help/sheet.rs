@@ -5,7 +5,7 @@
 use ratatui::layout::Rect;
 
 use crate::ui::keymap::{KEYMAP, Section};
-use crate::ui::layout::SizeTier;
+use crate::ui::layout::{HELP_SHEET, SizeTier, reaches};
 
 /// The sheet's outer size cap (§4.3).
 const SHEET: (u16, u16) = (64, 18);
@@ -62,7 +62,7 @@ pub enum Mode {
 pub fn mode(area: Rect) -> Mode {
     if SizeTier::of(area) == SizeTier::Micro {
         Mode::Line
-    } else if area.width >= 68 && area.height >= 20 {
+    } else if reaches(area.width, area.height, HELP_SHEET) {
         let (w, h) = (SHEET.0.min(area.width - 4), SHEET.1.min(area.height - 2));
         Mode::Sheet(Rect::new(
             area.x + (area.width - w) / 2,

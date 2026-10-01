@@ -4,11 +4,11 @@
 //! [`Settings`] is what lives in `config.toml` (XDG config dir, see
 //! [`store`]). Every field has a default and every section is optional, so
 //! a partial file is fine. [`Settings::parse`] is tolerant per field: a
-//! value of the wrong type (or an unknown key) is reported and replaced by
-//! its default while every other value is kept. Values out of range are
-//! clamped and unknown names (a style that no longer exists) fall back
-//! where they're resolved, so a stale or hand-mangled file never stops the
-//! lamp.
+//! value of the wrong type, or a style / palette / face name that doesn't
+//! exist, is reported and replaced by its default while every other value
+//! is kept. Values out of range are clamped. Keys it doesn't know are
+//! reported separately: saving keeps them. A stale or hand-mangled file
+//! never stops the lamp.
 //!
 //! [`Session`] is what the CLI adds on top: flags win for this run only and
 //! are never written back (§9).
@@ -19,6 +19,10 @@ use std::path::PathBuf;
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+
+use crate::clock;
+use crate::render::StyleId;
+use crate::theme::Palette;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
@@ -232,8 +236,12 @@ pub struct Parsed {
     /// Sanitized settings: every valid value from the file, defaults for
     /// the rest.
     pub settings: Settings,
-    /// Dotted keys that were dropped (`lamp.frame`), in file order.
+    /// Dotted keys whose value was dropped for the default (`lamp.frame`),
+    /// in file order: a save overwrites them.
     pub ignored: Vec<String>,
+    /// Keys that aren't settings (`lamp.future_key`): unused, but a save
+    /// leaves them in the file.
+    pub unknown: Vec<String>,
 }
 
 impl Settings {
@@ -246,27 +254,58 @@ impl Settings {
     /// a bad value costs just that one key (see [`Parsed::ignored`]).
     pub fn parse(text: &str) -> Result<Parsed, toml::de::Error> {
         let file: toml::Table = toml::from_str(text)?;
-        let mut ignored = Vec::new();
+        let mut out = Parsed {
+            settings: Settings::default(),
+            ignored: Vec::new(),
+            unknown: Vec::new(),
+        };
         for key in file.keys() {
             if !Self::SECTIONS.contains(&key.as_str()) {
-                ignored.push(key.clone());
+                out.unknown.push(key.clone());
             }
         }
-        let ig = &mut ignored;
-        let settings = Settings {
-            display: section("display", &file, ig),
-            lamp: section("lamp", &file, ig),
-            theme: section("theme", &file, ig),
-            clock: section("clock", &file, ig),
-            pomodoro: section("pomodoro", &file, ig),
-            ui: section("ui", &file, ig),
-            minimal: section("minimal", &file, ig),
-            input: section("input", &file, ig),
+        let (ig, un) = (&mut out.ignored, &mut out.unknown);
+        let mut settings = Settings {
+            display: section("display", &file, ig, un),
+            lamp: section("lamp", &file, ig, un),
+            theme: section("theme", &file, ig, un),
+            clock: section("clock", &file, ig, un),
+            pomodoro: section("pomodoro", &file, ig, un),
+            ui: section("ui", &file, ig, un),
+            minimal: section("minimal", &file, ig, un),
+            input: section("input", &file, ig, un),
         };
-        Ok(Parsed {
-            settings: settings.sanitized(),
-            ignored,
-        })
+        settings.check_names(&mut out.ignored);
+        out.settings = settings.sanitized();
+        Ok(out)
+    }
+
+    /// Put back the default for a style, palette or face name that names
+    /// nothing, reporting it in `ignored`.
+    fn check_names(&mut self, ignored: &mut Vec<String>) {
+        let mut check = |key: &str, value: &mut String, known: bool, default: String| {
+            if !known {
+                ignored.push(key.to_owned());
+                *value = default;
+            }
+        };
+        let known = StyleId::by_name(&self.lamp.style).is_some();
+        check(
+            "lamp.style",
+            &mut self.lamp.style,
+            known,
+            Lamp::default().style,
+        );
+        let known = Palette::by_name(&self.theme.palette).is_some();
+        let default = ThemeSettings::default().palette;
+        check("theme.palette", &mut self.theme.palette, known, default);
+        let known = clock::face_by_name(&self.clock.face).is_some();
+        check(
+            "clock.face",
+            &mut self.clock.face,
+            known,
+            Clock::default().face,
+        );
     }
 
     /// Clamp every numeric field into its valid range (hand-edited files).
@@ -304,7 +343,12 @@ impl Settings {
 /// One section, key by key: each user value is tried on top of the
 /// defaults and kept only if the section still deserializes. Generic over
 /// the section type, so new fields need no code here.
-fn section<T>(name: &str, file: &toml::Table, ignored: &mut Vec<String>) -> T
+fn section<T>(
+    name: &str,
+    file: &toml::Table,
+    ignored: &mut Vec<String>,
+    unknown: &mut Vec<String>,
+) -> T
 where
     T: Serialize + DeserializeOwned + Default,
 {
@@ -319,15 +363,17 @@ where
         return T::default();
     };
     for (key, value) in user {
-        if accepted.contains_key(key) {
-            let mut trial = accepted.clone();
-            trial.insert(key.clone(), value.clone());
-            if toml::Value::Table(trial.clone()).try_into::<T>().is_ok() {
-                accepted = trial;
-                continue;
-            }
+        if !accepted.contains_key(key) {
+            unknown.push(format!("{name}.{key}"));
+            continue;
         }
-        ignored.push(format!("{name}.{key}"));
+        let mut trial = accepted.clone();
+        trial.insert(key.clone(), value.clone());
+        if toml::Value::Table(trial.clone()).try_into::<T>().is_ok() {
+            accepted = trial;
+        } else {
+            ignored.push(format!("{name}.{key}"));
+        }
     }
     toml::Value::Table(accepted).try_into().unwrap_or_default()
 }
@@ -472,9 +518,25 @@ mod tests {
     fn unknown_keys_and_malformed_sections_are_reported() {
         let text = "colour = 1\nlamp = 5\n[clock]\nfase = \"x\"\nhour24 = false\n";
         let p = Settings::parse(text).unwrap();
-        assert_eq!(p.ignored, ["colour", "lamp", "clock.fase"]);
+        assert_eq!(p.ignored, ["lamp"]);
+        assert_eq!(p.unknown, ["colour", "clock.fase"]);
         assert!(!p.settings.clock.hour24);
         assert_eq!(p.settings.lamp, Lamp::default());
+    }
+
+    #[test]
+    fn unknown_names_take_the_default() {
+        let text = "[lamp]\nstyle = \"nope\"\nheat = 4\n[theme]\npalette = \"beige\"\n[clock]\nface = \"sundial\"\n";
+        let p = Settings::parse(text).unwrap();
+        assert_eq!(p.ignored, ["lamp.style", "theme.palette", "clock.face"]);
+        assert_eq!(p.settings.lamp.style, Lamp::default().style);
+        assert_eq!(p.settings.theme.palette, ThemeSettings::default().palette);
+        assert_eq!(p.settings.clock.face, Clock::default().face);
+        assert_eq!(p.settings.lamp.heat, 4);
+        // An old style name is still a style.
+        let p = Settings::parse("[lamp]\nstyle = \"glass\"\n").unwrap();
+        assert!(p.ignored.is_empty());
+        assert_eq!(p.settings.lamp.style, "glass");
     }
 
     #[test]

@@ -56,11 +56,14 @@ For example, 160×22 gets the full hint text (it's wide) but no date line
 | **Small** | 40–79 × 14–23 | bleed | chip, or right panel with M face if ≥ 60 % width remains | chip or panel: time + bar | yes: style · palette | `? help` and as many more as fit |
 | **Medium** | 80–119 × 24–35 | **glass** (auto) | panel, M face | panel: label, time, bar, dots | yes | most hints |
 | **Large** | 120–199 × 36–55 | glass, bigger margins | panel, L face + date line | full | yes | all hints |
-| **Huge** | ≥ 200 × ≥ 56 | glass, proportional margins | panel, largest face that fits + date (XL only for faces ≤ 34 cols wide, §4.5) | full | yes | all hints |
+| **Huge** | ≥ 200 × ≥ 56 | glass, proportional margins | panel, largest face that fits + date; the panel widens up to 56 for it (§1.4) | full | yes | all hints |
 
-Micro is `cols < 20 || rows < 8`; the other tier cuts are 40 × 14 and
-80 × 24 (`SizeTier` in `ui/layout.rs`). Overlays pick their form by their
-own size checks (§4.3, §4.4), not by tier alone.
+Micro is `cols < 20 || rows < 8`; the other tier cuts are 40 × 14,
+80 × 24 and 200 × 56 (Huge). Overlays pick their form by their own size
+checks (help sheet ≥ 68 × 20, §4.3; picker sheet ≥ 80 × 16, §4.4), not by
+tier alone. All of these, and the §1.3 status-bar, toast and date-line
+cuts, are named constants in one place at the top of `ui/layout.rs`
+(`TINY`, `SMALL`, `MEDIUM`, `HUGE`, `HELP_SHEET`, `PICKER_SHEET`, …).
 
 At any size, a portrait shape (narrow and tall) moves the panel *below*
 the lamp (§1.4).
@@ -101,6 +104,7 @@ go at the top). The lamp is never hidden.
 
 ```
 panel_w   = clamp(round(cols × 0.30), 22, 36)      // incl. 1-col inner padding each side
+            // cols ≥ 200: widened to face_w + 2 (max 56) when the face needs it
 gutter    = clamp(cols / 16, 4, 12)                // glass mode: lamp ↔ panel
 panel_h   = face_h + (date? 2) + 2 + 3             // face, gap, label/time/bar
                                                    // (clock hidden: just 3)
@@ -114,8 +118,9 @@ default cell aspect 2.0):
      is vertically centred on the lamp.
   2. Bottom panel: Ht = min(content_rows − panel_h − 2, content_cols / k)
      (content_cols already has the margins taken off).
-     Accept if Ht ≥ 20. The panel is as wide as the lamp, clamped 22–36,
-     and centred under the base.
+     Accept if Ht ≥ 20. The panel is as wide as the lamp, clamped 22–36
+     (widened for the face as above when cols ≥ 200), and centred under
+     the base.
   3. Otherwise no panel → chip, and the glass lamp stays (glass alone
      needs only 12 rows). Bleed is only tried when no glass lamp fits.
 
@@ -126,8 +131,12 @@ BLEED mode:
   3. Otherwise chip.
 ```
 
-The panel's inner width is at most 36 − 2 = 34 cols, so faces wider than
-that (blocks XL 51, blocks L with seconds 54) never show today; see §4.5.
+Below 200 cols the panel's inner width is at most 36 − 2 = 34. From 200
+cols up the panel grows only as far as the face it holds needs, up to
+56 (inner 54): blocks XL (51 × 8) shows at Huge, blocks L with seconds
+(54 × 5) when the terminal is ≥ 200 cols but under 56 rows. Narrower
+faces keep the 36-col panel. Face size is still tried largest first
+within the §1.3 hide order (margins go before a smaller face).
 
 Centring: whenever a split leaves an odd cell, the extra cell goes
 right/bottom. Always do it this way, so the composition never jitters by
@@ -622,7 +631,8 @@ The form depends on the terminal size (`ui/help/sheet.rs`):
 * **Smaller (not Micro): a full-screen sheet**, one column, scrollable
   with `j/k/↑/↓`, no border: `keys` (accent) top-left and `esc close`
   (dim) top-right on the first row, the body from the third row.
-* **Micro:** the single line `? help · q quit · m mode` in the top row,
+* **Micro:** the single line `? close · too small for keys` in the top row
+  (only help's own keys act while it's open, so it names no others),
   clipped by dropping items from the end.
 * `?`, `esc` or `q` closes it. While help is open, `q` closes help and
   does *not* quit.
@@ -746,16 +756,16 @@ width only in L/XL, where the panel allows them):
 
 | Face | S | M | L | XL |
 |---|---|---|---|---|
-| `blocks` (default) | — | 3×5 font, half-blocks: 17×3 | ×2: 34×5 (with seconds 54×5†) | ×3: 51×8† |
+| `blocks` (default) | — | 3×5 font, half-blocks: 17×3 | ×2: 34×5 (with seconds 54×5) | ×3: 51×8 |
 | `segment` | — | 17×3 | 21×5 (with seconds 33×5) | 33×7 |
 | `analog` | — | 15×8 | 23×12 | 31×16 (circle aspect-corrected) |
 | `binary` | 9×4 | 12×6 | — | — |
 | `words` | 16×3 | 24×2 | 21×10 (word grid) | — |
 | `text` | 5×1 (`14:32`; 12h ` 2:32 pm` 8×1) | — | — | — |
 
-† Wider than the panel's 34-col maximum inner width (§1.4), so these
-forms are never chosen as shipped. Whether the panel should grow at
-Huge sizes or these forms should go is open: `lava-ebq.26`.
+Forms wider than 34 cols (blocks XL, blocks L with seconds, segment XL
+with seconds 52) only show from 200 cols, where the panel widens for them
+(§1.4).
 
 The colon never blinks (motion belongs to the lamp). Seconds appear only
 in L/XL variants and the `text` face's 12h/24h follows `T`.
@@ -1121,14 +1131,17 @@ instead of the XDG one), plus hidden `--frames <n>` (exit after n frames)
 and `--panic-after <n>` (tests the terminal-restoring panic hook). Flags
 override config for the session only. They're never written back (until
 you change that setting in the app, which then saves as usual). An
-unknown style or palette name currently falls back to the default
-silently (`lava-ebq.29`).
+unknown `--style` or `--palette` name is a usage error like any other
+bad flag: exit code 2 and the list of valid names.
 
 The file lives at `$XDG_CONFIG_HOME/lavatui/config.toml`, else the
 platform config dir (`~/.config/lavatui/` on Linux, `~/Library/Application
 Support/lavatui/` on macOS). It is saved 1 s after the last change and on
-quit. A missing file means defaults. A bad value is ignored (with a
-toast, `config: ignored lamp.heat`) and the rest kept; a TOML syntax
+quit. A missing file means defaults. A bad value, including a style,
+palette or face name that doesn't exist, is ignored (with a toast,
+`config: ignored lamp.heat`) and the rest kept. A key that isn't a
+setting is reported (`config: unknown key lamp.future_key`) but left in
+the file; it needs no backup. A TOML syntax
 error means all defaults (`config unreadable · using defaults`); a file
 that can't be read at all (permissions, a directory) is never written
 that session. Anything a save would drop is first copied to

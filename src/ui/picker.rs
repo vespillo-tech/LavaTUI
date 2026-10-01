@@ -21,7 +21,7 @@ use ratatui::widgets::{Block, BorderType, Clear, Widget};
 use crate::app::{Model, Picker, PickerKind};
 use crate::theme::Role;
 use crate::ui::chrome::PICKER_HINTS;
-use crate::ui::layout::{Layout, SizeTier, margins};
+use crate::ui::layout::{Layout, PICKER_SHEET, SizeTier, margins, reaches};
 
 const SHEET_W: u16 = 26;
 /// Narrowest bottom sheet that still reads (border + `▸ ` + a name).
@@ -112,7 +112,7 @@ pub fn placement(area: Rect, layout: &Layout, picker: &Picker) -> Option<Placeme
 
     let n = items.len() as u16;
     let status = u16::from(layout.status.is_some());
-    if area.width >= 80 && area.height >= 16 {
+    if reaches(area.width, area.height, PICKER_SHEET) {
         let h = (n + 6).min(area.height - 2);
         let (_, hm) = margins(area.width, area.height);
         let y = area.y + (area.height - status - h) / 2;

@@ -6,12 +6,14 @@ use std::path::PathBuf;
 use clap::Parser;
 
 use crate::config::{ColorChoice, Session};
+use crate::render::StyleId;
+use crate::theme::Palette;
 
 /// A terminal lava lamp.
 #[derive(Debug, Parser)]
 #[command(version, about)]
 pub struct Cli {
-    /// Just the lamp: no panels, status bar or overlays.
+    /// Just the lamp: no panels, status bar or hints.
     #[arg(short, long)]
     pub minimal: bool,
 
@@ -20,11 +22,11 @@ pub struct Cli {
     pub fps: Option<u32>,
 
     /// Render style for this session (e.g. solid, outline, heatmap, ascii, chrome).
-    #[arg(long, value_name = "NAME")]
+    #[arg(long, value_name = "NAME", value_parser = style_name)]
     pub style: Option<String>,
 
     /// Palette for this session (lava, ultraviolet, abyss, toxic, synthwave, mono, paper, ansi).
-    #[arg(long, value_name = "NAME")]
+    #[arg(long, value_name = "NAME", value_parser = palette_name)]
     pub palette: Option<String>,
 
     /// Colour depth, instead of detecting it from the environment.
@@ -47,6 +49,30 @@ pub struct Cli {
     /// Panic after rendering N frames, to check the terminal is restored.
     #[arg(long, value_name = "N", hide = true)]
     pub panic_after: Option<u64>,
+}
+
+/// `--style`: a style name (or an old alias of one), else clap's usage
+/// error (exit 2) listing them.
+fn style_name(name: &str) -> Result<String, String> {
+    match StyleId::by_name(name) {
+        Some(_) => Ok(name.to_owned()),
+        None => Err(unknown("style", StyleId::all().map(|id| id.style().name()))),
+    }
+}
+
+/// `--palette`: a palette name, else clap's usage error listing them.
+fn palette_name(name: &str) -> Result<String, String> {
+    match Palette::by_name(name) {
+        Some(_) => Ok(name.to_owned()),
+        None => Err(unknown("palette", Palette::all().iter().map(|p| p.name))),
+    }
+}
+
+fn unknown<'a>(what: &str, names: impl Iterator<Item = &'a str>) -> String {
+    format!(
+        "no such {what}; one of: {}",
+        names.collect::<Vec<_>>().join(", ")
+    )
 }
 
 impl Cli {
@@ -111,6 +137,25 @@ mod tests {
         for depth in ["auto", "truecolor", "16", "none"] {
             assert!(Cli::try_parse_from(["lavatui", "--color", depth]).is_ok());
         }
+    }
+
+    #[test]
+    fn rejects_unknown_style_and_palette_names() {
+        let err = Cli::try_parse_from(["lavatui", "--style", "nope"]).unwrap_err();
+        assert_eq!(err.exit_code(), 2);
+        let msg = err.to_string();
+        assert!(
+            msg.contains("no such style; one of: solid, outline"),
+            "{msg}"
+        );
+        let err = Cli::try_parse_from(["lavatui", "--palette", "nope"]).unwrap_err();
+        assert!(
+            err.to_string().contains("one of: lava, ultraviolet"),
+            "{err}"
+        );
+        // Old style names still work.
+        let session = Cli::parse_from(["lavatui", "--style", "glass"]).into_session();
+        assert_eq!(session.style.as_deref(), Some("glass"));
     }
 
     #[test]
