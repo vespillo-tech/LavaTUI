@@ -6,6 +6,9 @@ mod clock;
 mod config;
 mod render;
 mod sim;
+// Not wired into the UI yet (lava-75z.5 does that).
+#[allow(dead_code)]
+mod spotify_web;
 mod theme;
 mod timing;
 mod ui;
