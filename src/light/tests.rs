@@ -53,7 +53,7 @@ fn normals_point_outward_on_a_circle() {
             // Same differences as `shade`, y up.
             let gx = (d(x + 1, y) - d(x - 1, y)) * 0.5 * N as f32;
             let gy = (d(x, y - 1) - d(x, y + 1)) * 0.5 * N as f32;
-            let n = normal(gx, gy, (d(x, y) - SURFACE) / DOME);
+            let n = normal(gx, gy, (d(x, y) - SURFACE) / DOME, FLAT);
             assert!((dot(n, n) - 1.0).abs() < 1e-4, "unit length: {n:?}");
             assert!(n[2] >= 0.0, "faces the viewer: {n:?}");
             let (rx, ry) = (x as f32 + 0.5 - c, c - (y as f32 + 0.5));
@@ -68,9 +68,9 @@ fn normals_point_outward_on_a_circle() {
     }
     assert!(checked > 100);
     // Rim is near edge-on, centre faces the viewer.
-    let rim = normal(-5.0, 0.0, 0.0);
+    let rim = normal(-5.0, 0.0, 0.0, FLAT);
     assert!(rim[0] > 0.8, "{rim:?}");
-    assert_eq!(normal(0.0, 0.0, 0.0), [0.0, 0.0, 1.0]);
+    assert_eq!(normal(0.0, 0.0, 0.0, FLAT), [0.0, 0.0, 1.0]);
 }
 
 #[test]
@@ -158,6 +158,85 @@ fn degenerate_fields_stay_finite() {
     };
     let mut out = [1.0; 9];
     Lamplight.shade(&[nan; 9], 3, 3, &mut out);
+}
+
+/// The live sim at `w × h` (world height 1), mid-run.
+fn live(w: usize, h: usize) -> Vec<Sample> {
+    use crate::sim::{Field, Shape, World};
+    let mut world = World::new(7, w as f64 / h as f64, Shape::Tank);
+    world.prewarm(1200, 1.0 / 120.0);
+    let mut field = Field::default();
+    field.prepare(&world, 1.0);
+    let mut samples = vec![Sample::default(); w * h];
+    field.fill(&mut samples, w, h);
+    samples
+}
+
+#[test]
+fn coarse_dome_matches_exact() {
+    // Braille at 200×60, which shades coarse.
+    let (w, h) = (400, 240);
+    assert!(h >= FINE);
+    let samples = live(w, h);
+    let rig = Rig::new(w, h);
+    let (mut exact, mut coarse) = (vec![0.0; w * h], vec![0.0; w * h]);
+    rig.shade_exact(&samples, &mut exact);
+    rig.shade_coarse(&samples, &mut coarse);
+    let step = 1.0 / STEPS;
+    let (mut moved, mut far) = (0, 0);
+    for (e, c) in exact.iter().zip(&coarse) {
+        let d = (e - c).abs();
+        moved += usize::from(d > 0.0);
+        far += usize::from(d > 1.5 * step);
+        assert!(d <= 2.5 * step, "{e} vs {c}");
+    }
+    assert!(moved * 100 < w * h, "{moved} of {} pixels moved", w * h);
+    assert!(far * 10_000 < w * h, "{far} pixels moved more than a step");
+    // The edge, glow and base light are exact: liquid is untouched.
+    for ((e, c), s) in exact.iter().zip(&coarse).zip(&samples) {
+        if s.density <= WAX_FROM {
+            assert_eq!(e, c);
+        }
+    }
+}
+
+#[test]
+fn every_pixel_is_lit_at_any_size() {
+    // Both paths, odd sizes, partial runs, both canvas edges, and the
+    // widest coarse canvas and one past it.
+    let sizes = [
+        (1, 1),
+        (2, 3),
+        (17, 9),
+        (1, FINE),
+        (3, FINE + 1),
+        (RUN + 1, FINE + 3),
+        (2 * RUN, FINE),
+        (61, 2 * FINE - 1),
+        (COARSE_WIDTH, FINE),
+        (COARSE_WIDTH + 1, FINE),
+    ];
+    for (w, h) in sizes {
+        let samples = live(w, h);
+        let mut out = vec![f32::NAN; w * h];
+        Lamplight.shade(&samples, w, h, &mut out);
+        assert!(
+            out.iter().all(|l| (0.5..=2.5).contains(l)),
+            "{w}x{h}: {:?}",
+            out.iter().find(|l| !(0.5..=2.5).contains(*l))
+        );
+    }
+}
+
+#[test]
+fn coarse_degenerate_fields_stay_finite() {
+    let (w, h) = (40, FINE);
+    let flat = |density| vec![Sample { density, temp: 0.6 }; w * h];
+    for samples in [flat(0.0), flat(0.5), flat(0.8), flat(40.0)] {
+        let mut out = vec![f32::NAN; w * h];
+        Lamplight.shade(&samples, w, h, &mut out);
+        assert!(out.iter().all(|l| l.is_finite() && (0.5..=2.5).contains(l)));
+    }
 }
 
 /// Cost of the pass alone on the live sim, against the field fill it
