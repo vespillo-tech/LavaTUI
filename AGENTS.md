@@ -168,6 +168,10 @@ headlessly, run it under a pty with a window size set (e.g. Python `pty.fork`
 + `TIOCSWINSZ`) and `--frames N`; `script` alone gives a 0x0 pty. Keep
 draining the pty until the child exits, or it blocks writing and never
 reads your quit key; on macOS a read on the master after exit is EOF/EIO.
+`docs/screenshots/capture.py` does exactly this (pyte + Pillow) and
+regenerates the README screenshots; rerun it after visible changes.
+`README.md` is the user-facing overview (features, keys, config, perf
+numbers); `docs/design.md` is the layout/visual contract.
 
 ## Architecture Overview
 
@@ -175,15 +179,17 @@ reads your quit key; on macOS a read on the master after exit is EOF/EIO.
                 hook that restores the terminal), run app, `ratatui::restore`.
 - `cli.rs`    — clap derive flags (`-m/--minimal`, `--fps`, `--style`,
                 `--palette`, `--color`, `--seed`, `--config`, hidden
-                `--frames`) → `config::Session` (session-only overrides).
+                `--frames`, `--panic-after`) → `config::Session` (session-only overrides).
 - `config/`   — `Settings`: the persisted TOML surface of design §9 (serde,
                 every field defaulted, `sanitized()` clamps). `Session` layers
                 CLI flags on top; `to_persist` puts the file's values back for
                 fields a flag still holds, so flags are never written back.
                 `store.rs`: XDG path (`$XDG_CONFIG_HOME/lavatui/config.toml` or
-                the `directories` config dir), load (missing → defaults,
-                corrupt → defaults + toast message, backed up to `.bak` on
-                first save), atomic save.
+                the `directories` config dir), load (missing → defaults; a bad
+                value is ignored with a toast and the rest kept; a syntax
+                error → defaults + toast), save (anything a save would drop
+                is first copied to `config.toml.bak`; saves keep comments,
+                follow symlinks and are atomic).
 - `app/`      — `mod.rs` is the loop only: poll input until the frame
                 deadline → `Model::update(action)` (any input draws at once;
                 queued events are drained first; the wait is recomputed from

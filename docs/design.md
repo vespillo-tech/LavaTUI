@@ -52,11 +52,15 @@ For example, 160×22 gets the full hint text (it's wide) but no date line
 | Tier | Typical size | Lamp | Clock | Pomodoro | Status bar | Hints |
 |---|---|---|---|---|---|---|
 | **Micro** | < 20 cols or < 8 rows | bleed, whole screen | – | – | – | – |
-| **Tiny** | 20–39 × 8–13 | bleed, whole screen | chip `14:32` | chip `▸ 18:24` (replaces clock while running) | – | – |
+| **Tiny** | 20–39 × 8–13 | bleed, whole screen | chip `14:32` | chip `▸ 18:24` (replaces the clock while running or paused) | – | – |
 | **Small** | 40–79 × 14–23 | bleed | chip, or right panel with M face if ≥ 60 % width remains | chip or panel: time + bar | yes: style · palette | `? help` and as many more as fit |
 | **Medium** | 80–119 × 24–35 | **glass** (auto) | panel, M face | panel: label, time, bar, dots | yes | most hints |
 | **Large** | 120–199 × 36–55 | glass, bigger margins | panel, L face + date line | full | yes | all hints |
-| **Huge** | ≥ 200 × ≥ 56 | glass, proportional margins | panel, XL face + date | full | yes | all hints |
+| **Huge** | ≥ 200 × ≥ 56 | glass, proportional margins | panel, largest face that fits + date (XL only for faces ≤ 34 cols wide, §4.5) | full | yes | all hints |
+
+Micro is `cols < 20 || rows < 8`; the other tier cuts are 40 × 14 and
+80 × 24 (`SizeTier` in `ui/layout.rs`). Overlays pick their form by their
+own size checks (§4.3, §4.4), not by tier alone.
 
 At any size, a portrait shape (narrow and tall) moves the panel *below*
 the lamp (§1.4).
@@ -68,7 +72,7 @@ the lamp (§1.4).
 | **Lamp** | always (if `cols < 4` or `rows < 2`, the screen is painted `bg`, nothing else) | frame per §2.1 |
 | **Status bar** | `rows ≥ 14 && cols ≥ 30 && status_bar_on` and not minimal mode | segments drop per §4.1 |
 | **Panel** | the placement algorithm (§1.4) finds a slot | face variant = largest that fits the panel's inner rect |
-| **Chip** | no panel, clock or pomodoro enabled, `cols ≥ 20 && rows ≥ 8` | shows pomodoro while one is running, else the clock |
+| **Chip** | no panel, clock or pomodoro enabled, `cols ≥ 20 && rows ≥ 8` | shows the pomodoro while one is running (`▸`) or paused (`‖`), else the clock |
 | **Date line** | in panel, `rows ≥ 36`, and the panel still fits | `thu 1 oct`, dim, lowercase |
 | **Pomodoro label** `focus` / `break` | panel inner width ≥ 18 | — |
 | **Cycle dots** `●●○○` | panel inner width ≥ 22 | right-aligned on the label line |
@@ -78,13 +82,16 @@ the lamp (§1.4).
 **Hide priority.** When space runs out, things go in this order (first to
 go at the top). The lamp is never hidden.
 
-1. Extended key hints (dropped right-to-left until only `? help` is left, then that too)
+1. Extended key hints (dropped in the §4.1 order until only `? help` is left, then that too)
 2. Date line
 3. Cycle dots, then the pomodoro phase label
 4. Outer margins (shrink to 0)
 5. Clock face size (XL → L → M → S → `text`)
-6. Glass silhouette (→ bleed)
-7. Panel (→ collapses into the chip; nothing is lost but size)
+6. Panel (→ collapses into the chip; nothing is lost but size). When a
+   glass lamp fits but glass + panel doesn't, the glass stays and the
+   panel goes (§1.4 step 3).
+7. Glass silhouette (→ bleed): only when no glass lamp fits at all
+   (auto: §2.1 rule; forced glass: under 12 lamp rows)
 8. Status bar
 9. Clock chip (a running pomodoro chip outranks it)
 10. Pomodoro chip
@@ -96,21 +103,31 @@ go at the top). The lamp is never hidden.
 panel_w   = clamp(round(cols × 0.30), 22, 36)      // incl. 1-col inner padding each side
 gutter    = clamp(cols / 16, 4, 12)                // glass mode: lamp ↔ panel
 panel_h   = face_h + (date? 2) + 2 + 3             // face, gap, label/time/bar
+                                                   // (clock hidden: just 3)
+k         = 0.8 × 2.0 / cell_aspect                // lamp cols per lamp row
 
-GLASS mode (lamp height Ht, width W = round(Ht × 0.8)):
-  1. Right panel: Ht = min(content_rows, (content_cols − gutter − panel_w) / 0.8).
+GLASS mode (lamp height Ht, width W = round(Ht × k); k = 0.8 at the
+default cell aspect 2.0):
+  1. Right panel: Ht = min(content_rows, (content_cols − gutter − panel_w) / k).
      Accept if Ht ≥ 20 and Ht ≥ 0.85 × content_rows.
      Lamp + gutter + panel form ONE group, centred horizontally; the panel
      is vertically centred on the lamp.
-  2. Bottom panel: Ht = min(content_rows − panel_h − 2, (content_cols − 4) / 0.8).
-     Accept if Ht ≥ 20. The panel block is centred under the base.
-  3. Otherwise no panel → chip (and re-evaluate frame: glass may still fit).
+  2. Bottom panel: Ht = min(content_rows − panel_h − 2, content_cols / k)
+     (content_cols already has the margins taken off).
+     Accept if Ht ≥ 20. The panel is as wide as the lamp, clamped 22–36,
+     and centred under the base.
+  3. Otherwise no panel → chip, and the glass lamp stays (glass alone
+     needs only 12 rows). Bleed is only tried when no glass lamp fits.
 
 BLEED mode:
   1. A ≥ 1.0 → right panel if lamp keeps ≥ 60 % of cols and ≥ 24 cols.
-  2. A < 1.0 → bottom panel if lamp keeps ≥ 60 % of rows and ≥ 10 rows.
+  2. A < 1.0 → bottom panel (min(36, content_cols) wide, one blank row
+     below the tank) if lamp keeps ≥ 60 % of rows and ≥ 10 rows.
   3. Otherwise chip.
 ```
+
+The panel's inner width is at most 36 − 2 = 34 cols, so faces wider than
+that (blocks XL 51, blocks L with seconds 54) never show today; see §4.5.
 
 Centring: whenever a split leaves an odd cell, the extra cell goes
 right/bottom. Always do it this way, so the composition never jitters by
@@ -121,7 +138,10 @@ a cell between neighbouring sizes.
 Legend: `░` liquid (glass interior / bleed background) · `█▀▄` wax (solid
 style, half-blocks) · `▓` lamp metal (cap, base) · ` ` app background.
 Real colours come from the palette (§5). These were drawn by a generator
-script using the formulas above, so the proportions are true.
+script using the formulas above, so the proportions are true. The wax is
+illustrative; status rows, the help sheet and the picker are copied from
+the running app (pty capture, `--seed 2`). Real screenshots of most of
+these sizes are in `docs/screenshots/` (see the README).
 
 **Micro — 16×6.** Lamp only. Nothing else, ever.
 
@@ -149,8 +169,8 @@ No status bar, no hints.
 ```
 
 The same size with a pomodoro running. The chip switches to the
-pomodoro: `▸` while running, `‖` while paused, coloured by phase (accent
-for focus, `wax_hot` for breaks).
+pomodoro: `▸` while running, coloured by phase (accent for focus,
+`wax_hot` for breaks), and `‖` in `text` while paused.
 
 ```
 ░░░░▄▄▄▄░░░░░░░░░░░░
@@ -183,7 +203,7 @@ The status bar appears.
 ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
 ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 14:32 ░
 ██████████████████████████████████████████████████
- ● heatmap                                 ? help
+  ● heatmap             s style  c clock  ? help
 ```
 
 **Small, wide — 72×18.** The lamp keeps 69 % of the width, so a right
@@ -208,7 +228,7 @@ cycle dots.
 ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
 ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
 ██████████████████████████████████████████████████
- ● heatmap · lava                                       s style  ? help
+  ● heatmap · lava         s style  c clock  p palette  ␣ pomo  ? help
 ```
 
 **Medium — 80×24.** The reference size. Glass lamp, 1-row top margin.
@@ -239,7 +259,7 @@ last row with a 2-col inset.
                   ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
                  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
 
-  ● braille · lava                 s style  c clock  p palette  ␣ pomo  ? help
+  ● braille · lava        s style  c clock  p palette  f frame  ␣ pomo  ? help
 ```
 
 **Large — 120×36.** L face (blocks ×2), date line, 2-row margins, every
@@ -375,7 +395,7 @@ cols, 2-col side clearance). A right panel won't fit, so the panel goes
 
 
 
- ● solid                   ? help
+  ● solid        s style  ? help
 ```
 
 ---
@@ -400,25 +420,42 @@ Minimal mode uses the same rule.
 about 3.2:1; ours is **2.5:1** total height : max width), so it still
 reads as a lamp at 20 rows.
 
-| Part | Share of lamp height `Ht` | Width (fraction of `W = 0.8 × Ht` cols) |
+| Part | Share of lamp height `Ht` | Width (fraction of `W = 0.8 × Ht` cols at cell aspect 2.0) |
 |---|---|---|
 | Cap | 15 % (≥ 2 rows) | 0.18 at top → 0.40 at bottom (truncated cone) |
-| Bottle | 63 % | 0.40 at top → **0.78 bulge at 72 % down** → 0.56 at bottom |
+| Bottle | the rest (≈ 63 %) | 0.40 at top → **0.78 bulge at 72 % down** (28 % up from the foot) → 0.56 at bottom |
 | Base | 22 % (≥ 2 rows) | 0.56 at top → 1.00 at bottom (flared cone) |
+
+All of these numbers live in `silhouette.rs` and nowhere else. The sim's
+bottle has a fixed world aspect of 0.5; on screen `W` is corrected for the
+real cell aspect (§1.4), so the lamp keeps its shape in any font.
 
 Rendering rules for the silhouette:
 
 * **The glass has no outline.** It's the `liquid` colour against `bg`.
-  Edges use half-column precision (`▐` `▌` in the liquid colour), so the
-  taper is smooth at any width and odd/even widths both centre exactly.
-* Cap and base are drawn in `metal`, shaded top-light → bottom-dark (two
-  tones lerped from `metal`). Slopes use `◢◣` / half-blocks, never `/\`.
-* A one-cell **highlight streak** runs down the bottle's left side at
-  ~20 % toward `text`. It's shown only when lighting is on.
-* With lighting on, the base casts a warm falloff into the bottom third
-  of the liquid. The heat source is visibly the base.
-* In 16-colour / NO_COLOR mode there's no liquid tint, so the bottle gets
-  a thin `▕` … `▏` edge in `metal` instead (§5.3).
+  The walls cut cells at half-column *and* half-row precision: each cut
+  cell becomes a quadrant glyph (`▗ ▖ ▄ ▐ ▌ ▟ ▙ ▜ ▛ …`) whose inside
+  quadrants take the colour the style drew in the nearest whole inside
+  cell (wax or liquid) and whose outside quadrants take `bg` (terminal
+  default when transparent). So the taper is smooth at any width, odd and
+  even widths both centre exactly, and wax touching the wall isn't cut
+  off by a liquid-coloured rim. This needs a blending theme (truecolor or
+  256, not `ansi`).
+* Cap and base are drawn in `metal` with a continuous per-row shade, from
+  1.25× `metal` at the top of the cap to 0.7× at the foot of the base.
+  Slopes use `▌` / `▐` half cells, never `/\`. The fill is `█`, or `▒` in
+  NO_COLOR so the metal still reads as a surface.
+* A one-cell **highlight streak** runs down the bottle 32 % of the
+  half-width in from the left wall, 18 % toward `text`, fading out near
+  the shoulder and the base. It's shown only when lighting is on and the
+  theme blends.
+* With lighting on, the liquid in the bottom third is brightened by the
+  base light (up to +55 %, falling off upward). The heat source is
+  visibly the base.
+* When the theme doesn't blend (16 colours, NO_COLOR, or the `ansi`
+  palette at any depth) there's no liquid tint, so the walls are drawn as
+  a thin edge in `metal` instead: `▕` / `▏` where the wall falls on a cell
+  boundary, `│` where it passes mid-cell (§5.3).
 
 **Bleed.** The lamp region *is* the tank: heat source along the bottom
 row, cooling at the top, no metal. Bleed ignores outer margins. Edge to
@@ -432,9 +469,12 @@ pixels**:
 
 | Style family | Sub-samples per cell | Pixel grid for a cols×rows region |
 |---|---|---|
-| half-block (solid, heatmap, dither, …) | 1 × 2 | cols × 2·rows |
-| braille | 2 × 4 | 2·cols × 4·rows |
-| ASCII / glyph (ascii, matrix, topo, …) | 1 × 1, sample at the cell centre, aspect-corrected | cols × rows, `y` scaled by `cell_aspect` |
+| half-block (solid, heatmap, ascii, dither, halftone, crt, synthwave, chrome) | 1 × 2 | cols × 2·rows |
+| braille (braille, outline, topo) | 2 × 4 | 2·cols × 4·rows |
+| cell (matrix) | 1 × 1, sample at the cell centre, aspect-corrected | cols × rows, `y` scaled by `cell_aspect` |
+
+Each style declares its grid (`LampStyle::GRID`). `ascii` supersamples
+two pixels per glyph.
 
 The sim lives in **world units**, independent of the terminal:
 
@@ -455,22 +495,25 @@ The sim lives in **world units**, independent of the terminal:
 
 `cell_aspect` = from `crossterm::terminal::window_size()` pixel fields
 when they're non-zero (`(px_h/rows) / (px_w/cols)`, clamped 1.6–2.6),
-otherwise `display.cell_aspect` from config, otherwise **2.0**. Recompute
-on every resize.
+otherwise `display.cell_aspect` from config (clamped 1.6–2.6 too),
+otherwise **2.0**. Recompute on every resize.
 
 ### 2.4 Resolution scaling & budget
 
 * The field is sampled at the style's native pixel grid (table above), up
   to a **budget of 400 k samples/frame**. Above that the renderer samples
   at a reduced grid and bilinearly upsamples the field (not the glyphs).
-  That only happens at braille + huge sizes.
+  That only happens with the 2×4 styles (braille, outline, topo) at huge
+  sizes.
 * Sampling culls per blob: each blob only touches pixels inside its
   influence box. Cost scales with *blob area*, not blobs × pixels.
 * Blob count is set by the world, not the window: a few big, varied blobs
-  rather than many equal ones. Glass aims for **5** (about 3–6 at any
-  moment, radii spanning 3:1 or more). Bleed aims for `≈ 3.5 × A_region`,
-  clamped to 3–20. The pool stays thin (≈ 0.045 lamp heights) and buds
-  sooner the deeper it gets.
+  rather than many equal ones. At the default heat (3), glass aims for
+  **5** (radii spanning 3:1 or more) and bleed for `≈ 3.5 × A_region`,
+  clamped to 3–20. Heat scales the target by `1 + 0.4 × (heat − 3)`
+  (×0.6 at heat 1, ×1.4 at heat 5), and the result is clamped to 2–40, so
+  glass runs about 3–7 blobs. The pool stays thin (≈ 0.045 lamp heights,
+  never below 0.022) and buds sooner the deeper it gets.
 
 ---
 
@@ -488,7 +531,8 @@ untouched (same blobs, same phase).
   corner chip. A running pomodoro replaces it with `▸ 18:24` in the phase
   colour.
 * Every key still works. Toasts still appear (that's the only feedback
-  minimal mode gives). `?` still opens help.
+  minimal mode gives). `?` still opens help, and the pickers still open:
+  minimal mode drops the resting chrome, not the overlays.
 * Pomodoro phase changes still flash (§4.4).
 
 **Minimal — 80×24:**
@@ -539,7 +583,8 @@ Inset `max(1, horizontal margin)` cols on each side.
   `· palette` in `dim` (only if `cols ≥ 60`). When paused (`z`), `●`
   becomes `‖` and the text says `frozen`.
 * **Centre:** empty, unless debug HUD (`d`) is on: `60 fps · 2.1 ms · 412k
-  px` in `dim`.
+  px` in `dim` (the whole readout turns `wax_hot` while adaptive quality
+  is active or the frame takes > 80 % of its budget, §7).
 * **Right:** hints in `dim`, each formatted `key label` with the key in
   `text`. The full list in display order is `s style  c clock  p palette
   f frame  l light  m minimal  ␣ pomo  ? help`. The bar fits as many as
@@ -561,46 +606,54 @@ Inset `max(1, horizontal margin)` cols on each side.
 
 ### 4.3 Help overlay (`?`)
 
-* **Medium and up:** a centred sheet, `min(64, cols−4)` × `min(18,
-  rows−2)`, **rounded border in `metal`**. Overlays are the only place
+The form depends on the terminal size (`ui/help/sheet.rs`):
+
+* **≥ 68 × 20: a centred sheet**, `min(64, cols−4)` × `min(18, rows−2)`,
+  with a **rounded border in `metal`**. Overlays are the only place
   borders appear. The title `keys` sits in the top border in `accent`,
-  and `esc close` in the bottom-right border in `dim`. Two columns: *lamp*
-  | *clock & pomodoro* + *app*, with section headers in `dim`, keys in
-  `accent`, labels in `text`.
+  and `esc close` in the bottom-right border in `dim`. The sheet always
+  has two columns: *lamp* | *clock & pomodoro* then *app*, with section
+  headers in `dim`, keys in `accent` and labels in `text`. Labels line up
+  at each section's widest key + 2. The rows come straight from the
+  keymap table (§6), so help can't drift from dispatch.
 * The lamp keeps animating behind it, dimmed to 35 % (truecolor: lerp
   toward `bg`; 256/16: the sheet's rect is cleared to `bg`, the rest
   isn't dimmed).
-* **Below Medium:** a full-screen sheet, one column, scrollable with
-  `j/k/↑/↓`, no border. In Micro it shows the single line `? help · q
-  quit · m mode`, clipped by dropping items.
+* **Smaller (not Micro): a full-screen sheet**, one column, scrollable
+  with `j/k/↑/↓`, no border: `keys` (accent) top-left and `esc close`
+  (dim) top-right on the first row, the body from the third row.
+* **Micro:** the single line `? help · q quit · m mode` in the top row,
+  clipped by dropping items from the end.
 * `?`, `esc` or `q` closes it. While help is open, `q` closes help and
   does *not* quit.
 
+80×24, captured from the app:
+
 ```
 
-                      ···
-        ╭─ keys ───────────────────────────────────────────────────────╮
-        │                                                              │
-        │  lamp                          clock & pomodoro              │
-        │  s  next style                 c  next face                  │
-        │  S  style picker               C  face picker                │
-        │  p  next palette               t  show/hide clock            │
-        │  P  palette picker             T  12h / 24h                  │
-        │  f  frame: auto/glass/bleed    ␣  start / pause              │
-        │  l  lighting                   n  skip phase                 │
-        │  [ ]  heat − +                 r r  reset pomodoro           │
+                       ▐███▌
+                       █████
+        ╭ keys ────────────────────────────────────────────────────────╮
+        │  lamp                         clock & pomodoro               │
+        │  s    next style              c    next face                 │
+        │  S    style picker            C    face picker               │
+        │  p    next palette            t    show/hide clock           │
+        │  P    palette picker          T    12h / 24h                 │
+        │  f    frame: auto/glass/bleed ␣    start / pause             │
+        │  l    lighting                n    skip phase                │
+        │  [ ]  heat − +                r r  reset pomodoro            │
         │  - +  speed                                                  │
-        │  z  freeze                     app                           │
-        │  0  reset heat & speed         m  minimal   b  status bar    │
-        │  R  reseed wax                                               │
-        │                                                              │
-        │                                                              │
-        │  ?  this help   q  quit   d  debug hud   ctrl-l  redraw      │
-        ╰─────────────────────────────────────────────── esc close ────╯
-                ···············
-               ·················
+        │  z    freeze                  app                            │
+        │  0    reset heat & speed      m       minimal                │
+        │  R    reseed wax              b       status bar             │
+        │                               d       debug hud              │
+        │                               ctrl-l  redraw                 │
+        │                               ?       this help              │
+        │                               q       quit                   │
+        ╰─────────────────────────────────────────────────── esc close ╯
+                 ▐███████████████▌
 
-
+  ● braille · lava        s style  c clock  p palette  f frame  ␣ pomo  ? help
 ```
 
 ### 4.4 Pickers (`S` style, `C` face, `P` palette)
@@ -608,43 +661,55 @@ Inset `max(1, horizontal margin)` cols on each side.
 * **Live preview:** moving the cursor applies the item to the live lamp
   or clock right away. `⏎` keeps it, `esc` reverts to what was active
   when the picker opened.
-* **Medium and up:** a right-anchored sheet (it covers the panel; the
-  lamp stays visible and *un*-dimmed, because the point is to watch it
-  change). Size: width 26, height `items + 6` (capped, scrolls). Rounded
-  `metal` border, title in `accent`, cursor `▸` + name in `accent`, the
-  active item marked with `·` after its name.
-* **Small:** a bottom sheet across the full width, taking up to half the
-  height.
+* **≥ 80 × 16: a sheet**, width 26, height `items + 6` (capped at
+  `rows − 2`, scrolls), inset from the side by the horizontal margin and
+  vertically centred above the status bar. Rounded `metal` border, title
+  (`style`, `clock`, `palette`) in `accent`, cursor `▸` + name in
+  `accent`, the item that was active when it opened marked with a dim `·`,
+  and a `⏎ keep   esc revert` row. The style and palette pickers anchor
+  right. The face picker anchors left when that keeps it clear of the
+  panel, so the face it previews stays in view. The lamp stays visible
+  and *un*-dimmed, because the point is to watch it change. Chrome the
+  sheet would touch (panel, chip) is hidden whole (§8.2).
+* **Smaller (Small tier and short windows): a bottom sheet** just above
+  the status bar, `items + 3` rows, at most half the height above the
+  status bar (at least 3), with no hint row. It spans only the lamp's
+  columns when a panel sits to the right of the lamp (and the lamp is
+  ≥ 16 cols), otherwise the full width.
 * **Tiny / Micro:** an inline selector in the top row, `‹ braille ›`. Use
-  `←/→` or `h/l` (also `j/k`).
+  `←/→` or `h/l` (also `j/k`). A name too long for the row is cut with
+  `…`, the one place text is shortened rather than dropped: the
+  selector must show *something* to be usable.
 * Keys inside a picker: `↑↓`/`j k` move, `1`–`9` jump, `⏎`/`space` keep,
-  `esc` revert. Pressing the opening key again keeps and closes.
+  `esc`/`q` revert. Pressing the opening key again keeps and closes.
 * The status bar's right side switches to picker hints: `↑↓ preview  ⏎
   keep  esc revert`.
 
+80×24, captured from the app:
+
 ```
 
-                      ▓▓▓
-                     ▓▓▓▓▓                          ╭─ style ────────────────╮
-                    ▓▓▓▓▓▓▓                         │                        │
-                    ░▄▄░░░░                         │   solid                │
-                   ▄████░░░░                        │   outline              │
-                   ░████░░░░                        │   heatmap              │
-                   ░░░░░░▄▄░                        │   ascii                │
-                  ░░░░░░████░                       │   dither               │
-                  ░░▄▄▄▄██▀▀░                       │ ▸ braille              │
-                  ░██████░░░░                       │   halftone             │
-                 ░░██████░░░░░                      │   crt                  │
-                 ░░░▀█▀▀░░▄▄▄░                      │   synthwave            │
-                 ░░░░░░░░░██▀░                      │   matrix               │
-                 ░▄██▄░░░░░░░░                      │   topo                 │
-                  ░██▀░░░░░░░                       │   chrome               │
-                  ███████████                       │                        │
-                  ▓▓▓▓▓▓▓▓▓▓▓                       │ ⏎ keep   esc revert    │
-                  ▓▓▓▓▓▓▓▓▓▓▓                       │                        │
-                 ▓▓▓▓▓▓▓▓▓▓▓▓▓                      ╰────────────────────────╯
-                ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-               ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
+                       ▐███▌
+                       █████                        ╭ style ─────────────────╮
+                      ▐█████▌                       │                        │
+                                                    │   solid                │
+                     ▐       ▌                      │   outline              │
+                     ▟ ⢠⣶⣶⣦⡀ ▙                      │   heatmap              │
+                       ⠸⣽⣿⡿⠃                        │   ascii                │
+                    ▐       ⢀ ▌                     │   dither               │
+                    ▟     ⢰⢽⣷⣿▙                     │ ▸ braille ·            │
+                          ⠸⡿⢿⢟⠝                     │   halftone             │
+                   ▐       ⠈⠉⠁ ▌                    │   crt                  │
+                   ▟ ⢀⢤⡀  ⣔⣽⣽⣽⢦▙                    │   synthwave            │
+                     ⢿⢿⡿ ⠐⣽⢿⣿⣿⢽                     │   matrix               │
+                   ▐  ⠉   ⠈⠛⠛⠓⠁▌                    │   topo                 │
+                         ⢀⡀                         │   chrome               │
+                    ▐⣤⣤⣤⣤⣿⣷⣤⣀⣀▌                     │                        │
+                    ▐█████████▌                     │ ⏎ keep   esc revert    │
+                   ▐███████████▌                    │                        │
+                   █████████████                    ╰────────────────────────╯
+                  ███████████████
+                 ▐███████████████▌
 
   ● braille · lava                              ↑↓ preview  ⏎ keep  esc revert
 ```
@@ -661,11 +726,14 @@ the lamp:
                           ← (date line: thu 1 oct — Large+)
 
  focus             ●●○○   ← phase label (dim) · cycle dots (accent / dim)
- 18:24                    ← remaining (text; accent while running)
- ━━━━━━━━──────────────   ← progress: ━ accent, ─ dim
+ 18:24                    ← remaining (phase colour, see below)
+ ━━━━━━━━──────────────   ← progress: ━ phase colour, ─ dim
 ```
 
-When the pomodoro is idle, the panel shows `focus  25:00` dim, with an
+The phase label is `focus`, `break` or `long break`. The time and the
+filled bar take the phase colour: `accent` while a focus phase runs,
+`wax_hot` while a break runs, `text` while paused (with a dim ` paused`
+after the time), and `dim` when idle. Idle shows `focus  25:00` with an
 empty bar. The pomodoro is always present in the panel, so it's always
 discoverable.
 
@@ -678,20 +746,26 @@ width only in L/XL, where the panel allows them):
 
 | Face | S | M | L | XL |
 |---|---|---|---|---|
-| `blocks` (default) | — | 3×5 font, half-blocks: 17×3 | ×2: 34×5 (with seconds 54×5) | ×3 (Huge only): 51×8 |
+| `blocks` (default) | — | 3×5 font, half-blocks: 17×3 | ×2: 34×5 (with seconds 54×5†) | ×3: 51×8† |
 | `segment` | — | 17×3 | 21×5 (with seconds 33×5) | 33×7 |
 | `analog` | — | 15×8 | 23×12 | 31×16 (circle aspect-corrected) |
 | `binary` | 9×4 | 12×6 | — | — |
 | `words` | 16×3 | 24×2 | 21×10 (word grid) | — |
 | `text` | 5×1 (`14:32`; 12h ` 2:32 pm` 8×1) | — | — | — |
 
+† Wider than the panel's 34-col maximum inner width (§1.4), so these
+forms are never chosen as shipped. Whether the panel should grow at
+Huge sizes or these forms should go is open: `lava-ebq.26`.
+
 The colon never blinks (motion belongs to the lamp). Seconds appear only
 in L/XL variants and the `text` face's 12h/24h follows `T`.
 
-**Phase-change flash.** When a pomodoro phase ends: the lamp's `metal`
-parts (or, in bleed, the liquid tint) pulse toward `accent` once over
-600 ms, a toast says `break · 5:00`, and the terminal bell sounds if
-`pomodoro.bell = true` (default true).
+**Phase-change flash.** When a pomodoro phase ends on its own: the
+lamp's `metal` parts pulse toward `accent` (in bleed, the liquid tint
+pulses, peaking at 35 % toward `accent`), one `sin` swell over 600 ms; a
+toast says `break · 5:00`, and the terminal bell sounds if
+`pomodoro.bell = true` (default true). Skipping a phase with `n` only
+toasts: no flash, no bell.
 
 ---
 
@@ -715,7 +789,8 @@ and `render/` hard-codes a colour.
 ### 5.2 The palettes
 
 Default: **lava**. Names are lowercase in the UI. 256 = xterm index
-(nearest by weighted RGB, hand-fixed where two roles collided). 16 =
+(hand-picked; an unmixed role always uses it, blends are matched as in
+§5.3). 16 =
 ratatui `Color` name. `default` = terminal default (`Color::Reset`).
 
 **lava**: the 1970s original. Red-orange wax in amber oil.
@@ -836,9 +911,9 @@ Detection order, overridable with `--color=auto|truecolor|256|16|none` /
 
 | Depth | Gradient | Background | Notes |
 |---|---|---|---|
-| truecolor | continuous lerp across the 3 wax stops | `bg` painted (unless `theme.transparent = true`) | fades, dimming, glow all on |
-| 256 | lerp in RGB, then quantise each cell to the nearest xterm index (cached LUT, 64 steps) | `bg` painted (index above) | toast fade → instant; help dim → cleared rect |
-| 16 | 3 discrete steps; styles add glyph density (`░▒▓█`) to show temperature | always `default` | glass gets a thin `▕ ▏` edge in `metal`; lighting adds density, not colour |
+| truecolor | lerp across the 3 wax stops (a 64-step ramp LUT at every depth); blended colours are rounded to multiples of 4 per channel, so sub-visible drift doesn't repaint cells | `bg` painted (unless `theme.transparent = true`) | fades, dimming, glow all on |
+| 256 | blend in RGB, then match to the nearest xterm index by a hue- and lightness-weighted OKLab distance over the 6×6×6 cube and grey ramp only (the 16 system colours are themed by the terminal, so never picked); cached per 6-bit RGB bucket. Unmixed roles use the §5.2 index | `bg` painted (index above) | toast fade → instant; help dim → cleared rect |
+| 16 | 3 discrete steps; styles add glyph density (`░▒▓█`) to show temperature | always `default` | glass gets a thin `▕ │ ▏` edge in `metal` (§2.1); lighting adds density, not colour |
 | none | no colour at all; temperature shown only through glyph density and shape | `default` | `accent` → bold; `dim` → plain |
 
 Every style must stay legible in **16** and **none**. That's a snapshot
@@ -872,13 +947,13 @@ so they can't drift.
 | `t` | clock shown/hidden | hides the face in the panel/chip; the pomodoro stays |
 | `T` | 12h / 24h | |
 | `space` | pomodoro start / pause / resume | starts a focus phase if idle |
-| `n` | pomodoro: skip to next phase | |
-| `r` | pomodoro reset (press **twice** within 2 s) | first press toasts `press r again to reset` |
+| `n` | pomodoro: skip to next phase | idle: toasts `pomodoro idle · ␣ to start` |
+| `r` | pomodoro reset (press **twice** within 2 s) | first press toasts `press r again to reset`; presses < 150 ms apart count as key repeat, never as the second press |
 | `[` / `]` | heat − / + (5 steps, default middle) | more heat = more, faster blobs; toast shows `heat ▮▮▮▯▯` |
 | `-` / `+` (`=`) | sim speed ×0.25 · ×0.5 · ×1 · ×2 · ×4 | toast `speed ×2` |
 | `0` | reset heat and speed | |
 | `z` | freeze / unfreeze the lamp | frozen = zero sim cost; the clock keeps ticking |
-| `R` | reseed the wax (new random seed) | blobs dissolve into the pool, then rise anew over ~2 s, never a hard cut |
+| `R` | reseed the wax (new random seed) | toast `reseeding`; blobs melt into the pool (under 2 s), then 5 s of fast budding refill the lamp. Never a hard cut |
 | `d` | debug HUD (fps, frame ms, samples) | |
 | `ctrl-l` | force full redraw | |
 
@@ -887,7 +962,7 @@ so they can't drift.
 | Context | Keys |
 |---|---|
 | help | `j k ↑ ↓` scroll · `?` `esc` `q` close |
-| picker | `j k ↑ ↓` move (live preview) · `1`–`9` jump · `⏎` `space` keep · `esc` revert · opening key = keep + close |
+| picker | `j k ↑ ↓` move (live preview) · `1`–`9` jump · `⏎` `space` keep · `esc` `q` revert · opening key = keep + close |
 | tiny inline picker | `h l ← →` (also `j k`) move · `⏎` keep · `esc` revert |
 
 Every key not listed is ignored (no beep, no toast). Overlay keys take
@@ -916,7 +991,7 @@ and help, click a picker item to preview, double-click to keep.
 | CPU usage | ≤ **5 %** of a core at 80×24, ≤ **15 %** at 200×60 @ 60 fps |
 | Output bandwidth | rely on ratatui's cell diff; ≤ ~200 KB/s at 80×24 (SSH-friendly) |
 | Unfocused | on `FocusLost` (if the terminal reports it), drop to **10 fps**; back to normal on `FocusGained` |
-| Frozen (`z`) | no sim steps, redraw only on clock-minute change / input |
+| Frozen (`z`) | no sim steps; the loop sleeps until the clock readout changes (each minute, or each second while a face shows seconds or a pomodoro runs), input arrives or a save is due; toasts and flashes still animate |
 
 **Resize behaviour.**
 
@@ -931,13 +1006,31 @@ and help, click a picker item to preview, double-click to keep.
 
 **Adaptive quality** (silent; it never changes the user's choices):
 
-1. If the moving-average frame time is > 80 % of budget for 2 s, the
-   sampling grid drops one step (e.g. braille samples at half resolution
-   and upsamples).
-2. Still over budget: fps 60 → 30 (never below 30 from adaptation alone).
-3. Recovers in reverse once it's < 40 % of budget for 5 s.
+1. If the moving-average frame time (EMA, τ = 0.5 s) is > 80 % of the
+   frame budget for 2 s, the sampling grid drops one step (e.g. braille
+   samples at half resolution and upsamples).
+2. Still over budget: fps halves (60 → 30, 120 → 60), never below 30
+   from adaptation alone. At ≤ 59 fps this step doesn't exist; the grid
+   step is all there is.
+3. Recovers one step at a time once the frame time is < 40 % of the
+   budget *of the level it would return to* for 5 s, so it never comes
+   back into a level it would immediately leave.
+4. Backoff: if quality is lost again soon after a recovery, the next
+   recovery waits twice as long (up to 5 min), so a borderline load never
+   flaps. A workload change (resize, style, grid) resets the wait.
+   Frames aren't measured while frozen.
 
-The debug HUD shows when this is active (`fps` turns `wax_hot`).
+The debug HUD shows when this is active (the whole readout turns
+`wax_hot`, §4.1).
+
+**Measured** (lava-h0f, main at `633113d`, Apple M5 under background
+load): launch → first frame ≈ 25 ms; ≈ 2 % of a core at 80×24 and
+≈ 4–6 % at 200×60 at 60 fps (glass, solid/braille, lit or not); lamp
+render ≤ 0.13 ms per frame at 80×24 and 0.11–0.67 ms at 200×60 for every
+style, lit or unlit (`bench_lamp`). Details in the README.
+
+Speed changes (`-`/`+`/`0`) ease in over a fraction of a second rather
+than jumping.
 
 ---
 
@@ -947,6 +1040,11 @@ The debug HUD shows when this is active (`fps` turns `wax_hot`).
    and `text` only, with no fills, bars or boxes in the resting state.
 2. **Hide before you cram.** Elements drop out whole, in the fixed
    priority order (§1.3). Nothing truncates mid-word, wraps or overlaps.
+   Overlays follow the same rule: any panel or chip an overlay (help,
+   picker or toast) would touch, with a 1-cell gap, is left out whole
+   rather than drawn under or beside it, and so is a status bar, toast or
+   HUD it would overlap. The HUD also hides under a toast. The one
+   shortened text is the Tiny inline picker's name (§4.4).
 3. **One accent colour**, used sparingly: cursor, running pomodoro,
    status `●`, help keys. If two things are accented, one of them
    shouldn't be.
@@ -1012,17 +1110,31 @@ clock = "under"          # under | corner | off
 mouse = false
 ```
 
+Out-of-range values are clamped rather than rejected: `fps` 1–240,
+`cell_aspect` 1.6–2.6 (NaN → 2.0), `heat` 1–5, `speed` snapped to the
+nearest step (≤ 0 or non-finite → 1), pomodoro minutes 1–1440, `cycles`
+1–12. The old style name `glass` is accepted as `chrome`.
+
 CLI: `--minimal`/`-m`, `--fps <n>`, `--style <name>`, `--palette <name>`,
 `--color <depth>`, `--seed <u64>`, `--config <path>` (use this file
-instead of the XDG one), plus hidden `--frames`. Flags override config for
-the session only. They're never written back (until you change that
-setting in the app, which then saves as usual).
+instead of the XDG one), plus hidden `--frames <n>` (exit after n frames)
+and `--panic-after <n>` (tests the terminal-restoring panic hook). Flags
+override config for the session only. They're never written back (until
+you change that setting in the app, which then saves as usual). An
+unknown style or palette name currently falls back to the default
+silently (`lava-ebq.29`).
 
 The file lives at `$XDG_CONFIG_HOME/lavatui/config.toml`, else the
 platform config dir (`~/.config/lavatui/` on Linux, `~/Library/Application
 Support/lavatui/` on macOS). It is saved 1 s after the last change and on
-quit. A missing file means defaults; a corrupt one means defaults plus a
-toast, and it is moved to `config.toml.bak` before the first save.
+quit. A missing file means defaults. A bad value is ignored (with a
+toast, `config: ignored lamp.heat`) and the rest kept; a TOML syntax
+error means all defaults (`config unreadable · using defaults`); a file
+that can't be read at all (permissions, a directory) is never written
+that session. Anything a save would drop is first copied to
+`config.toml.bak`. Saves keep comments, key order and unknown keys,
+follow symlinks to the real file, and are atomic (temp file + rename,
+keeping the file's permissions).
 
 ---
 
