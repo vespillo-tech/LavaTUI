@@ -220,6 +220,12 @@ pub static KEYMAP: &[Row] = &[
     row(Widgets, "A", "music keys", &[(K('A'), A::PlayerKeys)]),
     row(
         Widgets,
+        "y",
+        "lyrics · lrclib.net",
+        &[(K('y'), A::Place("lyrics"))],
+    ),
+    row(
+        Widgets,
         "l L",
         "move, pick lava widget",
         &[(K('l'), A::NextAnchor), (K('L'), A::NextLavaWidget)],
