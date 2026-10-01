@@ -149,6 +149,15 @@ Any font with Unicode block elements and braille works, so no Nerd Font
 is needed. On macOS, Terminal.app has no truecolor and gets the 256-colour
 path.
 
+**Ghostty half-block streaks:** if wax or album art has alternating dark
+half-rows, check Ghostty's `background-opacity-cells` setting. With it
+enabled and `background-opacity < 1`, the background half of a `▀` or `▄`
+cell is translucent while the foreground half stays opaque. Set
+`background-opacity-cells = false` in Ghostty's config and reload it to
+keep explicit pixel colours opaque; the window's normal transparency is
+still controlled by `background-opacity`. See
+[Ghostty's opacity settings](https://ghostty.org/docs/config/reference#background-opacity-cells).
+
 ## Usage
 
 ```
