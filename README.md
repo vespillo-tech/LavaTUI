@@ -204,13 +204,23 @@ clock = "under"          # under | corner | off
 mouse = false
 ```
 
-The file is meant to be edited by hand. A bad value (or a style, palette
-or face that doesn't exist) is ignored, a toast names it, and the rest of
-the file still applies. Keys lavatui doesn't know are reported but kept.
-If a save would drop anything, the file is first copied to
-`config.toml.bak`. Saves keep your
-comments and write through symlinks, so a dotfile manager's link stays
-intact.
+The file is meant to be edited by hand, even while the lamp runs. A bad
+value (or a style, palette or face that doesn't exist) is ignored, a value
+out of range is clamped (`config: lamp.heat 99 → 5`), and the rest of the
+file still applies; keys lavatui doesn't know are reported but kept. The
+toast names the first problem; if there are more, all of them are printed
+when you quit. A TOML syntax error is reported with its line and the lamp
+starts from the defaults.
+
+Saving only writes the settings you changed in the app, into the file as
+it is at that moment, so your hand edits to anything else survive. Your
+comments, key order and unknown keys are kept, and saves write through
+symlinks, so a dotfile manager's link stays intact. If a save would
+overwrite something lavatui couldn't use (an ignored or clamped value, a
+broken file, bytes that aren't UTF-8), the file is first copied to
+`config.toml.bak`. A file that's mid-edit and not valid TOML is left alone
+until it is. A read-only config (or folder), or a path that isn't a
+regular file (`/dev/null`, a fifo), is never written; a toast says so once.
 
 ## Render styles
 

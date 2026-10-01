@@ -40,5 +40,8 @@ fn main() -> io::Result<()> {
     }));
     let result = app::run(&mut terminal, &session, panic_after);
     ratatui::restore();
-    result
+    for line in result? {
+        eprintln!("lavatui: {line}");
+    }
+    Ok(())
 }
