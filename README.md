@@ -6,12 +6,17 @@ styles: smooth half-blocks, thermal camera, braille, halftone, CRT,
 digital rain and more. Next to the lamp sit a clock and a pomodoro timer.
 Turn those off with one key and you just have the lamp.
 
-![lavatui at 120×36: the glass lamp in the solid style with lighting, the blocks clock and a running pomodoro](docs/screenshots/hero.png)
+![lavatui demo: the lamp running in solid, heatmap, braille, synthwave and chrome, switching to the ultraviolet palette, the style picker previewing styles live, lighting toggled and minimal mode](docs/screenshots/demo.gif)
 
 Built with Rust and [ratatui](https://ratatui.rs). It's one small binary
 with no runtime dependencies and no Nerd Fonts.
 
 ## Gallery
+
+**The full TUI** at 120×36: solid style with lighting, the blocks clock
+and a running pomodoro.
+
+![lavatui at 120×36: the glass lamp in the solid style with lighting, the blocks clock and a running pomodoro](docs/screenshots/hero.png)
 
 **Twelve render styles.** These are all the same seed and the same moment,
 in minimal mode with lighting on:
@@ -322,6 +327,15 @@ cargo run --release -- --config /tmp/x.toml  # try settings without touching you
 All the logic is pure and unit-tested: the simulation, layout, clock,
 pomodoro and the app model. Only `ui/` and `app/mod.rs` touch the
 terminal.
+
+The screenshots are generated from the release binary with a fixed seed
+and a scratch config. Rerun them after visible changes:
+
+```sh
+python3 docs/screenshots/capture.py          # the PNGs (needs pyte + pillow; see its docstring)
+vhs docs/screenshots/demo.tape               # the demo GIF (needs vhs), then crop + optimise:
+gifsicle -O3 --crop 6,0+984x580 -b docs/screenshots/demo.gif
+```
 
 ## License
 
