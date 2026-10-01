@@ -28,7 +28,7 @@ use ratatui::layout::Rect;
 use std::path::Path;
 
 pub use model::{
-    Account, ListKind, ListView, LocalTime, Model, Overlay, Picker, PickerKind, TOAST_FADE,
+    Account, Fetch, ListKind, ListView, LocalTime, Model, Overlay, Picker, PickerKind, TOAST_FADE,
     TOAST_TIME, Toast,
 };
 

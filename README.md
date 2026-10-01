@@ -59,7 +59,7 @@ in minimal mode:
   a very large one two columns, a cramped portrait one rows across the
   width: whichever keeps the widgets largest.
 - **Widgets go where you want them.** The clock (`t`), the pomodoro
-  (`f`) and music (`a`) each sit in the side panel, on the lava, or off.
+  (`f`), music (`a`) and lyrics (`y`) each sit in the side panel, on the lava, or off.
   On the lava each has its own spot (centre, top, the corners, bottom):
   `l` moves the one you last put there, `L` picks another. They float
   on a soft pool of liquid that the wax melts into at the edges,
@@ -78,6 +78,13 @@ in minimal mode:
   its own thread, only while the widget is shown, and covers are fetched
   and cached (`$XDG_CACHE_HOME/lavatui/art`) in the background. macOS for
   now (AppleScript; Linux MPRIS and Windows to come).
+- **Lyrics** (`y`, off by default): the playing track's words from
+  [lrclib.net](https://lrclib.net), in time with the song: the current
+  line bold and bright, the ones around it dim, a gentle fade from line
+  to line, dots through the instrumental breaks. Five lines, three, or
+  one, on the lava (bottom centre) or beside it; plain lyrics scroll with
+  the song when there's no timing. Turning it on sends each track's title,
+  artist, album and length to lrclib.net.
 - **Clock faces**: blocks, segment, analog, binary, words and text. Each
   face comes in several sizes, and the largest one that fits is used; on
   a very large terminal the panel widens for the biggest ones.
@@ -161,6 +168,7 @@ unknown `--style` or `--palette` name exits with the list of valid ones.
 | `f` | pomodoro: side panel → on the lava → off |
 | `a` | music (now playing): side panel → on the lava → off |
 | `A` | player keys on (see below) |
+| `y` | lyrics: side panel → on the lava → off (looks tracks up on lrclib.net) |
 | `l` | move a widget on the lava (the last put there): centre, top, the corners, bottom |
 | `L` | pick which widget on the lava `l` moves |
 | **App** | |
@@ -246,9 +254,10 @@ mouse = false
 clock = "side"           # side | overlay | off
 pomodoro = "side"        # side | overlay | off
 music = "off"            # side | overlay | off
+lyrics = "off"           # side | overlay | off (on = lookups on lrclib.net)
 # each widget's spot on the lava:
 # center | top | top-right | bottom-right | bottom | bottom-left | top-left
-anchor = { clock = "center", pomodoro = "center", music = "top-left" }
+anchor = { clock = "center", pomodoro = "center", music = "top-left", lyrics = "bottom" }
 
 [spotify]
 client_id = ""           # for the Web API library features, see docs/spotify.md
@@ -259,6 +268,12 @@ Music needs nothing set up: it talks to the Spotify desktop app. The
 first time, macOS asks whether your terminal may control Spotify; if you
 said no, the widget tells you where to change it (System Settings ›
 Privacy & Security › Automation).
+
+Lyrics are **off until you place them** (`y`): with the widget on, the
+title, artist, album and length of each track you play are sent to
+[lrclib.net](https://lrclib.net), a free, open lyrics database, and the
+answers are kept in your cache dir (`$XDG_CACHE_HOME/lavatui/lyrics`).
+Nothing is sent while it's off.
 
 The file is meant to be edited by hand, even while the lamp runs. A bad
 value (or a style, palette or face that doesn't exist) is ignored, a value
@@ -333,6 +348,11 @@ With music on and Spotify playing, the widget's drawing costs next to
 nothing, but asking Spotify through `osascript` once a second does:
 about 11 % of a core at 80×24 (vs 2.5 % without), 17 % at 200×50.
 Making that cheaper is tracked as lava-75z.11.
+Lyrics read the same player (so on their own they cost about the same as
+music), and add nothing measurable on top of it: music and lyrics together
+measured 10.8 % / 14.3 % against music's 11.9 % / 15.2 % (80×24 / 200×50,
+run-to-run noise). The lookup is one request per track, on its own thread,
+and cached.
 
 Here is the render time per frame at 200×60 in truecolor: the field
 sampling plus the style draw (`bench_lamp`: a full-area lamp, two sim

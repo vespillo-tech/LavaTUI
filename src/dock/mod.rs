@@ -15,6 +15,7 @@
 //! Colours come from the model's theme, as everywhere else.
 
 mod clock;
+mod lyrics;
 mod music;
 mod pomodoro;
 
@@ -30,6 +31,9 @@ use crate::theme::Role;
 pub use clock::Clock;
 #[cfg(test)]
 pub use clock::{clock_forms, clock_parts};
+pub use lyrics::Lyrics;
+#[cfg(test)]
+pub use lyrics::{Show as LyricsShow, lyrics_forms};
 pub use music::{Music, fit, hit as music_hit};
 #[cfg(test)]
 pub use music::{Show, music_forms};
@@ -39,7 +43,7 @@ pub use pomodoro::pomodoro_forms;
 
 /// Every widget, in stacking order: the first sits on top of the panel
 /// (and of the stack on the lava) and is the last to shrink.
-pub static WIDGETS: &[&dyn DockWidget] = &[&Clock, &Pomodoro, &Music];
+pub static WIDGETS: &[&dyn DockWidget] = &[&Clock, &Pomodoro, &Music, &Lyrics];
 
 /// Where a widget sits (`dock.<name>` in the config).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -8,6 +8,7 @@
 
 mod actions;
 mod library;
+mod lyrics;
 mod music;
 mod pickers;
 mod saving;
@@ -31,6 +32,7 @@ use crate::ui::keymap::InputMode;
 use crate::ui::layout::{self, DockItem, Layout, LayoutInput, SizeTier};
 
 pub use library::{Account, Library, ListKind, ListView};
+pub use lyrics::{Fetch, LyricsState};
 pub use music::Music;
 pub use pickers::{Picker, PickerKind};
 
@@ -138,6 +140,8 @@ pub struct Model {
     pub music: Music,
     /// The Spotify library (Web API): login, playlists, likes.
     pub library: Library,
+    /// The lyrics widget's lookups and sync.
+    pub lyrics: LyricsState,
     /// The widget on the lava `l` moves (`L` picks another).
     pub lava_focus: Option<usize>,
 
@@ -211,6 +215,7 @@ impl Model {
             last_reset_key: None,
             music: Music::default(),
             library: Library::new(settings.spotify_client_id()),
+            lyrics: LyricsState::default(),
             lava_focus: None,
             overlay: Overlay::None,
             toast: None,
@@ -328,10 +333,14 @@ impl Model {
         if let Some(at) = self.save_at {
             wake = wake.min(at);
         }
-        if self.music_on() {
+        if self.media_on() {
             // The player may change under us (a track ends, someone presses
             // pause in Spotify): look each second.
             wake = wake.min(self.now + second);
+        }
+        if let Some(at) = self.lyrics.wake(self.now) {
+            // The next line (or the end of a fade).
+            wake = wake.min(at);
         }
         if self.saver.as_ref().is_some_and(saving::Saver::busy) || self.library.busy() {
             // Frozen frames still collect save errors and Spotify's

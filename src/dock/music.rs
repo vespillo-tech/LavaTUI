@@ -722,7 +722,7 @@ fn clock(d: std::time::Duration) -> String {
 }
 
 /// Display width (CJK titles are two columns a character).
-fn width(s: &str) -> u16 {
+pub(super) fn width(s: &str) -> u16 {
     s.width().min(usize::from(u16::MAX)) as u16
 }
 
