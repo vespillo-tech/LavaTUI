@@ -155,13 +155,12 @@ cargo run --release -- --frames 300  # hidden: exit after N frames (smoke test /
 cargo test                           # unit tests (timing, keymap, CLI)
 cargo fmt --check                    # formatting gate
 cargo clippy --all-targets -- -D warnings   # lint gate
+cargo test --release -- --ignored --nocapture bench_fill   # field sampler + step timing
 ```
 
 The binary needs a real TTY (it errors out cleanly without one). To smoke-test
 headlessly, run it under a pty with a window size set (e.g. Python `pty.fork`
 + `TIOCSWINSZ`) and `--frames N`; `script` alone gives a 0x0 pty.
-
-TODO: add benchmark command (e.g. `cargo bench`) once the sim has a bench.
 
 ## Architecture Overview
 
@@ -175,16 +174,22 @@ TODO: add benchmark command (e.g. `cargo bench`) once the sim has a bench.
 - `timing.rs` — pure loop timing: `FixedStep` (accumulator, max 8 steps per
                 frame, `alpha()` for interpolation), `FramePacer` (fixed-grid
                 frame deadlines, resyncs when late), `FpsMeter` (EMA).
-- `sim/`      — wax simulation. Stub: `World { time }` + `step(dt)`, always
-                called with the fixed `dt` (`SIM_HZ = 120` in `app.rs`).
-                Pure, no terminal code, deterministic with a seed.
+- `sim/`      — wax simulation (pure, seeded, deterministic). `World::new(seed,
+                aspect, Shape)` + `step(dt)` at the fixed `dt` (`SIM_HZ = 120`).
+                World units: height 1, width = visual aspect, x centred on 0.
+                Pool on the heater buds blobs; heat/buoyancy/drag/cohesion,
+                merge + split, melt back into the pool; wax area conserved.
+                `field.rs`: `Field::prepare(&world, alpha)` once per frame,
+                then `fill(&mut [Sample], cols, rows)` / `sample(u, v)`
+                (v down; density `>= SURFACE` is wax). Model notes and all
+                tuning constants are at the top of `sim/mod.rs`.
 - `render/`   — stub. Planned: `Style` trait + registry, one file per style.
 - `light/`    — stub. Optional lighting/glow pass on the sampled field.
 - `clock/`    — stub. Clock faces (`Face` trait) + pomodoro state machine.
-- `ui/`       — the only terminal-facing code. `draw(frame, &Scene)`;
+- `ui/`       — the only terminal-facing code. `draw(frame, &Scene, &mut samples)`;
                 `input.rs` maps crossterm events → `Action` (q/Esc/Ctrl-C quit,
                 resize → immediate redraw); `placeholder.rs` is a temporary
-                half-block lava gradient to delete once real styles land.
+                half-block density view of the field, replaced by lava-bdj.
 
 crossterm is used via ratatui's re-export (`ratatui::crossterm`) so the two
 never drift apart; there is no direct crossterm dependency.

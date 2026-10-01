@@ -11,19 +11,37 @@ use ratatui::text::Line;
 
 pub use input::{Action, action_for};
 
+use crate::sim::{Field, Sample};
+
+/// Terminal cells are about twice as tall as wide (docs/design.md §2.3).
+const CELL_ASPECT: f64 = 2.0;
+
 /// What one frame needs to know. Built by the app loop each frame.
 #[derive(Debug, Clone, Copy)]
-pub struct Scene {
-    /// Simulated seconds, interpolated to the moment of drawing.
-    pub time: f64,
+pub struct Scene<'a> {
+    /// The wax, interpolated to the moment of drawing.
+    pub field: &'a Field,
     /// Measured render fps.
     pub fps: f64,
     pub minimal: bool,
 }
 
-pub fn draw(frame: &mut Frame, scene: &Scene) {
+/// Visual aspect (on-screen width ÷ height) of a `cols × rows` lamp.
+pub fn lamp_aspect(cols: u16, rows: u16) -> f64 {
+    if cols == 0 || rows == 0 {
+        return 1.0;
+    }
+    f64::from(cols) / (f64::from(rows) * CELL_ASPECT)
+}
+
+/// `samples` is a scratch buffer the caller keeps across frames.
+pub fn draw(frame: &mut Frame, scene: &Scene, samples: &mut Vec<Sample>) {
     let area = frame.area();
-    frame.render_widget(placeholder::Gradient { time: scene.time }, area);
+    let wax = placeholder::WaxView {
+        field: scene.field,
+        samples,
+    };
+    frame.render_widget(wax, area);
     if !scene.minimal {
         draw_status(frame, area, scene);
     }
