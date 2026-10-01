@@ -67,15 +67,20 @@ pub const WAX_TEMP: (f32, f32) = (0.25, 0.9);
 
 /// Upward acceleration per unit of `temp - NEUTRAL_TEMP` for a
 /// reference-size blob (world units / s²).
-const BUOYANCY: f64 = 0.24;
+const BUOYANCY: f64 = 0.21;
 /// Viscous drag rate (1/s). Terminal velocity = buoyancy / drag, so the
-/// hottest blobs top out near 0.07 lamp-heights per second.
+/// hottest blobs top out near 0.065 lamp-heights per second.
 const DRAG: f64 = 1.5;
 /// Heat exchange rate (1/s) with the liquid for a reference-size blob.
-/// Exchange scales with surface / volume, i.e. `1 / radius`.
+/// Exchange scales with surface / volume, `1 / radius`, softened to this
+/// power so the biggest blobs still cool enough at the top to come down
+/// rather than pile up under it.
 const COOL_RATE: f64 = 0.06;
+const COOL_SIZE: f64 = 0.6;
 const REF_RADIUS: f64 = 0.08;
-/// Free blobs just above the pool are warmed by the heater.
+/// Free blobs just above the pool are warmed by the heater, big ones more
+/// slowly (so a big blob sinking onto the pool settles and melts in rather
+/// than bobbing just above it).
 const HEATER_BAND: f64 = 0.04;
 const HEATER_RATE: f64 = 0.25;
 /// Buds and melting blobs approach the pool temperature at this rate (1/s).
@@ -90,10 +95,23 @@ const MIN_POOL_DEPTH: f64 = 0.045;
 /// middling, a quarter big, a fifth small. With merges and splits on top,
 /// the lamp shows a 3:1 spread or more.
 const BUD_SIZE: (f64, f64) = (0.7, 1.1);
-const BIG_BUD: (f64, f64) = (1.4, 2.0);
+const BIG_BUD: (f64, f64) = (1.6, 2.2);
 const BIG_BUD_CHANCE: f64 = 0.25;
 const SMALL_BUD: (f64, f64) = (0.3, 0.5);
 const SMALL_BUD_CHANCE: f64 = 0.2;
+/// While the lamp has no big blob (or no small one) afloat, a new bud is
+/// that size this often instead, so a still frame rarely shows a row of
+/// look-alikes. Big means at least `BIG_BLOB` typical radii (or most of
+/// the largest size), small at most `SMALL_BLOB`.
+const MISSING_SIZE_CHANCE: f64 = 0.85;
+const BIG_BLOB: f64 = 1.3;
+const SMALL_BLOB: f64 = 0.6;
+/// The typical radius is at most this fraction of the largest, so in a
+/// narrow lamp the big buds still stand out from the rest.
+const TYPICAL_OF_MAX: f64 = 0.5;
+/// Smallest bud radius (lamp heights): a droplet a couple of pixels across
+/// even in a short lamp.
+const MIN_BUD: f64 = 0.025;
 /// Buds start this much of the way from a random spot to the nearest
 /// mound top.
 const BUD_CENTRING: f64 = 0.5;
@@ -135,9 +153,12 @@ const MERGE_STRETCH: f64 = 0.35;
 /// Splits: blobs above `SPLIT_FRACTION × max radius`, hot and rising, split
 /// at up to `SPLIT_RATE` per second (scaled by how far over they are). Hot
 /// blobs never merge past that size, so split halves don't just re-fuse.
-const SPLIT_FRACTION: f64 = 0.85;
+const SPLIT_FRACTION: f64 = 0.8;
 const HOT: f64 = 0.6;
-const SPLIT_RATE: f64 = 0.15;
+const SPLIT_RATE: f64 = 0.1;
+/// The top part of a split takes this share of the wax: rarely an even
+/// split, so a split adds to the size mix rather than evening it out.
+const SPLIT_SHARE: (f64, f64) = (0.25, 0.75);
 const SPLIT_KICK: f64 = 0.008;
 /// Split halves start this far apart (× parent half-height) and overlap,
 /// so the field shows a neck that thins as they part.
@@ -145,14 +166,17 @@ const SPLIT_REACH: f64 = 0.55;
 /// No merging/melting for this long after a split or detaching.
 const COOLDOWN: f64 = 3.0;
 
-/// Largest blob radius (lamp heights), and as a fraction of the width (two
-/// must fit side by side, or a narrow lamp jams).
-const MAX_RADIUS: f64 = 0.16;
+/// Largest blob radius (lamp heights): a big blob is about half the lamp
+/// tall, a third of an 80x24 lamp across. And as a fraction of the width
+/// (two must fit side by side, or a narrow lamp jams).
+const MAX_RADIUS: f64 = 0.24;
 const MAX_RADIUS_OF_WIDTH: f64 = 0.25;
 const MAX_BLOBS: usize = 40;
 
-/// Wall spring stiffness (1/s²).
+/// Wall spring stiffness (1/s²), and the flattest a blob pressed on the
+/// top wall gets (as a stretch): past that the wall pushes it instead.
 const WALL: f64 = 12.0;
+const WALL_FLATTEN: f64 = 0.85;
 /// Hard caps that keep the sim sane whatever happens.
 const MAX_SPEED: f64 = 0.3;
 const STRETCH_RANGE: (f64, f64) = (0.6, 2.3);
@@ -395,7 +419,9 @@ impl World {
     /// Typical blob radius: the wax not in a full-depth pool, shared out.
     fn typical_radius(&self) -> f64 {
         let afloat = self.wax_target - POOL_DEPTH * self.bottom_width();
-        (afloat.max(0.0) / (self.target_blobs() as f64 * PI)).sqrt()
+        (afloat.max(0.0) / (self.target_blobs() as f64 * PI))
+            .sqrt()
+            .min(TYPICAL_OF_MAX * self.max_radius())
     }
 
     /// Liquid velocity: a slow, gently pulsing row of convection cells that
@@ -493,6 +519,13 @@ impl World {
 
             let target = 1.0 + STRETCH_GAIN * (blob.vy.abs() - blob.vx.abs());
             relax(&mut blob.stretch, target, STRETCH_RELAX, dt);
+            // Walls flatten a blob pressed on them (down to `WALL_FLATTEN`)
+            // before they push it: one left stretched into a wall is shoved
+            // off it hard, and stretches further with that speed.
+            let tallest = (1.0 - blob.y) / blob.radius;
+            let widest = (half - blob.x.abs()) / blob.radius;
+            blob.stretch =
+                (blob.stretch.max(1.0 / widest.max(1e-3))).min(tallest.max(WALL_FLATTEN));
 
             // Settled onto the pool while sinking: start melting in.
             let bottom = blob.y - blob.radius * blob.stretch;
@@ -583,10 +616,13 @@ impl World {
                 Phase::Free => {
                     let bottom = blob.y - blob.radius * blob.stretch;
                     let near = 1.0 - ((bottom - level) / HEATER_BAND).clamp(0.0, 1.0);
-                    let cool = COOL_RATE * (REF_RADIUS / blob.radius.max(0.01)).min(4.0);
+                    let cool = COOL_RATE
+                        * (REF_RADIUS / blob.radius.max(0.01))
+                            .powf(COOL_SIZE)
+                            .min(4.0);
                     // Blend the liquid's pull with the heater's below the band
                     // and any heat pulses (which heat toward fully hot).
-                    let heat = HEATER_RATE * near;
+                    let heat = HEATER_RATE * near * (REF_RADIUS / blob.radius.max(0.01)).min(1.0);
                     let pulse = self.pulse_heat(blob.x, blob.y, blob.radius);
                     let rate = cool + heat + pulse;
                     let target = (cool * ambient_temp(blob.y) + heat * POOL_TEMP + pulse) / rate;
@@ -642,7 +678,7 @@ impl World {
             // Pinch vertically into top and bottom parts whose combined
             // footprint matches the parent; the top one is a touch hotter
             // and faster, so they drift apart.
-            let top_share = self.rng.range(0.4, 0.6);
+            let top_share = self.rng.range(SPLIT_SHARE.0, SPLIT_SHARE.1);
             let parent = self.blobs[i].clone();
             let reach = SPLIT_REACH * parent.radius * parent.stretch;
             let mut top = parent.clone();
@@ -689,21 +725,23 @@ impl World {
             .count();
         let deep = self.pool_level() > self.deep_pool() * POOL_DEPTH;
         let max_buds = (1.5 * self.wall_width).round().max(1.0) as usize + usize::from(deep);
-        if (self.blobs.len() >= self.target_blobs() && !deep) || buds >= max_buds {
+        // A lamp with its blob count still buds a droplet when it has none
+        // afloat: droplets take little wax, and keep the sizes mixed.
+        let full = self.blobs.len() >= self.target_blobs() && !deep;
+        let droplet = full && !self.sizes_afloat().1 && self.blobs.len() <= self.target_blobs();
+        if (full && !droplet) || buds >= max_buds {
             return;
         }
-        self.bud_at(None);
+        self.bud_at(None, droplet);
     }
 
     /// Start a bud on the pool, near `x` or anywhere, if there's room and
-    /// wax for it.
-    fn bud_at(&mut self, x: Option<f64>) {
+    /// wax for it: a small one if `droplet`, else any size.
+    fn bud_at(&mut self, x: Option<f64>, droplet: bool) {
         if self.blobs.len() >= MAX_BLOBS {
             return;
         }
-        let target = (self.typical_radius() * self.bud_size())
-            .min(MAX_BUD * self.max_radius())
-            .max(2.0 * MELTED_RADIUS);
+        let target = self.bud_radius(droplet);
         if self.pool_area - self.min_pool_area() < 0.5 * PI * target * target {
             return;
         }
@@ -728,18 +766,44 @@ impl World {
         self.blobs.push(blob);
     }
 
-    /// A new blob's size, in typical radii: mostly middling, now and then a
-    /// big one or a small one.
-    fn bud_size(&mut self) -> f64 {
+    /// Whether the lamp has a big blob, and a small one, afloat or budding.
+    fn sizes_afloat(&self) -> (bool, bool) {
+        let typical = self.typical_radius();
+        let big = (BIG_BLOB * typical).min(0.85 * MAX_BUD * self.max_radius());
+        let size = |b: &Blob| match b.phase {
+            Phase::Budding { target } => target,
+            _ => b.radius,
+        };
+        (
+            self.blobs.iter().any(|b| size(b) >= big),
+            self.blobs.iter().any(|b| size(b) <= SMALL_BLOB * typical),
+        )
+    }
+
+    /// A new blob's radius: small if `droplet`, else mostly middling, now
+    /// and then a big one or a small one, and more likely whichever size
+    /// the lamp is missing.
+    fn bud_radius(&mut self, droplet: bool) -> f64 {
+        let typical = self.typical_radius();
+        let largest = MAX_BUD * self.max_radius();
+        let (has_big, has_small) = self.sizes_afloat();
         let pick = self.rng.unit();
-        let (lo, hi) = if pick < BIG_BUD_CHANCE {
+        let (lo, hi) = if droplet {
+            SMALL_BUD
+        } else if !has_big && pick < MISSING_SIZE_CHANCE {
+            BIG_BUD
+        } else if !has_small && pick < MISSING_SIZE_CHANCE {
+            SMALL_BUD
+        } else if pick < BIG_BUD_CHANCE {
             BIG_BUD
         } else if pick < BIG_BUD_CHANCE + SMALL_BUD_CHANCE {
             SMALL_BUD
         } else {
             BUD_SIZE
         };
-        self.rng.range(lo, hi)
+        (typical * self.rng.range(lo, hi))
+            .min(largest)
+            .max(MIN_BUD.min(0.5 * largest))
     }
 
     /// After a width change, nudge the pool so total wax matches the target.
@@ -829,11 +893,9 @@ impl World {
     /// at mixed temperatures, the rest of the wax in the pool.
     fn scatter_initial_blobs(&mut self) {
         let count = (self.target_blobs() * 3).div_ceil(4);
-        let typical = self.typical_radius();
-        let max_radius = MAX_BUD * self.max_radius();
         let mut afloat = 0.0;
         for _ in 0..count {
-            let radius = (typical * self.bud_size()).min(max_radius);
+            let radius = self.bud_radius(false);
             // A few tries at a spot that doesn't overlap anything.
             let (mut x, mut y) = (0.0, 0.0);
             for _ in 0..8 {

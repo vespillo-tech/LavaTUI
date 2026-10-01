@@ -229,6 +229,67 @@ fn long_run_shows_the_whole_cycle() {
     assert_sane(&world);
 }
 
+/// The tank, at aspects from a narrow side panel to a wide short strip,
+/// shows a few blobs of quite different sizes in any still frame, and now
+/// and then a big one, without getting busier or faster: free blobs span
+/// 3:1 or more over a run and at least 2:1 in most frames, and the widest
+/// is a third of the lamp across (or 0.4 of its height, in a wide one) much
+/// of the time.
+#[test]
+fn bleed_lamp_has_big_varied_blobs() {
+    for aspect in [0.6, 1.25, 2.0, 3.6] {
+        let (mut frames, mut varied, mut big) = (0, 0, 0);
+        let (mut count, mut speed, mut moving) = (0.0, 0.0, 0.0);
+        for seed in [3, 5, 9] {
+            let mut world = World::new(seed, aspect);
+            world.prewarm(120 * 20, DT);
+            let (mut smallest, mut largest) = (f64::MAX, 0.0_f64);
+            for _ in 0..180 {
+                world.run(60);
+                let free: Vec<f64> = (world.blobs.iter())
+                    .filter(|b| b.phase == Phase::Free)
+                    .map(|b| b.radius)
+                    .collect();
+                let lo = free.iter().copied().fold(f64::MAX, f64::min);
+                let hi = free.iter().copied().fold(0.0, f64::max);
+                (smallest, largest) = (smallest.min(lo), largest.max(hi));
+                frames += 1;
+                varied += usize::from(free.len() >= 2 && hi >= 2.0 * lo);
+                big += usize::from(2.0 * hi >= (aspect / 3.0).min(0.4));
+                count += world.blobs.len() as f64;
+                for b in world.blobs.iter().filter(|b| b.phase == Phase::Free) {
+                    speed += b.vy.abs();
+                    moving += 1.0;
+                }
+            }
+            assert!(
+                largest >= 3.0 * smallest,
+                "aspect {aspect} seed {seed}: sizes {smallest:.3}..{largest:.3}"
+            );
+            assert_sane(&world);
+        }
+        let share = |n: usize| n as f64 / f64::from(frames);
+        let (count, speed) = (count / f64::from(frames), speed / moving);
+        println!(
+            "aspect {aspect}: varied {:.2}, big {:.2}, {count:.1} blobs, |vy| {speed:.4}",
+            share(varied),
+            share(big)
+        );
+        assert!(
+            share(varied) >= 0.45,
+            "aspect {aspect}: varied {varied}/{frames}"
+        );
+        assert!(share(big) >= 0.4, "aspect {aspect}: big {big}/{frames}");
+        // About its blob count, give or take a bud and a melting blob.
+        let target = World::new(1, aspect).target_blobs() as f64;
+        assert!(
+            count <= 1.25 * target + 2.0,
+            "aspect {aspect}: {count:.1} blobs"
+        );
+        assert!(speed < 0.022, "aspect {aspect}: mean speed {speed:.4}");
+    }
+}
+
 #[test]
 fn resize_eases_walls_without_teleporting() {
     let mut world = World::new(8, 2.0);

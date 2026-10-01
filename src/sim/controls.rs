@@ -158,7 +158,7 @@ impl World {
             strength: 1.0,
         });
         if y < self.pool_level() + PULSE_POOL_BAND && self.reseed != Some(Reseed::Melting) {
-            self.bud_at(Some(x));
+            self.bud_at(Some(x), false);
         }
     }
 
