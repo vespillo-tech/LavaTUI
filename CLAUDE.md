@@ -258,9 +258,12 @@ numbers); `docs/design.md` is the layout/visual contract.
 - `media/`    — now playing (platform-neutral; backends behind `cfg`):
                 `MediaSource` (`snapshot()` a short lock, `send(Command)`
                 queued + applied optimistically, `capabilities()`),
-                `detect()` (macOS: `Polled` over the Spotify AppleScript
-                backend, which never launches Spotify and can't
-                shuffle/repeat; elsewhere `Unavailable(Unsupported)`),
+                `detect()` picks a backend: macOS `spotify.rs` (one
+                long-lived `osascript` fed requests on stdin, never
+                launches Spotify, can't shuffle/repeat), Linux `mpris.rs`
+                (any MPRIS player via zbus, Spotify first), Windows
+                `smtc.rs` (system media controls, Spotify first; no
+                volume/art/URIs); `capabilities()` says what each can do,
                 `FakeSource` for tests, `art.rs`: `ArtLoader` (cover fetch
                 https-only on its thread, disk cache in
                 `$XDG_CACHE_HOME/lavatui/art`, decoded to 64 px `Art`,
