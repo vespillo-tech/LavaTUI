@@ -163,7 +163,7 @@ const MAX_SPEED: f64 = 0.3;
 const STRETCH_RANGE: (f64, f64) = (0.6, 2.3);
 /// Stretch follows velocity: tall when moving vertically, wide when moving
 /// sideways, relaxing at `STRETCH_RELAX` per second. A hot blob at full
-/// speed (~0.06/s) aims for about 1.7.
+/// speed (~0.07/s) aims for about 1.8.
 const STRETCH_GAIN: f64 = 12.0;
 const STRETCH_RELAX: f64 = 0.6;
 
@@ -233,10 +233,24 @@ pub fn ambient_temp(y: f64) -> f64 {
 fn pool_surface(level: f64, x: f64, floor: f64, time: f64) -> f64 {
     let humps = (floor / POOL_HUMP).round().max(1.0);
     let s = (x / floor + 0.5) * humps;
-    let mound = POOL_MOUND * (1.0 + 0.3 * (time * 0.09).sin()) * level.min(MOUND_DEPTH);
-    let ripple = (x * 9.0 + time * 0.21).sin() + 0.6 * (x * 23.0 - time * 0.37).sin();
-    let heap = (2.0 * PI * s).cos() - 0.3 * (2.0 * PI * 1.7 * s + time * 0.04).sin();
+    let breathe = 1.0 + MOUND_BREATHE * (time * 0.09).sin();
+    let mound = POOL_MOUND * breathe * level.min(MOUND_DEPTH);
+    let heap = (2.0 * PI * s).cos() - MOUND_SKEW * (2.0 * PI * 1.7 * s + time * 0.04).sin();
+    let ripple = (x * 9.0 + time * 0.21).sin() + RIPPLE_OVERTONE * (x * 23.0 - time * 0.37).sin();
     level - mound * heap + POOL_WAVE * ripple
+}
+
+/// How far the mounds can breathe, and the skew that makes them uneven.
+const MOUND_BREATHE: f64 = 0.3;
+const MOUND_SKEW: f64 = 0.3;
+const RIPPLE_OVERTONE: f64 = 0.6;
+/// The most a mound can heap above (or dip below) the mean level, in
+/// multiples of `level.min(MOUND_DEPTH)`: full breath times full heap.
+const MAX_MOUND: f64 = (1.0 + MOUND_BREATHE) * (1.0 + MOUND_SKEW) * POOL_MOUND;
+
+/// Highest the [`pool_surface`] at mean `level` can reach anywhere.
+fn pool_ceiling(level: f64) -> f64 {
+    level + MAX_MOUND * level.min(MOUND_DEPTH) + (1.0 + RIPPLE_OVERTONE) * POOL_WAVE
 }
 
 /// Event counters, for tests and a debug HUD.
@@ -411,10 +425,6 @@ impl World {
     /// grow this much faster.
     fn pool_surplus(&self) -> f64 {
         (self.pool_level() / (POOL_DEPTH * self.heat_deep_pool())).clamp(1.0, 4.0)
-    }
-
-    fn pool_surface(&self, level: f64, x: f64) -> f64 {
-        pool_surface(level, x, self.bottom_width(), self.time)
     }
 
     fn min_pool_area(&self) -> f64 {
@@ -760,7 +770,8 @@ impl World {
             }
         };
         // Just under the surface, where the bud's first step puts it.
-        let y = self.pool_surface(self.pool_level(), x) - 0.7 * MELTED_RADIUS;
+        let surface = pool_surface(self.pool_level(), x, self.bottom_width(), self.time);
+        let y = surface - 0.7 * MELTED_RADIUS;
         let blob = self.new_blob(x, y, MELTED_RADIUS, POOL_TEMP, Phase::Budding { target });
         self.pool_area -= blob.area();
         self.blobs.push(blob);
