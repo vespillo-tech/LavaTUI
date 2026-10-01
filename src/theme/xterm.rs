@@ -168,14 +168,19 @@ fn search_pair(c: Rgb) -> Pair {
     let x = Lab::of(c);
     let hues = Hues::of(c);
     let xl = linear(c);
-    let mut ranked: Vec<(f32, usize)> = cands
-        .iter()
-        .enumerate()
-        .filter(|(_, cand)| hues.allow(cand.lab))
-        .map(|(i, cand)| (distance(x, cand.lab), i))
-        .collect();
-    ranked.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let (single, best) = ranked[0];
+    // At most 240 candidates. Keep cache misses off the allocator; an
+    // explicit index tie-break preserves the old stable sort's order.
+    let mut storage = [(0.0, 0usize); 240];
+    let mut len = 0;
+    for (i, cand) in cands.iter().enumerate() {
+        if hues.allow(cand.lab) {
+            storage[len] = (distance(x, cand.lab), i);
+            len += 1;
+        }
+    }
+    let ranked = &mut storage[..len];
+    let rank = |a: &(f32, usize), b: &(f32, usize)| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1));
+    let &(single, best) = ranked.iter().min_by(|a, b| rank(a, b)).unwrap();
     let alone = Pair {
         near: 16 + best as u8,
         far: 16 + best as u8,
@@ -187,10 +192,12 @@ fn search_pair(c: Rgb) -> Pair {
     if x.l > DARK || chroma < TINT || cands[best].lab.chroma() > HUE_KEPT * chroma {
         return alone;
     }
+    // Most misses need just one index; only sort when a pair is useful.
+    ranked.sort_unstable_by(rank);
     let mut found = (single * GAIN, alone);
     for &(_, a) in ranked.iter().take(NEAR_ENDS) {
         let ca = &cands[a];
-        for &(_, b) in &ranked {
+        for &(_, b) in ranked.iter() {
             let cb = &cands[b];
             let spread = distance(ca.lab, cb.lab);
             if spread < SAME {
@@ -323,6 +330,7 @@ struct Lab {
     l: f32,
     a: f32,
     b: f32,
+    chroma: f32,
 }
 
 impl Lab {
@@ -336,15 +344,18 @@ impl Lab {
         let l = (0.412_221_46 * r + 0.536_332_55 * g + 0.051_445_995 * b).cbrt();
         let m = (0.211_903_5 * r + 0.680_699_5 * g + 0.107_396_96 * b).cbrt();
         let s = (0.088_302_46 * r + 0.281_718_85 * g + 0.629_978_7 * b).cbrt();
+        let a = 1.977_998_5 * l - 2.428_592_2 * m + 0.450_593_7 * s;
+        let b = 0.025_904_037 * l + 0.782_771_77 * m - 0.808_675_77 * s;
         Lab {
             l: 0.210_454_26 * l + 0.793_617_8 * m - 0.004_072_047 * s,
-            a: 1.977_998_5 * l - 2.428_592_2 * m + 0.450_593_7 * s,
-            b: 0.025_904_037 * l + 0.782_771_77 * m - 0.808_675_77 * s,
+            a,
+            b,
+            chroma: a.hypot(b),
         }
     }
 
     fn chroma(self) -> f32 {
-        self.a.hypot(self.b)
+        self.chroma
     }
 }
 
@@ -382,3 +393,6 @@ pub fn rgb(i: u8) -> Rgb {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

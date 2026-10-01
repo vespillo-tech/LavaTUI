@@ -16,10 +16,16 @@ use super::bayer;
 use crate::theme::Theme;
 
 pub fn resolve(theme: &Theme, area: Rect, buf: &mut Buffer) {
+    if area.is_empty() {
+        return;
+    }
     for cy in 0..area.height {
-        for cx in 0..area.width {
-            let cell = &mut buf[(area.x + cx, area.y + cy)];
-            let (x, y) = (usize::from(cx), usize::from(cy));
+        let start = buf.index_of(area.x, area.y + cy);
+        for (x, cell) in buf.content[start..start + usize::from(area.width)]
+            .iter_mut()
+            .enumerate()
+        {
+            let y = usize::from(cy);
             let pixel = |c: Color, row: usize| theme.dither(c, bayer(x, 2 * y + row));
             let (fg, bg) = (cell.fg, cell.bg);
             match cell.symbol() {

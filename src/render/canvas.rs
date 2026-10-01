@@ -47,10 +47,27 @@ impl Canvas<'_> {
     /// Call `f` once for every cell of the area, row by row.
     #[inline]
     pub fn for_each_cell(&self, buf: &mut Buffer, mut f: impl FnMut(At, &mut Cell)) {
+        let width = usize::from(self.area.width);
+        if width == 0 || self.area.height == 0 {
+            return;
+        }
+        let gx = self.width / width;
+        let gy = self.height / usize::from(self.area.height);
+        let base = self.theme.color(LIQUID);
         for cy in 0..usize::from(self.area.height) {
-            for cx in 0..usize::from(self.area.width) {
-                let at = self.cell_at(cx, cy);
-                f(at, self.cell_mut(buf, &at));
+            // Validate/index once per row, rather than through Buffer's
+            // coordinate lookup for every cell. The lamp may be offset
+            // within a wider buffer, so keep the buffer's row stride.
+            let start = buf.index_of(self.area.x, self.area.y + cy as u16);
+            for (cx, cell) in buf.content[start..start + width].iter_mut().enumerate() {
+                let at = At {
+                    cx,
+                    cy,
+                    x: gx * cx,
+                    y: gy * cy,
+                    base,
+                };
+                f(at, cell);
             }
         }
     }

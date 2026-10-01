@@ -533,6 +533,56 @@ fn bench_fill() {
     }
 }
 
+/// Long, hot runs including narrow/wide resize bursts: correlate slow
+/// steps with topology events rather than assuming pairwise work hitches.
+#[test]
+#[ignore = "simulation outlier benchmark"]
+fn bench_step_outliers() {
+    use std::time::Instant;
+    for aspect in [0.4, 80.0 / 48.0, 160.0 / 80.0, 250.0 / 140.0, 10.0] {
+        let mut world = World::new(7, aspect);
+        world.set_heat(5);
+        world.prewarm(7200, DT);
+        let initial = world.stats();
+        let mut times = Vec::with_capacity(72_000);
+        let (mut max_blobs, mut event_max, mut quiet_max) = (0, 0, 0);
+        for i in 0..72_000 {
+            if i % 7200 == 0 {
+                world.set_aspect(if i % 14_400 == 0 { 0.4 } else { aspect });
+            }
+            if i % 1200 == 0 {
+                world.heat_pulse(0.5, 0.98);
+            }
+            let before = world.stats();
+            let start = Instant::now();
+            world.step(DT);
+            let ns = start.elapsed().as_nanos() as u64;
+            times.push(ns);
+            max_blobs = max_blobs.max(world.blobs.len());
+            if before != world.stats() {
+                event_max = event_max.max(ns);
+            } else {
+                quiet_max = quiet_max.max(ns);
+            }
+        }
+        times.sort_unstable();
+        println!(
+            "aspect {aspect:.3} step mean/p99/max us {:.2}/{:.2}/{:.2}, event/quiet max {:.2}/{:.2}, max_blobs {max_blobs}, events {:?}",
+            times.iter().sum::<u64>() as f64 / times.len() as f64 / 1000.0,
+            times[times.len() * 99 / 100] as f64 / 1000.0,
+            times[times.len() - 1] as f64 / 1000.0,
+            event_max as f64 / 1000.0,
+            quiet_max as f64 / 1000.0,
+            (
+                world.stats().budded - initial.budded,
+                world.stats().merged - initial.merged,
+                world.stats().split - initial.split,
+                world.stats().melted - initial.melted
+            ),
+        );
+    }
+}
+
 // --- controls ------------------------------------------------------------
 
 /// Mean blob count and mean |vy| of free blobs over `secs` seconds, sampled
