@@ -14,6 +14,7 @@ use ratatui::widgets::{Block, BorderType, Clear, Widget};
 
 use crate::app::Model;
 use crate::theme::{ColorDepth, Rgb, Role};
+use crate::ui::chrome::fit_words;
 use crate::ui::keymap::{KEYMAP, Section};
 use crate::ui::layout::SizeTier;
 
@@ -107,6 +108,18 @@ fn body(area: Rect) -> Option<(Vec<Vec<Line>>, Rect)> {
     }
 }
 
+/// Every cell the help draws on (or dims under): chrome there hides.
+pub fn footprint(area: Rect) -> Option<Rect> {
+    if area.is_empty() {
+        return None;
+    }
+    Some(match mode(area) {
+        Mode::Line => Rect::new(area.x, area.y, area.width, 1),
+        Mode::Full => area,
+        Mode::Sheet(sheet) => sheet,
+    })
+}
+
 /// Furthest the help can scroll at this size.
 pub fn max_scroll(area: Rect) -> u16 {
     body(area).map_or(0, |(cols, inner)| {
@@ -133,7 +146,9 @@ pub fn draw(buf: &mut Buffer, area: Rect, scroll: u16, model: &Model) {
             for n in (1..=items.len()).rev() {
                 let s = items[..n].join(" · ");
                 if s.chars().count() <= usize::from(area.width) {
-                    buf.set_style(Rect::new(area.x, area.y, area.width, 1), bg);
+                    let line = Rect::new(area.x, area.y, area.width, 1);
+                    Clear.render(line, buf);
+                    buf.set_style(line, bg);
                     buf.set_string(area.x, area.y, s, dim.patch(bg));
                     break;
                 }
@@ -184,12 +199,14 @@ pub fn draw(buf: &mut Buffer, area: Rect, scroll: u16, model: &Model) {
                     buf.set_stringn(x, y, s.title(), usize::from(col_w), dim);
                 }
                 Line::Key { keys, label, key_w } => {
-                    // The whole line or nothing: never a key without its label.
+                    // Never a key without its label: a long label sheds
+                    // trailing words (`frame: auto/glass/bleed` → `frame`),
+                    // and a key with no room for any is left out.
                     let lx = x + key_w as u16 + 2;
                     let room = usize::from((x + col_w).saturating_sub(lx + 1));
-                    if label.chars().count() <= room {
+                    if let Some(label) = fit_words(label, room) {
                         buf.set_string(x, y, keys, accent);
-                        buf.set_string(lx, y, label, text);
+                        buf.set_string(lx, y, label.trim_end_matches(':'), text);
                     }
                 }
                 Line::Blank => {}

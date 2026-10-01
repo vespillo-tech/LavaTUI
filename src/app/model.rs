@@ -18,9 +18,10 @@ use crate::config::{self, ColorChoice, Overridden, Session, Settings, UiMode};
 use crate::render::StyleId;
 use crate::sim::{DEFAULT_HEAT, Field, HEAT_LEVELS, Shape, SimSpeed, World};
 use crate::theme::{ColorDepth, Palette, Theme};
-use crate::timing::FixedStep;
+use crate::timing::{FixedStep, Quality};
 use crate::ui::keymap::{Action, InputMode};
 use crate::ui::layout::{self, ChipKind, LampFrame, Layout, LayoutInput, SizeTier};
+use crate::ui::picker::{self, Hit, Placement};
 
 /// Simulation rate. Fixed; unrelated to the render frame rate.
 pub const SIM_HZ: u32 = 120;
@@ -42,9 +43,13 @@ const SLEEP_MIN: Duration = Duration::from_secs(2);
 const SAVE_DELAY: Duration = Duration::from_secs(1);
 /// Speed changes ease in with this time constant (~95 % in 0.5 s).
 const SPEED_EASE: f64 = 0.17;
-/// Frame rates when nothing needs 60 fps (§7).
+/// Frame rate in the background (§7).
 const UNFOCUSED_FPS: u32 = 10;
-const FROZEN_FPS: u32 = 2;
+/// Two clicks on the same picker item this close together keep it.
+const DOUBLE_CLICK: Duration = Duration::from_millis(400);
+/// Frozen frames wake this long after the clock ticks over, so the new
+/// minute (or second) is surely there to read.
+const WAKE_SLACK: Duration = Duration::from_millis(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PickerKind {
@@ -85,6 +90,8 @@ pub struct Picker {
     pub kind: PickerKind,
     pub cursor: usize,
     pub original: usize,
+    /// First item row shown in a sheet; follows the cursor.
+    pub top: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,6 +165,10 @@ pub struct Model {
     /// Cell height ÷ width: reported by the terminal, else from config.
     pub cell_aspect: f64,
     pub stats: FrameStats,
+    /// Adaptive quality (§7): reduced grid, then fps, while over budget.
+    pub quality: Quality,
+    /// The last picker item clicked, for double-clicks.
+    last_click: Option<(usize, Instant)>,
 
     pub now: Instant,
     started: Instant,
@@ -224,6 +235,8 @@ impl Model {
                 toast: None,
             },
             stats: FrameStats::default(),
+            quality: Quality::default(),
+            last_click: None,
             now,
             started: now,
             last_tick: now,
@@ -268,16 +281,86 @@ impl Model {
         SizeTier::of(self.layout.area) <= SizeTier::Tiny
     }
 
-    /// Frame rate to aim for right now (§7: unfocused 10, frozen low).
+    /// Frame rate to aim for right now (§7: adaptive quality, unfocused
+    /// 10). Frozen frames aren't paced at all: see [`Self::idle_until`].
     pub fn target_fps(&self) -> u32 {
-        let fps = self.settings.display.fps;
-        if self.frozen {
-            fps.min(FROZEN_FPS)
-        } else if !self.focused {
-            fps.min(UNFOCUSED_FPS)
-        } else {
+        let fps = self.quality.fps(self.settings.display.fps);
+        if self.focused {
             fps
+        } else {
+            fps.min(UNFOCUSED_FPS)
         }
+    }
+
+    /// Frozen (§7) with nothing in motion: the next frame isn't due until
+    /// what's on screen changes — the clock's minute (or second, when one
+    /// is shown), a running pomodoro's second, a pending save. Input wakes
+    /// the loop sooner. `None`: pace frames normally.
+    pub fn idle_until(&self) -> Option<Instant> {
+        let animating =
+            self.toast.is_some() || self.flash.is_some() || self.reset_pending.is_some();
+        if !self.frozen || animating {
+            return None;
+        }
+        let second = Duration::from_secs(1);
+        let into_second = self
+            .local
+            .wall
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_or(Duration::ZERO, |d| {
+                Duration::from_nanos(d.subsec_nanos().into())
+            });
+        let seconds_shown = self.settings.clock.show
+            && self
+                .layout
+                .panel
+                .is_some_and(|p| p.face.is_some_and(|(_, form)| form.seconds));
+        let to_clock = if seconds_shown {
+            second - into_second
+        } else {
+            let secs = u64::from(59 - self.local.time.second.min(59));
+            Duration::from_secs(secs) + second - into_second
+        };
+        let mut wake = self.now + to_clock;
+        if self.pomodoro.status() == Status::Running {
+            // The readout rounds up: it changes as `remaining` crosses a
+            // whole second.
+            let sub = self.pomodoro.remaining(self.now).subsec_nanos();
+            let to_tick = if sub == 0 {
+                second
+            } else {
+                Duration::from_nanos(sub.into())
+            };
+            wake = wake.min(self.now + to_tick);
+        }
+        if let Some(at) = self.save_at {
+            wake = wake.min(at);
+        }
+        Some(wake + WAKE_SLACK)
+    }
+
+    /// A frame was drawn: `frame_ms` of work, `dt` after the previous one.
+    /// Feeds adaptive quality (not while frozen: idle frames say nothing
+    /// about what a moving lamp costs).
+    pub fn frame_drawn(&mut self, frame_ms: f64, dt: Duration, now: Instant) {
+        self.stats.frame_ms = frame_ms;
+        if self.frozen {
+            return;
+        }
+        self.quality.set_workload(self.workload());
+        self.quality
+            .frame(frame_ms, dt, self.settings.display.fps, now);
+    }
+
+    /// Grid samples a frame of the lamp needs at full quality.
+    pub fn workload(&self) -> usize {
+        self.layout.lamp.map_or(0, |l| {
+            let grid = self.style.style().grid();
+            usize::from(l.view.width)
+                * usize::from(grid.x)
+                * usize::from(l.view.height)
+                * usize::from(grid.y)
+        })
     }
 
     pub fn minimal(&self) -> bool {
@@ -453,6 +536,32 @@ impl Model {
             Action::Down => picker.cursor = (picker.cursor + 1) % n,
             Action::Jump(i) if usize::from(i) < n => picker.cursor = usize::from(i),
             Action::Jump(_) => return true,
+            Action::Click { col, row } => {
+                let now = self.now;
+                match picker::hit(self.layout.area, &self.layout, &picker, col, row) {
+                    Some(Hit::Prev) => picker.cursor = (picker.cursor + n - 1) % n,
+                    Some(Hit::Next) => picker.cursor = (picker.cursor + 1) % n,
+                    Some(Hit::Item(i)) => {
+                        let double = self
+                            .last_click
+                            .is_some_and(|(j, at)| j == i && now - at < DOUBLE_CLICK);
+                        if double {
+                            self.last_click = None;
+                            return self.picker_action(
+                                Picker {
+                                    cursor: i,
+                                    ..picker
+                                },
+                                Action::Keep,
+                            );
+                        }
+                        self.last_click = Some((i, now));
+                        picker.cursor = i;
+                    }
+                    // Off the picker: swallowed, like any other key.
+                    None => return true,
+                }
+            }
             Action::Keep => {
                 self.overlay = Overlay::None;
                 self.persist_pick(picker.kind);
@@ -466,8 +575,20 @@ impl Model {
             _ => return false,
         }
         self.apply_pick(picker.kind, picker.cursor);
-        self.overlay = Overlay::Picker(picker);
+        self.overlay = Overlay::Picker(self.follow(picker));
         true
+    }
+
+    /// Scroll a sheet's list so the cursor stays in view.
+    fn follow(&self, mut picker: Picker) -> Picker {
+        let area = self.layout.area;
+        if let Some(Placement::Sheet { list, .. }) = picker::placement(area, &self.layout, &picker)
+        {
+            let n = picker.kind.items().len();
+            picker.top =
+                picker::visible_top(picker.top, picker.cursor, usize::from(list.height), n);
+        }
+        picker
     }
 
     fn help_action(&mut self, scroll: u16, action: Action) -> bool {
@@ -493,7 +614,12 @@ impl Model {
         match action {
             Action::Quit => self.quit = true,
             Action::Help => self.overlay = Overlay::Help { scroll: 0 },
-            Action::Close | Action::Up | Action::Down | Action::Keep | Action::Jump(_) => {}
+            Action::Close
+            | Action::Up
+            | Action::Down
+            | Action::Keep
+            | Action::Jump(_)
+            | Action::Click { .. } => {}
             Action::ToggleMinimal => {
                 s.ui.mode = match s.ui.mode {
                     UiMode::Full => UiMode::Minimal,
@@ -681,11 +807,13 @@ impl Model {
 
     fn open_picker(&mut self, kind: PickerKind) {
         let i = self.current(kind);
-        self.overlay = Overlay::Picker(Picker {
+        self.last_click = None;
+        self.overlay = Overlay::Picker(self.follow(Picker {
             kind,
             cursor: i,
             original: i,
-        });
+            top: 0,
+        }));
     }
 
     /// Index of the active item of a picker's kind.

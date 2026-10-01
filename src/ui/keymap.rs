@@ -55,6 +55,11 @@ pub enum Action {
         col: u16,
         row: u16,
     },
+    /// Mouse click in a picker: preview the item there (twice: keep it).
+    Click {
+        col: u16,
+        row: u16,
+    },
 }
 
 /// A key as written in the table.
@@ -269,6 +274,12 @@ fn mouse_action(mouse: &MouseEvent, mode: InputMode) -> Option<Action> {
             col: mouse.column,
             row: mouse.row,
         }),
+        (MouseEventKind::Down(MouseButton::Left), InputMode::Picker { .. }) => {
+            Some(Action::Click {
+                col: mouse.column,
+                row: mouse.row,
+            })
+        }
         _ => None,
     }
 }

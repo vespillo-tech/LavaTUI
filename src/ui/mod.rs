@@ -3,25 +3,33 @@
 //! pickers. Colours only ever come from the model's `Theme`.
 //!
 //! Draw order, back to front: background → lamp (+ glass) → panel / chip →
-//! status bar → toast → overlay.
+//! status bar → toast → HUD → overlay.
+//!
+//! Chrome never shares a cell with other chrome (§8.2): anything an open
+//! overlay would cover (or touch, for the panel and chip) is left out
+//! whole rather than clipped, and a toast outranks the corner HUD.
 
-mod chrome;
+pub(crate) mod chrome;
 mod glass;
 pub mod help;
 pub mod keymap;
 pub mod layout;
 mod panel;
-mod picker;
+pub mod picker;
+#[cfg(test)]
+mod render_tests;
 #[cfg(test)]
 mod tests;
 
 use ratatui::Frame;
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 
 use crate::app::{Model, Overlay};
 use crate::light::{Lamplight, Lighting};
-use crate::render::{LampState, LampView};
+use crate::render::{LampOptions, LampState, LampView};
 use crate::theme::{Ink, Role};
+use crate::ui::layout::Layout;
 
 /// How far the bleed liquid goes toward `accent` at the flash's peak. Under
 /// ½, so depths that can't blend (no liquid tint) never flip the whole tank.
@@ -77,6 +85,10 @@ pub fn draw(frame: &mut Frame, model: &Model, lamp: &mut LampState) {
                 .lamp
                 .lighting
                 .then_some(&Lamplight as &dyn Lighting),
+            options: LampOptions {
+                reduced: model.quality.reduced_grid(),
+                transparent: model.settings.theme.transparent,
+            },
         };
         frame.render_stateful_widget(view, l.view, lamp);
         if let Some(g) = l.glass {
@@ -92,23 +104,45 @@ pub fn draw(frame: &mut Frame, model: &Model, lamp: &mut LampState) {
     }
 
     let buf = frame.buffer_mut();
-    if let Some(p) = &layout.panel {
+    let covered = overlay_footprint(area, layout, model);
+    let free = |r: Rect, gap: u16| covered.is_none_or(|c| !picker::grow(c, gap).intersects(r));
+    if let Some(p) = layout.panel.as_ref().filter(|p| free(p.rect, 1)) {
         panel::draw_panel(buf, p, model);
     }
-    if let Some(c) = &layout.chip {
+    if let Some(c) = layout.chip.as_ref().filter(|c| free(c.rect, 1)) {
         panel::draw_chip(buf, c, model);
     }
-    if let Some(s) = layout.status {
+    if let Some(s) = layout.status.filter(|&s| free(s, 0)) {
         chrome::draw_status(buf, s, model);
-    } else if model.hud {
-        chrome::draw_hud_corner(buf, area, model);
     }
-    if let (Some(t), Some(toast)) = (layout.toast, &model.toast) {
-        chrome::draw_toast(buf, t, toast, model);
+    let toast = layout
+        .toast
+        .zip(model.toast.as_ref())
+        .and_then(|(row, toast)| Some((chrome::toast_place(row, toast)?, toast)))
+        .filter(|((r, _), _)| free(*r, 0));
+    if let Some(((r, text), toast)) = &toast {
+        chrome::draw_toast(buf, *r, text, toast, model);
+    }
+    if layout.status.is_none()
+        && model.hud
+        && let Some(r) = chrome::hud_corner_rect(area, model)
+        && free(r, 0)
+        && toast.as_ref().is_none_or(|((t, _), _)| !t.intersects(r))
+    {
+        chrome::draw_hud_corner(buf, r, model);
     }
     match model.overlay {
         Overlay::None => {}
         Overlay::Help { scroll } => help::draw(buf, area, scroll, model),
         Overlay::Picker(p) => picker::draw(buf, area, layout, &p, model),
+    }
+}
+
+/// The cells the open overlay takes, if any.
+pub fn overlay_footprint(area: Rect, layout: &Layout, model: &Model) -> Option<Rect> {
+    match model.overlay {
+        Overlay::None => None,
+        Overlay::Help { .. } => help::footprint(area),
+        Overlay::Picker(p) => picker::placement(area, layout, &p).map(|p| p.footprint()),
     }
 }

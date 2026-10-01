@@ -210,7 +210,7 @@ pub struct LampState {
 /// This is the one seam the TUI uses:
 ///
 /// ```ignore
-/// frame.render_stateful_widget(LampView { field, style, theme, time, lighting: None }, area, &mut lamp_state);
+/// frame.render_stateful_widget(LampView { field, style, theme, time, lighting: None, options: LampOptions::default() }, area, &mut lamp_state);
 /// ```
 pub struct LampView<'a> {
     pub field: &'a Field,
@@ -219,6 +219,32 @@ pub struct LampView<'a> {
     pub time: f64,
     /// Optional lighting pass (lava-5ak).
     pub lighting: Option<&'a dyn Lighting>,
+    pub options: LampOptions,
+}
+
+/// How a [`LampView`] draws, beyond the style.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LampOptions {
+    /// Sample at half resolution per axis and upsample (adaptive quality,
+    /// docs/design.md §7).
+    pub reduced: bool,
+    /// Leave cells outside the container to the terminal's own background
+    /// (`theme.transparent`, §9) instead of painting `bg`.
+    pub transparent: bool,
+}
+
+/// Samples a frame of `n` grid pixels actually takes: the budget caps it,
+/// and a reduced grid takes a quarter.
+pub fn samples_taken(n: usize, reduced: bool) -> usize {
+    sample_budget(n, reduced).min(n)
+}
+
+fn sample_budget(n: usize, reduced: bool) -> usize {
+    if reduced {
+        SAMPLE_BUDGET.min(n.div_ceil(4))
+    } else {
+        SAMPLE_BUDGET
+    }
 }
 
 impl StatefulWidget for LampView<'_> {
@@ -235,10 +261,11 @@ impl StatefulWidget for LampView<'_> {
         let n = width * height;
 
         state.samples.resize(n, Sample::default());
-        if n <= SAMPLE_BUDGET {
+        let budget = sample_budget(n, self.options.reduced);
+        if n <= budget {
             self.field.fill(&mut state.samples, width, height);
         } else {
-            let k = (SAMPLE_BUDGET as f64 / n as f64).sqrt();
+            let k = (budget as f64 / n as f64).sqrt();
             let cw = ((width as f64 * k) as usize).max(1);
             let ch = ((height as f64 * k) as usize).max(1);
             state.coarse.resize(cw * ch, Sample::default());
@@ -275,8 +302,14 @@ impl StatefulWidget for LampView<'_> {
             time: self.time,
         };
         self.style.draw(&canvas, area, buf);
+        let outside = if self.options.transparent {
+            walls::clear_outside(shape, area, buf);
+            ratatui::style::Color::Reset
+        } else {
+            self.theme.role(Role::Bg)
+        };
         if self.theme.blends() {
-            walls::smooth(shape, self.theme, area, buf);
+            walls::smooth(shape, self.theme, outside, area, buf);
         }
     }
 }

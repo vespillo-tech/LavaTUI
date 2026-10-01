@@ -278,6 +278,7 @@ fn lamp_view_fills_area_and_stays_inside_at_all_sizes() {
                 theme: &theme,
                 time: 0.0,
                 lighting: None,
+                options: LampOptions::default(),
             };
             view.render(area, &mut buf, &mut state);
             for pos in outer.positions() {
@@ -315,6 +316,7 @@ fn lamp_view_handles_empty_and_clipped_areas() {
                 theme: &theme,
                 time: 0.0,
                 lighting: None,
+                options: LampOptions::default(),
             };
             view.render(area, &mut buf, &mut state);
         }
@@ -341,6 +343,7 @@ fn over_budget_upsamples() {
         theme: &theme,
         time: 0.0,
         lighting: None,
+        options: LampOptions::default(),
     }
     .render(area, &mut buf, &mut state);
     assert!(state.coarse.len() <= SAMPLE_BUDGET);
@@ -395,6 +398,7 @@ fn lighting_seam_reaches_styles() {
             theme: &theme,
             time: 0.0,
             lighting,
+            options: LampOptions::default(),
         };
         view.render(area, &mut buf, &mut state);
         buf
@@ -545,6 +549,7 @@ fn bench_lamp() {
                         theme: &theme,
                         time: f64::from(frame) / 60.0,
                         lighting,
+                        options: LampOptions::default(),
                     }
                     .render(area, &mut next, &mut state);
                     render_time += t0.elapsed();
@@ -596,6 +601,7 @@ fn lighting_stays_inside_the_glass() {
             theme: &theme,
             time,
             lighting,
+            options: LampOptions::default(),
         }
         .render(area, &mut buf, &mut state);
         buf
@@ -634,6 +640,7 @@ fn bottle_walls_are_half_cells_and_mirrored() {
             theme: &theme,
             time: 0.0,
             lighting: None,
+            options: LampOptions::default(),
         }
         .render(area, &mut buf, &mut state);
         let bg = theme.role(Role::Bg);
@@ -709,7 +716,7 @@ fn draw_synthetic_bottle(style: &dyn Style, theme: &Theme, area: Rect) -> Buffer
     let mut buf = Buffer::empty(area);
     style.draw(&canvas, area, &mut buf);
     if theme.blends() {
-        walls::smooth(Shape::Bottle, theme, area, &mut buf);
+        walls::smooth(Shape::Bottle, theme, theme.role(Role::Bg), area, &mut buf);
     }
     buf
 }
