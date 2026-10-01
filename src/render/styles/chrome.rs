@@ -10,7 +10,7 @@ use ratatui::style::Color;
 
 use super::{quantise, stepped_heat};
 use crate::render::cell::mark as mark_cell;
-use crate::render::{Canvas, Grid, LampStyle, coverage, wax_heat};
+use crate::render::{Canvas, Grid, LIQUID, LampStyle, coverage, wax_heat};
 use crate::sim::SURFACE;
 use crate::theme::{Ink, Role};
 
@@ -95,7 +95,7 @@ fn normalise(v: [f32; 3]) -> [f32; 3] {
 fn pixel(c: &Canvas, x: usize, y: usize) -> Color {
     let s = c.at(x, y);
     let cover = coverage(s.density);
-    let backdrop = c.theme.paint(c.backdrop(x, y));
+    let backdrop = c.theme.paint(LIQUID);
     if cover == 0.0 {
         return backdrop.color();
     }

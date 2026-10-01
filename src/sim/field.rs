@@ -25,7 +25,7 @@
 //! go. The pool is coloured hot where it is deep and cooler at its skin.
 
 use super::rng::hash;
-use super::{Phase, Shape, World, ambient_temp, pool_ceiling, pool_surface};
+use super::{Phase, World, ambient_temp, pool_ceiling, pool_surface};
 
 /// Density at a wax surface. Inside is `>= SURFACE`; a lone blob peaks at
 /// about 1.05 and overlaps go higher, so clamp before mapping to colour.
@@ -119,7 +119,6 @@ pub(super) struct BlobSnap {
 #[derive(Debug, Default)]
 pub struct Field {
     pub(super) blobs: Vec<BlobSnap>,
-    shape: Shape,
     view_width: f32,
     wall_width: f64,
     pool_level: f64,
@@ -177,7 +176,6 @@ impl Field {
             }
             self.blobs.push(snap);
         }
-        self.shape = world.shape;
         self.view_width = world.view_width as f32;
         self.wall_width = world.wall_width;
         self.pool_level = pool_level;
@@ -189,11 +187,6 @@ impl Field {
     #[cfg(test)]
     pub fn aspect(&self) -> f32 {
         self.view_width
-    }
-
-    /// Container shape, for masking the glass.
-    pub fn shape(&self) -> Shape {
-        self.shape
     }
 
     /// Sample one point (`u`, `v` normalised, `v` down) at full detail.
@@ -219,7 +212,7 @@ impl Field {
                 add_kernel(&mut acc, k, dx * dx * k.inv_x2 + k.qy(dy));
             }
         });
-        if self.in_container(f64::from(x), f64::from(y)) {
+        if self.in_container(f64::from(x)) {
             add_pool(
                 &mut acc,
                 self.pool_surface_at(x, px, self.pool_lift(px)) - y,
@@ -337,12 +330,12 @@ impl Field {
         if let Some((j0, _)) = span((1.0 - top) / px_h, rows as f32, rows) {
             for i in 0..cols {
                 let x = x_at(i);
+                if !self.in_container(f64::from(x)) {
+                    continue;
+                }
                 let surface = self.pool_surface_at(x, px, lift);
                 for j in j0..rows {
-                    let y = y_at(j);
-                    if self.in_container(f64::from(x), f64::from(y)) {
-                        add_pool(&mut out[j * cols + i], surface - y);
-                    }
+                    add_pool(&mut out[j * cols + i], surface - y_at(j));
                 }
             }
         }
@@ -355,8 +348,9 @@ impl Field {
         }
     }
 
-    fn in_container(&self, x: f64, y: f64) -> bool {
-        x.abs() <= 0.5 * self.wall_width * self.shape.width_fraction(y)
+    /// Whether `x` is between the walls (which lag the view on a resize).
+    fn in_container(&self, x: f64) -> bool {
+        x.abs() <= 0.5 * self.wall_width
     }
 }
 

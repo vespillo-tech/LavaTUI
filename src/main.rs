@@ -5,7 +5,6 @@ mod cli;
 mod clock;
 mod config;
 mod render;
-mod silhouette;
 mod sim;
 mod theme;
 mod timing;

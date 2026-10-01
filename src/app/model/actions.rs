@@ -9,7 +9,6 @@ use crate::clock::{self, Status, format_remaining};
 use crate::config::{Overridden, Settings, UiMode};
 use crate::sim::{DEFAULT_HEAT, SimSpeed};
 use crate::ui::keymap::Action;
-use crate::ui::layout::LampFrame;
 
 /// Mixed into the reseed time (the 64-bit golden ratio, as in SplitMix64),
 /// so presses close together still get far-apart seeds.
@@ -85,7 +84,6 @@ impl Model {
             Action::StylePicker => self.open_picker(PickerKind::Style),
             Action::FacePicker => self.open_picker(PickerKind::Face),
             Action::PalettePicker => self.open_picker(PickerKind::Palette),
-            Action::CycleFrame => self.cycle_frame(now),
             Action::ToggleClock => self.toggle(now, |s| &mut s.clock.show, CLOCK),
             Action::ToggleHour24 => self.toggle(now, |s| &mut s.clock.hour24, HOUR24),
             Action::PomodoroToggle => self.pomodoro_toggle(now),
@@ -143,26 +141,6 @@ impl Model {
         if self.minimal() {
             self.toast("minimal · m to return");
         }
-        self.changed(now);
-    }
-
-    /// Next frame mode; the toast says what it resolved to when that's
-    /// something else (`auto · glass`; forced glass too small: `glass ·
-    /// bleed`).
-    fn cycle_frame(&mut self, now: Instant) {
-        let frame = &mut self.settings.lamp.frame;
-        *frame = frame.next();
-        self.relayout(self.layout.area);
-        let resolved = match self.layout.lamp.map(|l| l.frame) {
-            Some(LampFrame::Glass) => "glass",
-            _ => "bleed",
-        };
-        let name = self.settings.lamp.frame.name();
-        self.toast(if name == resolved {
-            name.to_owned()
-        } else {
-            format!("{name} · {resolved}")
-        });
         self.changed(now);
     }
 
@@ -239,10 +217,9 @@ impl Model {
 
     /// A mouse click on the wax: warm it there.
     fn poke(&mut self, col: u16, row: u16) {
-        let Some(lamp) = self.layout.lamp else {
+        let Some(view) = self.layout.lamp else {
             return;
         };
-        let view = lamp.view;
         if !view.contains((col, row).into()) {
             return;
         }

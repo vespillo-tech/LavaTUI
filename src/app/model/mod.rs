@@ -19,11 +19,11 @@ use crate::clock::{
 use crate::config::store::Store;
 use crate::config::{self, ColorChoice, Overridden, Session, Settings};
 use crate::render::StyleId;
-use crate::sim::{Field, HEAT_LEVELS, Shape, SimSpeed, World};
+use crate::sim::{Field, HEAT_LEVELS, SimSpeed, World};
 use crate::theme::{ColorDepth, Palette, Theme};
 use crate::timing::{FixedStep, Quality};
 use crate::ui::keymap::InputMode;
-use crate::ui::layout::{self, ChipKind, LampFrame, Layout, LayoutInput, SizeTier};
+use crate::ui::layout::{self, ChipKind, Layout, LayoutInput, SizeTier};
 
 pub use pickers::{Picker, PickerKind};
 
@@ -157,7 +157,7 @@ impl Model {
         let settings = settings.sanitized();
         let sim_clock = FixedStep::new(SIM_HZ);
         let speed = SimSpeed::from_factor(settings.lamp.speed);
-        let mut world = World::new(seed, 1.0, Shape::Tank);
+        let mut world = World::new(seed, 1.0);
         world.set_heat(settings.lamp.heat);
         let mut model = Model {
             style: StyleId::by_name(&settings.lamp.style).unwrap_or_default(),
@@ -209,13 +209,12 @@ impl Model {
         model
     }
 
-    /// Build the world in this window's container and run it for a while,
-    /// so the first frame shows a lamp that has been going in this shape.
+    /// Build the world at this window's lamp aspect and run it for a
+    /// while, so the first frame shows a lamp that has been going.
     fn warm_up(&mut self, area: Rect, seed: u64) {
         self.relayout(area);
-        if let Some(lamp) = self.layout.lamp {
-            let aspect = layout::visual_aspect(lamp.view.width, lamp.view.height, self.cell_aspect);
-            self.world = World::new(seed, aspect, shape_for(lamp.frame));
+        if let Some(aspect) = self.lamp_aspect() {
+            self.world = World::new(seed, aspect);
             self.world.set_heat(self.settings.lamp.heat);
         }
         self.world.prewarm(PREWARM_STEPS, self.sim_clock.dt_secs());
@@ -314,10 +313,7 @@ impl Model {
     pub fn workload(&self) -> usize {
         self.layout.lamp.map_or(0, |l| {
             let grid = self.style.style().grid();
-            usize::from(l.view.width)
-                * usize::from(grid.x)
-                * usize::from(l.view.height)
-                * usize::from(grid.y)
+            usize::from(l.width) * usize::from(grid.x) * usize::from(l.height) * usize::from(grid.y)
         })
     }
 
@@ -409,7 +405,9 @@ impl Model {
         }
 
         self.relayout(area);
-        self.sync_world_shape();
+        if let Some(aspect) = self.lamp_aspect() {
+            self.world.set_aspect(aspect);
+        }
         let ease = 1.0 - (-elapsed.as_secs_f64() / SPEED_EASE).exp();
         self.speed_factor += (self.speed.factor() - self.speed_factor) * ease;
         if !self.frozen {
@@ -436,26 +434,24 @@ impl Model {
         let input = LayoutInput {
             minimal: self.minimal(),
             status_bar: self.settings.ui.status_bar,
-            frame: self.settings.lamp.frame,
             show_clock: self.settings.clock.show,
             face: self.face,
             hour24: self.settings.clock.hour24,
             chip: chip.map(|(kind, text)| (kind, text.chars().count() as u16)),
             minimal_clock: self.settings.minimal.clock,
             cell_aspect: self.cell_aspect,
-            prev_frame: self.layout.lamp.map(|lamp| lamp.frame),
         };
         layout::layout(area, &input)
     }
 
-    /// Match the sim's container to the layout's lamp.
-    fn sync_world_shape(&mut self) {
-        let Some(lamp) = self.layout.lamp else {
-            return;
-        };
-        let shape = shape_for(lamp.frame);
-        let aspect = layout::visual_aspect(lamp.view.width, lamp.view.height, self.cell_aspect);
-        self.world.set_shape(shape, aspect);
+    /// The laid-out lamp's visual aspect, which the sim's world follows.
+    fn lamp_aspect(&self) -> Option<f64> {
+        let lamp = self.layout.lamp?;
+        Some(layout::visual_aspect(
+            lamp.width,
+            lamp.height,
+            self.cell_aspect,
+        ))
     }
 
     fn phase_ended(&mut self, end: PhaseEnd, now: Instant) {
@@ -520,13 +516,6 @@ pub fn heat_toast(heat: u8) -> String {
 /// `speed ×2`, `speed ×0.25`.
 pub fn speed_toast(speed: SimSpeed) -> String {
     format!("speed ×{}", speed.factor())
-}
-
-fn shape_for(frame: LampFrame) -> Shape {
-    match frame {
-        LampFrame::Glass => Shape::Bottle,
-        LampFrame::Bleed => Shape::Tank,
-    }
 }
 
 fn palette_named(name: &str) -> &'static Palette {

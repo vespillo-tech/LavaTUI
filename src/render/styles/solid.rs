@@ -7,7 +7,7 @@
 use ratatui::buffer::Buffer;
 use ratatui::style::Color;
 
-use crate::render::{Canvas, Grid, LampStyle, coverage, wax_heat};
+use crate::render::{Canvas, Grid, LIQUID, LampStyle, coverage, wax_heat};
 use crate::theme::Ink;
 
 pub struct Solid;
@@ -26,7 +26,7 @@ fn pixel(c: &Canvas, x: usize, y: usize) -> Option<Color> {
     let cover = coverage(s.density);
     let wax = Ink::Wax(wax_heat(s.temp));
     if c.theme.blends() {
-        Some(c.theme.paint(c.backdrop(x, y)).mix(wax, cover).color())
+        Some(c.theme.paint(LIQUID).mix(wax, cover).color())
     } else {
         (cover >= 0.5).then(|| c.theme.color(wax))
     }

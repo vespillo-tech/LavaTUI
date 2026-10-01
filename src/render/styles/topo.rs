@@ -10,7 +10,7 @@ use ratatui::buffer::Buffer;
 
 use super::stepped_heat;
 use crate::render::cell::{braille, braille_dots, mark};
-use crate::render::{Canvas, Grid, LampStyle, wax_heat};
+use crate::render::{Canvas, Grid, LIQUID, LampStyle, wax_heat};
 use crate::theme::{Ink, Role};
 
 pub struct Topo;
@@ -42,11 +42,11 @@ impl LampStyle for Topo {
             });
             let heat = stepped_heat(heat / 8.0);
             let bg = if c.theme.blends() {
-                tint(c, at.backdrop, level(density / 8.0), heat)
+                tint(c, level(density / 8.0), heat)
             } else {
                 at.base
             };
-            let lines = (bits != 0).then(|| (braille(bits), line(c, at.backdrop, top_line, heat)));
+            let lines = (bits != 0).then(|| (braille(bits), line(c, top_line, heat)));
             mark(cell, lines, bg);
         });
     }
@@ -66,8 +66,8 @@ fn level(density: f32) -> u8 {
 
 /// Band fill: liquid below the surface, then wax colour deepening with
 /// elevation.
-fn tint(c: &Canvas, backdrop: Ink, band: u8, heat: f32) -> ratatui::style::Color {
-    let paint = c.theme.paint(backdrop);
+fn tint(c: &Canvas, band: u8, heat: f32) -> ratatui::style::Color {
+    let paint = c.theme.paint(LIQUID);
     if band < SURFACE_BAND {
         return paint.color();
     }
@@ -77,11 +77,11 @@ fn tint(c: &Canvas, backdrop: Ink, band: u8, heat: f32) -> ratatui::style::Color
 
 /// Line colour: dim below the surface, the wax colour at and above it,
 /// brightest on the index line at the surface.
-fn line(c: &Canvas, backdrop: Ink, band: u8, heat: f32) -> ratatui::style::Color {
+fn line(c: &Canvas, band: u8, heat: f32) -> ratatui::style::Color {
     match band {
         b if b < SURFACE_BAND => {
             if c.theme.blends() {
-                c.theme.paint(backdrop).mix(Ink::Wax(0.0), 0.5).color()
+                c.theme.paint(LIQUID).mix(Ink::Wax(0.0), 0.5).color()
             } else {
                 c.theme.color(Ink::Role(Role::Dim))
             }

@@ -299,27 +299,6 @@ fn heat_and_speed_clamp_and_reset() {
     assert_eq!(m.settings.lamp.speed, 1.0);
 }
 
-#[test]
-fn frame_toast_shows_the_resolved_frame() {
-    let (mut m, t0) = model("frame");
-    m.update(Action::CycleFrame, t0);
-    assert_eq!(
-        m.toast.as_ref().unwrap().text,
-        "glass",
-        "no `glass · glass`"
-    );
-    m.update(Action::CycleFrame, t0);
-    assert_eq!(m.toast.as_ref().unwrap().text, "bleed");
-    assert_eq!(m.layout.lamp.unwrap().frame, LampFrame::Bleed);
-    m.update(Action::CycleFrame, t0);
-    assert_eq!(m.toast.as_ref().unwrap().text, "auto · glass");
-
-    // Forced glass with no room for it says what it got instead.
-    let (mut m, t0) = model_with(Session::default(), temp_config("frame-small"), 40, 10);
-    m.update(Action::CycleFrame, t0);
-    assert_eq!(m.toast.as_ref().unwrap().text, "glass · bleed");
-}
-
 /// lava-ebq.41: the chip names a break, so focus and break differ without
 /// colour, running or paused.
 #[test]
@@ -557,7 +536,7 @@ fn tiny_terminals_use_inline_pickers() {
 fn clicks_outside_the_wax_are_ignored() {
     let (mut m, t0) = model("poke");
     m.update(Action::Poke { col: 0, row: 0 }, t0);
-    let view = m.layout.lamp.unwrap().view;
+    let view = m.layout.lamp.unwrap();
     m.update(
         Action::Poke {
             col: view.x + view.width / 2,
@@ -569,17 +548,20 @@ fn clicks_outside_the_wax_are_ignored() {
 }
 
 #[test]
-fn resize_across_the_glass_threshold_switches_the_container() {
+fn resize_reshapes_the_lamp() {
     let (mut m, t0) = model("resize");
-    assert_eq!(m.layout.lamp.unwrap().frame, LampFrame::Glass);
+    let before = m.field.aspect();
     m.update(Action::Resize, t0);
     m.tick(
         t0 + Duration::from_millis(16),
         Rect::new(0, 0, 60, 12),
         local(),
     );
-    assert_eq!(m.layout.lamp.unwrap().frame, LampFrame::Bleed);
-    assert_eq!(m.field.shape(), Shape::Tank);
+    // The sim's view follows the new lamp at once (its walls ease after).
+    let lamp = m.layout.lamp.unwrap();
+    let aspect = crate::ui::layout::visual_aspect(lamp.width, lamp.height, m.cell_aspect);
+    assert_eq!(m.field.aspect(), aspect as f32);
+    assert_ne!(m.field.aspect(), before);
 }
 
 #[test]

@@ -66,7 +66,6 @@ pub fn draw_chip(buf: &mut Buffer, chip: &Chip, model: &Model) {
             Status::Running => Role::Accent,
             _ => Role::Text,
         },
-        ChipKind::Clock if chip.under => Role::Dim,
         ChipKind::Clock => Role::Text,
     };
     let bg = Style::new().bg(super::background(model));
@@ -75,9 +74,7 @@ pub fn draw_chip(buf: &mut Buffer, chip: &Chip, model: &Model) {
     if w > r.width {
         return;
     }
-    if !chip.under {
-        buf.set_string(r.x, r.y, " ".repeat(usize::from(r.width)), bg);
-    }
+    buf.set_string(r.x, r.y, " ".repeat(usize::from(r.width)), bg);
     let x = r.x + (r.width - w) / 2;
     buf.set_string(x, r.y, &text, theme.text(ink).patch(bg));
 }

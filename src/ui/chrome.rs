@@ -11,13 +11,12 @@ use crate::theme::{ColorDepth, Ink, Role};
 /// The status bar's key hints in display order, with their drop rank
 /// (lower drops first). `? help` always goes last.
 pub const HINTS: &[(&str, &str, u8)] = &[
-    ("s", "style", 6),
-    ("c", "clock", 5),
-    ("p", "palette", 4),
-    ("f", "frame", 2),
+    ("s", "style", 4),
+    ("c", "clock", 3),
+    ("p", "palette", 2),
     ("m", "minimal", 0),
-    ("␣", "pomo", 3),
-    ("?", "help", 7),
+    ("␣", "pomo", 1),
+    ("?", "help", 5),
 ];
 
 /// Hints shown while a picker is open (also the sheet's own hint row).

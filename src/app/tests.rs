@@ -121,7 +121,6 @@ fn resize_storm_through_the_frame_path() {
         let toggles = [
             Action::ToggleMinimal,
             Action::ToggleStatusBar,
-            Action::CycleFrame,
             Action::ToggleClock,
             Action::PomodoroToggle,
             Action::DebugHud,

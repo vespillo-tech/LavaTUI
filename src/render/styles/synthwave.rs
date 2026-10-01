@@ -9,7 +9,7 @@ use ratatui::buffer::Buffer;
 use ratatui::style::Color;
 
 use super::{is_edge, quantise};
-use crate::render::{Canvas, Grid, LampStyle, coverage, smoothstep, wax_heat};
+use crate::render::{Canvas, Grid, LIQUID, LampStyle, coverage, smoothstep, wax_heat};
 use crate::sim::SURFACE;
 use crate::theme::{Ink, Role};
 
@@ -51,7 +51,7 @@ fn pixel(c: &Canvas, x: usize, y: usize, scroll: f32) -> Option<Color> {
             let lit = !stripe(y, v) && (c.theme.has_color() || y.is_multiple_of(2));
             return lit.then(|| c.theme.color(Ink::Wax(sun(v, heat))));
         }
-        return (c.inside(x, y) && floor_line(c, x, y, scroll) >= 0.5)
+        return (floor_line(c, x, y, scroll) >= 0.5)
             .then(|| c.theme.color(Ink::Role(Role::Accent)));
     }
 
@@ -76,10 +76,7 @@ fn pixel(c: &Canvas, x: usize, y: usize, scroll: f32) -> Option<Color> {
 
 /// The sky and floor behind the wax.
 fn backdrop<'t>(c: &'t Canvas, x: usize, y: usize, v: f32, scroll: f32) -> crate::theme::Paint<'t> {
-    let paint = c.theme.paint(c.backdrop(x, y));
-    if !c.inside(x, y) {
-        return paint;
-    }
+    let paint = c.theme.paint(LIQUID);
     if v < HORIZON {
         // Dusk: deepening liquid, warming to pink just above the horizon.
         let t = v / HORIZON;

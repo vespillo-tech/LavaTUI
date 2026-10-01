@@ -624,7 +624,7 @@ mod tests {
     #[test]
     fn one_bad_value_keeps_the_rest_and_names_the_key() {
         for (section, bad) in [
-            ("lamp", "frame = \"round\""),
+            ("minimal", "clock = \"round\""),
             ("lamp", "heat = 300"),
             ("display", "fps = 60.0"),
             ("pomodoro", "focus_min = -5"),
@@ -675,7 +675,7 @@ mod tests {
     /// Give `key` some valid non-default value.
     fn set(s: &mut Settings, key: &str) {
         match key {
-            "lamp.frame" => s.lamp.frame = super::super::FrameMode::Bleed,
+            "minimal.clock" => s.minimal.clock = super::super::MinimalClock::Off,
             "lamp.heat" => s.lamp.heat = 4,
             "display.fps" => s.display.fps = 30,
             "pomodoro.focus_min" => s.pomodoro.focus_min = 50,
@@ -690,20 +690,20 @@ mod tests {
         let path = dir.join("config.toml");
         fs::write(
             &path,
-            "colour = 1\n[lamp]\nframe = 1\nheat = 99\nspeed = nan\n[pomodoro]\nfocus_min = 0\n",
+            "colour = 1\n[lamp]\nstyle = 1\nheat = 99\nspeed = nan\n[pomodoro]\nfocus_min = 0\n",
         )
         .unwrap();
         let mut store = Store::new(Some(path.clone()));
         let loaded = store.load();
         assert_eq!(
             loaded.problem.as_deref(),
-            Some("config: ignored lamp.frame +4 more · listed on exit")
+            Some("config: ignored lamp.style +4 more · listed on exit")
         );
         let p = path.display();
         assert_eq!(
             store.report(),
             [
-                format!("{p}: ignored lamp.frame"),
+                format!("{p}: ignored lamp.style"),
                 format!("{p}: lamp.heat 99 → 5"),
                 format!("{p}: lamp.speed nan → 1.0"),
                 format!("{p}: pomodoro.focus_min 0 → 1"),

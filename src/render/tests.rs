@@ -7,8 +7,8 @@ use ratatui::style::Color;
 use ratatui::widgets::StatefulWidget;
 
 use super::*;
-use crate::sim::{Shape, World, ambient_temp};
-use crate::theme::{ColorDepth, Palette, Role};
+use crate::sim::{World, ambient_temp};
+use crate::theme::{ColorDepth, Palette};
 
 const DEPTHS: [(ColorDepth, &str); 4] = [
     (ColorDepth::TrueColor, "truecolor"),
@@ -71,11 +71,9 @@ fn draw_synthetic_at(style: &StyleEntry, theme: &Theme, area: Rect, time: f64) -
     let height = usize::from(area.height * grid.y);
     let aspect = f32::from(area.width) / (2.0 * f32::from(area.height));
     let samples = synthetic(width, height, aspect);
-    let mask = vec![(0, width); height];
     let canvas = Canvas {
         area,
         samples: &samples,
-        mask: &mask,
         width,
         height,
         theme,
@@ -224,14 +222,10 @@ fn matrix_rain_stays_inside_the_wax() {
 /// area must be written and nothing outside it touched.
 #[test]
 fn lamp_view_fills_area_and_stays_inside_at_all_sizes() {
-    let mut world = World::new(7, 1.6, Shape::Tank);
+    let mut world = World::new(7, 1.6);
     world.prewarm(400, 1.0 / 120.0);
     let mut field = Field::default();
     field.prepare(&world, 0.5);
-    let mut bottle = World::new(7, 0.8, Shape::Bottle);
-    bottle.prewarm(400, 1.0 / 120.0);
-    let mut bottle_field = Field::default();
-    bottle_field.prepare(&bottle, 0.5);
 
     let theme = theme(ColorDepth::TrueColor);
     let mut state = LampState::default();
@@ -245,14 +239,13 @@ fn lamp_view_fills_area_and_stays_inside_at_all_sizes() {
         .flat_map(|w| (1..=40).step_by(3).chain([2, 40]).map(move |h| (w, h)))
         .collect();
     for id in StyleId::all() {
-        for (i, &(w, h)) in sizes.iter().enumerate() {
-            let field = if i % 2 == 0 { &field } else { &bottle_field };
+        for &(w, h) in &sizes {
             // Offset area inside a bigger buffer, with a sentinel border.
             let outer = Rect::new(0, 0, w + 4, h + 3);
             let area = Rect::new(2, 1, w, h);
             let mut buf = Buffer::filled(outer, sentinel.clone());
             let view = LampView {
-                field,
+                field: &field,
                 style: id.style(),
                 theme: &theme,
                 time: 0.0,
@@ -274,7 +267,7 @@ fn lamp_view_fills_area_and_stays_inside_at_all_sizes() {
 
 #[test]
 fn lamp_view_handles_empty_and_clipped_areas() {
-    let mut world = World::new(3, 1.0, Shape::Tank);
+    let mut world = World::new(3, 1.0);
     world.prewarm(10, 1.0 / 120.0);
     let mut field = Field::default();
     field.prepare(&world, 1.0);
@@ -303,7 +296,7 @@ fn lamp_view_handles_empty_and_clipped_areas() {
 /// Over the sample budget the field is sampled coarser and upsampled.
 #[test]
 fn over_budget_upsamples() {
-    let mut world = World::new(5, 2.0, Shape::Tank);
+    let mut world = World::new(5, 2.0);
     world.prewarm(300, 1.0 / 120.0);
     let mut field = Field::default();
     field.prepare(&world, 0.0);
@@ -400,7 +393,7 @@ fn bench_lamp() {
             let mut report = format!("{cols}x{rows} {depth_name}:");
             for id in StyleId::all() {
                 let aspect = f64::from(cols) / (2.0 * f64::from(rows));
-                let mut world = World::new(7, aspect, Shape::Tank);
+                let mut world = World::new(7, aspect);
                 world.prewarm(1200, 1.0 / 120.0);
                 let mut field = Field::default();
                 let mut state = LampState::default();
@@ -451,155 +444,6 @@ fn bench_lamp() {
     }
 }
 
-/// Bottle walls are cut at half columns: cells the wall passes through
-/// become quadrant glyphs in front of `bg`, mirrored left ↔ right, and
-/// only when the theme can show a liquid tint.
-#[test]
-fn bottle_walls_are_half_cells_and_mirrored() {
-    let mut world = World::new(9, 0.6, Shape::Bottle);
-    world.prewarm(300, 1.0 / 120.0);
-    let mut field = Field::default();
-    field.prepare(&world, 0.0);
-    let mut state = LampState::default();
-    let solid = StyleId::by_name("solid").unwrap().style();
-    let quadrant = |s: &str| "▗▖▄▝▐▞▟▘▚▌▙▀▜▛".contains(s) && s != " ";
-    for (cols, depth) in [
-        (23, ColorDepth::TrueColor),
-        (24, ColorDepth::Ansi256),
-        (23, ColorDepth::Ansi16),
-    ] {
-        let theme = theme(depth);
-        let area = Rect::new(0, 0, cols, 20);
-        let mut buf = Buffer::empty(area);
-        LampView {
-            field: &field,
-            style: solid,
-            theme: &theme,
-            time: 0.0,
-            options: LampOptions::default(),
-        }
-        .render(area, &mut buf, &mut state);
-        let bg = theme.role(Role::Bg);
-        let mut edges = 0;
-        for y in 0..area.height {
-            for x in 0..cols {
-                let cell = &buf[(x, y)];
-                if !theme.blends() {
-                    // No liquid tint: no reshaping, the glass draws a
-                    // `▕ │ ▏` edge instead (ui::glass). Solid only uses
-                    // half blocks.
-                    assert!("▀▄█ ".contains(cell.symbol()), "{depth:?}");
-                    continue;
-                }
-                if cell.bg != bg || !quadrant(cell.symbol()) {
-                    continue;
-                }
-                edges += 1;
-                let other = buf[(cols - 1 - x, y)].symbol();
-                let mirrored: String = cell
-                    .symbol()
-                    .chars()
-                    .map(|c| match c {
-                        '▐' => '▌',
-                        '▌' => '▐',
-                        '▗' => '▖',
-                        '▖' => '▗',
-                        '▝' => '▘',
-                        '▘' => '▝',
-                        '▟' => '▙',
-                        '▙' => '▟',
-                        '▜' => '▛',
-                        '▛' => '▜',
-                        c => c,
-                    })
-                    .collect();
-                assert_eq!(other, mirrored, "{cols} cols, row {y}, cell {x}");
-            }
-        }
-        if theme.blends() {
-            assert!(edges > 5, "{depth:?}: only {edges} half-cell edges");
-        }
-    }
-}
-
-/// The synthetic field drawn as `LampView` draws a bottle: mask from the
-/// walls, then the half-cell edge pass.
-fn draw_synthetic_bottle(style: &StyleEntry, theme: &Theme, area: Rect) -> Buffer {
-    let grid = style.grid();
-    let width = usize::from(area.width * grid.x);
-    let height = usize::from(area.height * grid.y);
-    let aspect = f32::from(area.width) / (2.0 * f32::from(area.height));
-    let mut samples = synthetic(width, height, aspect);
-    let mut mask = Vec::new();
-    walls::mask(Shape::Bottle, area, grid, &mut mask);
-    // The sim keeps wax inside its walls; so does this field.
-    for (row, &(lo, hi)) in samples.chunks_exact_mut(width).zip(&mask) {
-        for (x, s) in row.iter_mut().enumerate() {
-            if !(lo..hi).contains(&x) {
-                s.density = 0.0;
-            }
-        }
-    }
-    let canvas = Canvas {
-        area,
-        samples: &samples,
-        mask: &mask,
-        width,
-        height,
-        theme,
-        time: 0.0,
-    };
-    let mut buf = Buffer::empty(area);
-    style.draw(&canvas, &mut buf);
-    if theme.blends() {
-        walls::smooth(Shape::Bottle, theme, theme.role(Role::Bg), area, &mut buf);
-    }
-    buf
-}
-
-/// Outside the glass every style leaves the plain app background: no
-/// scanlines, vignette or tint (lava-ebq.12). Snapshots show glyphs plus a
-/// map of cells that show only `bg` (`.`), the half-cell wall
-/// glyphs (`|`), and everything else (`#`).
-#[test]
-fn bottle_snapshots_leave_the_outside_plain() {
-    let area = Rect::new(0, 0, 24, 14);
-    let mut mask = Vec::new();
-    walls::mask(Shape::Bottle, area, Grid::CELL, &mut mask);
-    for name in ["solid"] {
-        let style = StyleId::by_name(name).unwrap().style();
-        for (depth, depth_name) in [
-            (ColorDepth::TrueColor, "truecolor"),
-            (ColorDepth::None, "none"),
-        ] {
-            let theme = theme(depth);
-            let buf = draw_synthetic_bottle(style, &theme, area);
-            let bg = theme.role(Role::Bg);
-            let mut map = String::new();
-            for y in 0..area.height {
-                let (lo, hi) = mask[usize::from(y)];
-                for x in 0..area.width {
-                    let cell = &buf[(x, y)];
-                    let inside = (lo..hi).contains(&usize::from(x));
-                    // Shows nothing but `bg` (solid paints `█` in it).
-                    let plain = cell.bg == bg && (cell.symbol() == " " || cell.fg == bg);
-                    if !inside {
-                        assert!(plain, "{name} {depth_name}: ({x}, {y}) outside the glass");
-                    }
-                    map.push(match (plain, cell.bg == bg) {
-                        (true, _) => '.',
-                        (false, true) if theme.blends() => '|',
-                        _ => '#',
-                    });
-                }
-                map.push('\n');
-            }
-            let text = format!("{}-- bg\n{map}", glyphs(&buf));
-            assert_snapshot(&format!("bottle_{name}_{depth_name}"), &text);
-        }
-    }
-}
-
 /// Wax against the left wall only: column 0 is compared with itself, not
 /// wrapped to the far edge, so it gets no contour dots (lava-ebq.17).
 #[test]
@@ -612,13 +456,11 @@ fn topo_left_wall_has_no_wrapped_contours() {
             temp: 0.5,
         })
         .collect();
-    let mask = vec![(0, width); height];
     let theme = theme(ColorDepth::TrueColor);
     let area = Rect::new(0, 0, cols, rows);
     let canvas = Canvas {
         area,
         samples: &samples,
-        mask: &mask,
         width,
         height,
         theme: &theme,

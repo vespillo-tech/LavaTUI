@@ -8,20 +8,18 @@ use ratatui::layout::Rect;
 use super::chrome::{HINTS, fit_hints, fit_words};
 use super::layout::*;
 use crate::clock::{self, Face, Tier};
-use crate::config::{FrameMode, MinimalClock};
+use crate::config::MinimalClock;
 
 fn input(face: &dyn Face) -> LayoutInput<'_> {
     LayoutInput {
         minimal: false,
         status_bar: true,
-        frame: FrameMode::Auto,
         show_clock: true,
         face,
         hour24: true,
         chip: Some((ChipKind::Clock, 5)),
-        minimal_clock: MinimalClock::Under,
+        minimal_clock: MinimalClock::Corner,
         cell_aspect: 2.0,
-        prev_frame: None,
     }
 }
 
@@ -37,10 +35,7 @@ fn blocks() -> &'static dyn Face {
 fn check(l: &Layout, input: &LayoutInput) {
     let area = l.area;
     let (cols, rows) = (area.width, area.height);
-    let ctx = format!(
-        "{cols}x{rows} minimal={} frame={:?}",
-        input.minimal, input.frame
-    );
+    let ctx = format!("{cols}x{rows} minimal={}", input.minimal);
     let inside = |r: Rect, what: &str| {
         assert!(!r.is_empty(), "{ctx}: empty {what}");
         assert_eq!(r.intersection(area), r, "{ctx}: {what} {r:?} out of bounds");
@@ -51,26 +46,12 @@ fn check(l: &Layout, input: &LayoutInput) {
         assert!(l.status.is_none() && l.panel.is_none() && l.chip.is_none());
         return;
     };
-    inside(lamp.region, "lamp");
-    inside(lamp.view, "lamp view");
-    assert_eq!(
-        lamp.view.intersection(lamp.region),
-        lamp.view,
-        "{ctx}: view outside lamp"
-    );
-    match (lamp.frame, lamp.glass) {
-        (LampFrame::Glass, Some(g)) => {
-            assert_eq!(g.cap + g.bottle + g.base, lamp.region.height, "{ctx}");
-            assert!(lamp.region.height >= 12, "{ctx}: glass too small");
-            assert!(g.cap >= 2 && g.base >= 2, "{ctx}");
-            assert_eq!(
-                lamp.region.width % 2,
-                lamp.view.width % 2,
-                "{ctx}: bottle and lamp centre differently"
-            );
-        }
-        (LampFrame::Bleed, None) => assert_eq!(lamp.view, lamp.region),
-        other => panic!("{ctx}: frame/glass mismatch {other:?}"),
+    inside(lamp, "lamp");
+    // No frame: the lamp starts in the top-left corner and spans the
+    // screen's width unless the panel sits beside it.
+    assert_eq!((lamp.x, lamp.y), (area.x, area.y), "{ctx}: lamp inset");
+    if l.panel.is_none_or(|p| p.rect.x < lamp.right()) {
+        assert_eq!(lamp.width, cols, "{ctx}: lamp narrower than the screen");
     }
 
     let micro = !reaches(cols, rows, TINY);
@@ -82,7 +63,7 @@ fn check(l: &Layout, input: &LayoutInput) {
         );
         assert_eq!(s.height, 1);
         assert_eq!(s.y, rows - 1, "{ctx}: status not on the last row");
-        assert!(!s.intersects(lamp.region), "{ctx}: status over lamp");
+        assert!(!s.intersects(lamp), "{ctx}: status over lamp");
     } else {
         assert!(
             input.minimal || !input.status_bar || rows < 14 || cols < 30,
@@ -93,7 +74,7 @@ fn check(l: &Layout, input: &LayoutInput) {
     if let Some(p) = l.panel {
         assert!(!input.minimal && !micro, "{ctx}: panel in minimal/micro");
         inside(p.rect, "panel");
-        assert!(!p.rect.intersects(lamp.region), "{ctx}: panel over lamp");
+        assert!(!p.rect.intersects(lamp), "{ctx}: panel over lamp");
         if let Some(s) = l.status {
             assert!(!p.rect.intersects(s), "{ctx}: panel over status");
         }
@@ -166,11 +147,9 @@ fn every_size_is_clean() {
         },
         LayoutInput {
             face: faces[2],
-            frame: FrameMode::Glass,
             ..base
         },
         LayoutInput {
-            frame: FrameMode::Bleed,
             chip: Some((ChipKind::Pomodoro, 7)),
             ..base
         },
@@ -186,7 +165,6 @@ fn every_size_is_clean() {
         },
         LayoutInput {
             minimal: true,
-            frame: FrameMode::Glass,
             chip: Some((ChipKind::Pomodoro, 9)),
             ..base
         },
@@ -236,16 +214,14 @@ fn face_tier(l: &Layout) -> Option<(Tier, u16, u16)> {
 #[test]
 fn micro_is_lamp_only() {
     let l = at(16, 6, &input(blocks()));
-    let lamp = l.lamp.unwrap();
-    assert_eq!(lamp.frame, LampFrame::Bleed);
-    assert_eq!(lamp.region, Rect::new(0, 0, 16, 6));
+    assert_eq!(l.lamp, Some(Rect::new(0, 0, 16, 6)));
     assert!(l.status.is_none() && l.panel.is_none() && l.chip.is_none());
 }
 
 #[test]
-fn tiny_is_bleed_with_a_corner_chip() {
+fn tiny_is_the_lamp_with_a_corner_chip() {
     let l = at(20, 8, &input(blocks()));
-    assert_eq!(l.lamp.unwrap().region, Rect::new(0, 0, 20, 8));
+    assert_eq!(l.lamp, Some(Rect::new(0, 0, 20, 8)));
     assert!(l.status.is_none() && l.panel.is_none());
     let chip = l.chip.unwrap();
     assert_eq!(chip.rect, Rect::new(13, 7, 7, 1));
@@ -254,7 +230,6 @@ fn tiny_is_bleed_with_a_corner_chip() {
 #[test]
 fn small_50x16_has_status_and_chip_but_no_panel() {
     let l = at(50, 16, &input(blocks()));
-    assert_eq!(l.lamp.unwrap().frame, LampFrame::Bleed);
     assert!(l.status.is_some());
     assert!(l.panel.is_none(), "lamp would keep only 56 % of the width");
     assert!(l.chip.is_some());
@@ -263,44 +238,31 @@ fn small_50x16_has_status_and_chip_but_no_panel() {
 #[test]
 fn small_wide_72x18_gets_a_right_panel() {
     let l = at(72, 18, &input(blocks()));
-    let lamp = l.lamp.unwrap();
-    assert_eq!(lamp.frame, LampFrame::Bleed);
-    assert_eq!(lamp.region.width, 50);
+    assert_eq!(l.lamp.unwrap().width, 50);
     assert_eq!(face_tier(&l), Some((Tier::M, 17, 3)));
     assert!(l.panel.unwrap().date.is_none());
 }
 
 #[test]
-fn medium_80x24_is_glass_with_panel() {
+fn medium_80x24_gets_a_right_panel() {
     let l = at(80, 24, &input(blocks()));
-    let lamp = l.lamp.unwrap();
-    assert_eq!(lamp.frame, LampFrame::Glass);
-    assert_eq!(lamp.region.y, 1, "1-row top margin");
+    assert_eq!(l.lamp, Some(Rect::new(0, 0, 56, 23)));
+    assert_eq!(l.panel.unwrap().rect.x, 56);
     assert_eq!(face_tier(&l), Some((Tier::M, 17, 3)));
     assert_eq!(l.status.unwrap(), Rect::new(2, 23, 76, 1));
-    // Lamp, gutter and panel centred as one group.
-    let p = l.panel.unwrap().rect;
-    let left = lamp.region.x;
-    let right = 80 - p.right();
-    assert!(
-        left.abs_diff(right) <= 1,
-        "group not centred: {left} vs {right}"
-    );
 }
 
 #[test]
 fn large_120x36_gets_l_face_and_date() {
     let l = at(120, 36, &input(blocks()));
-    assert_eq!(l.lamp.unwrap().frame, LampFrame::Glass);
     assert_eq!(face_tier(&l), Some((Tier::L, 34, 5)));
     assert!(l.panel.unwrap().date.is_some());
-    assert_eq!(l.lamp.unwrap().region.y, 2, "2-row margins");
+    assert_eq!(l.lamp, Some(Rect::new(0, 0, 84, 35)));
 }
 
 #[test]
-fn wide_160x22_is_bleed_with_full_panel_and_no_date() {
+fn wide_160x22_has_the_full_panel_and_no_date() {
     let l = at(160, 22, &input(blocks()));
-    assert_eq!(l.lamp.unwrap().frame, LampFrame::Bleed);
     let p = l.panel.unwrap();
     assert_eq!(p.rect.width, 36);
     assert!(p.date.is_none());
@@ -310,16 +272,14 @@ fn wide_160x22_is_bleed_with_full_panel_and_no_date() {
 fn ultra_tall_34x56_puts_the_panel_below() {
     let l = at(34, 56, &input(blocks()));
     let lamp = l.lamp.unwrap();
-    assert_eq!(lamp.frame, LampFrame::Glass);
     let p = l.panel.unwrap();
-    assert!(p.rect.y >= lamp.region.bottom(), "panel not below the lamp");
-    assert_eq!(lamp.region.width, 30, "width-bound with 2-col clearance");
+    assert_eq!(p.rect.y, lamp.bottom() + 1, "a blank row above the panel");
+    assert_eq!(lamp.width, 34);
 }
 
 #[test]
-fn huge_250x70_is_glass_with_panel_and_date() {
+fn huge_250x70_has_the_panel_and_date() {
     let l = at(250, 70, &input(blocks()));
-    assert_eq!(l.lamp.unwrap().frame, LampFrame::Glass);
     let p = l.panel.unwrap();
     assert!(p.date.is_some());
     // The panel grows past 36 for the blocks XL face (51×8), no further.
@@ -352,35 +312,23 @@ fn narrow_faces_keep_the_36_col_panel_when_huge() {
 }
 
 #[test]
-fn minimal_80x24_centres_the_glass_with_the_clock_under_it() {
+fn minimal_is_the_lamp_with_a_corner_chip() {
     let v = LayoutInput {
         minimal: true,
         ..input(blocks())
     };
     let l = at(80, 24, &v);
-    let lamp = l.lamp.unwrap();
-    assert_eq!(lamp.frame, LampFrame::Glass);
+    assert_eq!(l.lamp, Some(Rect::new(0, 0, 80, 24)));
     assert!(l.status.is_none() && l.panel.is_none());
-    let chip = l.chip.unwrap();
-    assert!(chip.under);
-    assert!(
-        chip.rect.y > lamp.region.bottom(),
-        "a blank row between base and clock"
-    );
-    let lamp_centre = 2 * lamp.region.x + lamp.region.width;
-    let chip_centre = 2 * chip.rect.x + chip.rect.width;
-    assert!(lamp_centre.abs_diff(chip_centre) <= 1);
-    assert_eq!(lamp_centre.abs_diff(80), 0, "glass centred");
+    assert_eq!(l.chip.unwrap().rect, Rect::new(73, 23, 7, 1));
 }
 
 #[test]
-fn minimal_bleed_uses_the_corner_chip_and_off_hides_the_clock() {
+fn minimal_off_hides_the_clock_but_not_the_pomodoro() {
     let v = LayoutInput {
         minimal: true,
         ..input(blocks())
     };
-    let l = at(60, 12, &v);
-    assert!(!l.chip.unwrap().under);
     let off = LayoutInput {
         minimal_clock: MinimalClock::Off,
         ..v
@@ -394,25 +342,6 @@ fn minimal_bleed_uses_the_corner_chip_and_off_hides_the_clock() {
         at(60, 12, &pomo).chip.is_some(),
         "a running pomodoro still shows"
     );
-}
-
-#[test]
-fn forced_frames() {
-    let glass = LayoutInput {
-        frame: FrameMode::Glass,
-        ..input(blocks())
-    };
-    assert_eq!(at(160, 22, &glass).lamp.unwrap().frame, LampFrame::Glass);
-    assert_eq!(
-        at(40, 10, &glass).lamp.unwrap().frame,
-        LampFrame::Bleed,
-        "too small"
-    );
-    let bleed = LayoutInput {
-        frame: FrameMode::Bleed,
-        ..input(blocks())
-    };
-    assert_eq!(at(80, 24, &bleed).lamp.unwrap().frame, LampFrame::Bleed);
 }
 
 #[test]
@@ -437,8 +366,8 @@ fn hints_drop_in_spec_order() {
             .collect::<Vec<_>>()
             .join("")
     };
-    assert_eq!(keys(200), "scpfm␣?");
-    // m, f, ␣, p, c, s go first; ? help last.
+    assert_eq!(keys(200), "scpm␣?");
+    // m, ␣, p, c, s go first; ? help last.
     let mut seen = Vec::new();
     for avail in (0..=200).rev() {
         let k = keys(avail);
@@ -446,10 +375,7 @@ fn hints_drop_in_spec_order() {
             seen.push(k);
         }
     }
-    assert_eq!(
-        seen,
-        ["scpfm␣?", "scpf␣?", "scp␣?", "scp?", "sc?", "s?", "?", ""]
-    );
+    assert_eq!(seen, ["scpm␣?", "scp␣?", "scp?", "sc?", "s?", "?", ""]);
 }
 
 #[test]
@@ -465,7 +391,7 @@ fn toasts_drop_whole_words() {
 
 // --- snapshots ----------------------------------------------------------------
 
-/// A layout as a character map: `L` lamp, `b` bottle (lamp view), `P`
+/// A layout as a character map: `L` lamp, `P`
 /// panel padding, `f` face, `d` date, `o` pomodoro, `S` status, `c` chip,
 /// `t` toast row, `.` background.
 fn picture(l: &Layout) -> String {
@@ -482,10 +408,7 @@ fn picture(l: &Layout) -> String {
         fill(t, 't');
     }
     if let Some(lamp) = l.lamp {
-        fill(lamp.region, 'L');
-        if lamp.glass.is_some() {
-            fill(lamp.view, 'b');
-        }
+        fill(lamp, 'L');
     }
     if let Some(p) = l.panel {
         fill(p.rect, 'P');
@@ -544,24 +467,4 @@ fn snapshots_at_mockup_sizes() {
             );
         }
     }
-}
-
-#[test]
-fn auto_frame_has_hysteresis() {
-    let face = blocks();
-    let from = |prev| LayoutInput {
-        prev_frame: prev,
-        ..input(face)
-    };
-    let frame = |cols, rows, prev| at(cols, rows, &from(prev)).lamp.unwrap().frame;
-    // 80x22: 21 content rows, aspect 1.9 — glass stays glass, bleed stays bleed.
-    assert_eq!(frame(80, 22, None), LampFrame::Glass);
-    assert_eq!(frame(80, 22, Some(LampFrame::Glass)), LampFrame::Glass);
-    assert_eq!(frame(80, 22, Some(LampFrame::Bleed)), LampFrame::Bleed);
-    // Well inside, bleed goes back to glass; past the line, glass gives up.
-    assert_eq!(frame(80, 24, Some(LampFrame::Bleed)), LampFrame::Glass);
-    assert_eq!(frame(80, 20, Some(LampFrame::Glass)), LampFrame::Bleed);
-    // Same band on width: aspect 2.1 at 23 content rows.
-    assert_eq!(frame(97, 24, Some(LampFrame::Glass)), LampFrame::Glass);
-    assert_eq!(frame(97, 24, Some(LampFrame::Bleed)), LampFrame::Bleed);
 }

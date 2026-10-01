@@ -1,8 +1,8 @@
 //! Everything that touches the terminal: layout, the keymap, and drawing
-//! the [`Model`] — lamp, glass, panel, chip, status bar, toasts, help and
+//! the [`Model`] — lamp, panel, chip, status bar, toasts, help and
 //! pickers. Colours only ever come from the model's `Theme`.
 //!
-//! Draw order, back to front: background → lamp (+ glass) → panel / chip →
+//! Draw order, back to front: background → lamp → panel / chip →
 //! status bar → toast → HUD → overlay.
 //!
 //! Chrome never shares a cell with other chrome (§8.2): anything an open
@@ -10,7 +10,6 @@
 //! whole rather than clipped, and a toast outranks the corner HUD.
 
 pub(crate) mod chrome;
-mod glass;
 pub mod help;
 pub mod keymap;
 pub mod layout;
@@ -30,9 +29,9 @@ use crate::render::{LampOptions, LampState, LampView};
 use crate::theme::{Ink, Role};
 use crate::ui::layout::Layout;
 
-/// How far the bleed liquid goes toward `accent` at the flash's peak. Under
-/// ½, so depths that can't blend (no liquid tint) never flip the whole tank.
-const BLEED_FLASH: f32 = 0.35;
+/// How far the liquid goes toward `accent` at the flash's peak. Under ½,
+/// so depths that can't blend (no liquid tint) never flip the whole lamp.
+const FLASH: f32 = 0.35;
 
 /// Draw one frame. `lamp` is the lamp's scratch state, kept by the caller.
 ///
@@ -59,7 +58,7 @@ pub fn draw(frame: &mut Frame, model: &Model, lamp: &mut LampState) {
             .fg(theme.role(Role::Text)),
     );
 
-    if let Some(l) = &layout.lamp {
+    if let Some(l) = layout.lamp {
         draw_lamp(frame, l, model, lamp);
     }
 
@@ -98,19 +97,17 @@ pub fn draw(frame: &mut Frame, model: &Model, lamp: &mut LampState) {
     }
 }
 
-/// The lamp: the field in the current style and theme, then (in glass) the
-/// glass around it.
-fn draw_lamp(frame: &mut Frame, l: &layout::Lamp, model: &Model, lamp: &mut LampState) {
+/// The lamp: the field in the current style and theme.
+fn draw_lamp(frame: &mut Frame, area: Rect, model: &Model, lamp: &mut LampState) {
     let theme = &model.theme;
-    // Phase-change flash (§4.5): the glass flashes its metal; in bleed
-    // there's no metal, so the liquid pulses toward `accent` instead.
+    // Phase-change flash (§4.5): the liquid pulses toward `accent`.
     let flash = model.flash_level();
     let flashed;
-    let lamp_theme = if l.glass.is_none() && flash > 0.0 {
+    let lamp_theme = if flash > 0.0 {
         let liquid = theme.paint(Ink::Role(Role::Liquid));
         flashed = theme.with_role(
             Role::Liquid,
-            liquid.mix(Ink::Role(Role::Accent), BLEED_FLASH * flash),
+            liquid.mix(Ink::Role(Role::Accent), FLASH * flash),
         );
         &flashed
     } else {
@@ -123,13 +120,9 @@ fn draw_lamp(frame: &mut Frame, l: &layout::Lamp, model: &Model, lamp: &mut Lamp
         time: model.time(),
         options: LampOptions {
             reduced: model.quality.reduced_grid(),
-            transparent: model.settings.theme.transparent,
         },
     };
-    frame.render_stateful_widget(view, l.view, lamp);
-    if let Some(g) = l.glass {
-        glass::draw(frame.buffer_mut(), l, g, theme, flash);
-    }
+    frame.render_stateful_widget(view, area, lamp);
 }
 
 /// The app background chrome paints on: `bg`, or nothing when the theme

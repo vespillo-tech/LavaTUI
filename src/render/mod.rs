@@ -6,11 +6,9 @@
 //!    cell ([`Grid`]: half-block 1×2, braille 2×4, …).
 //! 2. The field is sampled at that grid into a reused buffer (or at a
 //!    reduced grid and upsampled, above [`SAMPLE_BUDGET`]).
-//! 3. The style draws the [`Canvas`] (samples + mask + theme) into the
-//!    buffer, cell by cell, inside its `Rect` only.
-//! 4. Cells the container's walls cut through are reshaped to half / quarter
-//!    cells (`walls`), so the bottle's silhouette is smooth.
-//! 5. In 256 colours, blended colours are ordered-dithered between two
+//! 3. The style draws the [`Canvas`] (samples + theme) into the buffer,
+//!    cell by cell, inside its `Rect` only.
+//! 4. In 256 colours, blended colours are ordered-dithered between two
 //!    xterm indices, pixel by pixel (`dither256`, [`Theme::dithering`]).
 //!
 //! Adding a style: one file in `styles/` implementing [`LampStyle`], plus
@@ -22,9 +20,8 @@ mod dither256;
 mod styles;
 #[cfg(test)]
 mod tests;
-mod walls;
 
-pub use canvas::{At, Canvas};
+pub use canvas::{At, Canvas, LIQUID};
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -178,7 +175,6 @@ pub fn smoothstep(t: f32) -> f32 {
 pub struct LampState {
     samples: Vec<Sample>,
     coarse: Vec<Sample>,
-    mask: Vec<(usize, usize)>,
 }
 
 /// The lamp as a widget: samples `field` at the style's grid and draws it.
@@ -201,9 +197,6 @@ pub struct LampOptions {
     /// Sample at half resolution per axis and upsample (adaptive quality,
     /// docs/design.md §7).
     pub reduced: bool,
-    /// Leave cells outside the container to the terminal's own background
-    /// (`theme.transparent`, §9) instead of painting `bg`.
-    pub transparent: bool,
 }
 
 /// Samples a frame of `n` grid pixels actually takes: the budget caps it,
@@ -249,26 +242,15 @@ impl StatefulWidget for LampView<'_> {
             upsample(&state.coarse, cw, ch, &mut state.samples, width, height);
         }
 
-        let shape = self.field.shape();
-        walls::mask(shape, area, grid, &mut state.mask);
-
         let canvas = Canvas {
             area,
             samples: &state.samples,
-            mask: &state.mask,
             width,
             height,
             theme,
             time: self.time,
         };
         self.style.draw(&canvas, buf);
-        if self.options.transparent {
-            walls::clear_outside(shape, area, buf);
-        }
-        let outside = theme.background(self.options.transparent);
-        if theme.blends() {
-            walls::smooth(shape, theme, outside, area, buf);
-        }
         if let Some(theme) = &dithering {
             dither256::resolve(theme, area, buf);
         }

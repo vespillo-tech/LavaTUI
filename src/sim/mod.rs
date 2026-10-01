@@ -6,12 +6,10 @@
 //! The lamp is always 1.0 tall: `y` runs from 0 (base, the heater) to 1
 //! (top). Width is the lamp's *visual* aspect (on-screen width ÷ height),
 //! centred on `x = 0`, so a blob that is round in world units is round on
-//! screen whatever the window size. In the tank (bleed) a terminal resize
-//! only changes the view width; the walls then ease to it over ~250 ms and
-//! push blobs along, so nothing teleports (docs/design.md §2.2). The bottle
-//! (glass) has a fixed aspect: resizing it only changes the sampling.
-//! Switching between the two keeps every blob that fits where it is (see
-//! [`World::set_shape`]).
+//! screen whatever the window size. The container is a straight-walled
+//! tank that fills the lamp's area: a terminal resize only changes the
+//! view width; the walls then ease to it over ~250 ms and push blobs
+//! along, so nothing teleports (docs/design.md §2.2).
 //!
 //! # Model
 //!
@@ -47,7 +45,6 @@ mod rng;
 
 use std::f64::consts::PI;
 
-use crate::silhouette::{self, BOTTLE_ASPECT};
 pub use blob::{Blob, Phase};
 pub use controls::SimSpeed;
 pub use controls::{DEFAULT_HEAT, HEAT_LEVELS};
@@ -148,12 +145,10 @@ const SPLIT_REACH: f64 = 0.55;
 /// No merging/melting for this long after a split or detaching.
 const COOLDOWN: f64 = 3.0;
 
-/// Largest blob radius (lamp heights), as a fraction of the narrowest width
-/// (it must fit the bottle's neck), and of the widest (two must fit side by
-/// side, or a narrow lamp jams).
+/// Largest blob radius (lamp heights), and as a fraction of the width (two
+/// must fit side by side, or a narrow lamp jams).
 const MAX_RADIUS: f64 = 0.16;
-const MAX_RADIUS_OF_WIDTH: f64 = 0.48;
-const MAX_RADIUS_OF_WIDEST: f64 = 0.25;
+const MAX_RADIUS_OF_WIDTH: f64 = 0.25;
 const MAX_BLOBS: usize = 40;
 
 /// Wall spring stiffness (1/s²).
@@ -181,43 +176,9 @@ const POOL_EASE: f64 = 0.5;
 /// Accepted lamp aspect range.
 const ASPECT_RANGE: (f64, f64) = (0.05, 20.0);
 
-/// Container shape.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Shape {
-    /// Straight walls; width follows the window ("bleed" frame).
-    #[default]
-    Tank,
-    /// The glass lamp's bottle profile (docs/design.md §2.1): the world is
-    /// the bottle's bounding box and the walls follow its curve.
-    Bottle,
-}
-
-impl Shape {
-    /// Container width at height `y` (0 base … 1 top), as a fraction of the
-    /// world width. Renderers use this to mask the bottle.
-    pub fn width_fraction(self, y: f64) -> f64 {
-        match self {
-            Shape::Tank => 1.0,
-            Shape::Bottle => silhouette::bottle_width(y),
-        }
-    }
-
-    /// World width for a lamp whose view is `aspect` wide: the bottle's is
-    /// fixed, the tank's follows the view.
-    fn world_width(self, aspect: f64) -> f64 {
-        match self {
-            Shape::Tank => aspect.clamp(ASPECT_RANGE.0, ASPECT_RANGE.1),
-            Shape::Bottle => BOTTLE_ASPECT,
-        }
-    }
-
-    /// Container area for a world `width` wide.
-    fn area(self, width: f64) -> f64 {
-        match self {
-            Shape::Tank => width,
-            Shape::Bottle => width * silhouette::bottle_area(),
-        }
-    }
+/// World width for a lamp whose view is `aspect` wide.
+fn world_width(aspect: f64) -> f64 {
+    aspect.clamp(ASPECT_RANGE.0, ASPECT_RANGE.1)
 }
 
 /// Liquid temperature at height `y`.
@@ -267,7 +228,6 @@ pub struct World {
     time: f64,
     /// Duration of the last step (for interpolating time).
     last_dt: f64,
-    shape: Shape,
     /// Width of the viewport (what the renderer maps onto the screen).
     view_width: f64,
     /// Width of the walls; eases toward `view_width`.
@@ -293,21 +253,19 @@ pub struct World {
 }
 
 impl World {
-    /// A fresh lamp `aspect` wide (visual width ÷ height; ignored for the
-    /// bottle, see [`BOTTLE_ASPECT`]), seeded so the same seed always plays
-    /// out the same way. Starts with some wax already
-    /// afloat; run [`World::prewarm`] to skip the opening entirely.
-    pub fn new(seed: u64, aspect: f64, shape: Shape) -> Self {
-        let width = shape.world_width(aspect);
+    /// A fresh lamp `aspect` wide (visual width ÷ height), seeded so the
+    /// same seed always plays out the same way. Starts with some wax
+    /// already afloat; run [`World::prewarm`] to skip the opening entirely.
+    pub fn new(seed: u64, aspect: f64) -> Self {
+        let width = world_width(aspect);
         let mut world = Self {
             time: 0.0,
             last_dt: 0.0,
-            shape,
             view_width: width,
             wall_width: width,
             pool_area: 0.0,
             prev_pool_level: 0.0,
-            wax_target: FILL * shape.area(width),
+            wax_target: FILL * width,
             blobs: Vec::with_capacity(MAX_BLOBS + 1),
             accel: Vec::with_capacity(MAX_BLOBS + 1),
             rng: Rng::new(seed),
@@ -365,13 +323,12 @@ impl World {
 
     /// The lamp's on-screen aspect changed. The view follows at once; walls
     /// ease over ~250 ms, pushing blobs, and the pool slowly adjusts so wax
-    /// stays at [`FILL`] of the container. A no-op for the bottle, whose
-    /// world never resizes.
+    /// stays at [`FILL`] of the container.
     pub fn set_aspect(&mut self, aspect: f64) {
-        let width = self.shape.world_width(aspect);
+        let width = world_width(aspect);
         if (width - self.view_width).abs() > 1e-9 {
             self.view_width = width;
-            self.wax_target = FILL * self.shape.area(width);
+            self.wax_target = FILL * width;
         }
     }
 
@@ -399,19 +356,16 @@ impl World {
 
     // --- geometry --------------------------------------------------------
 
-    fn half_width_at(&self, y: f64) -> f64 {
-        0.5 * self.wall_width * self.shape.width_fraction(y)
+    fn half_width(&self) -> f64 {
+        0.5 * self.wall_width
     }
 
     fn bottom_width(&self) -> f64 {
-        self.wall_width * self.shape.width_fraction(0.0)
+        self.wall_width
     }
 
     fn max_radius(&self) -> f64 {
-        let narrowest = self.wall_width * self.shape.width_fraction(1.0);
-        MAX_RADIUS
-            .min(MAX_RADIUS_OF_WIDTH * narrowest)
-            .min(MAX_RADIUS_OF_WIDEST * self.wall_width)
+        MAX_RADIUS.min(MAX_RADIUS_OF_WIDTH * self.wall_width)
     }
 
     /// Pool depth, in `POOL_DEPTH`s, past which the pool buds regardless
@@ -434,10 +388,7 @@ impl World {
     /// How many blobs the world aims for (docs/design.md §2.4).
     /// Scales with heat, which eases, so the count changes gradually.
     fn target_blobs(&self) -> usize {
-        let base = match self.shape {
-            Shape::Tank => (2.8 * self.wall_width).clamp(3.0, 16.0),
-            Shape::Bottle => 4.0,
-        };
+        let base = (2.8 * self.wall_width).clamp(3.0, 16.0);
         ((base * self.heat_blobs()).round() as usize).clamp(2, MAX_BLOBS)
     }
 
@@ -528,7 +479,7 @@ impl World {
             ay += buoyancy * size * (blob.temp - NEUTRAL_TEMP);
             ax += WANDER * (blob.wander_freq * self.time + blob.wander_phase).sin();
 
-            let half = self.half_width_at(blob.y);
+            let half = self.half_width();
             ax += WALL * ((-half + hx - blob.x).max(0.0) - (blob.x + hx - half).max(0.0));
             ay -= WALL * (blob.y + hy - 1.0).max(0.0);
 
@@ -557,6 +508,7 @@ impl World {
         let level = self.pool_level();
         let floor = self.bottom_width();
         let min_pool = self.min_pool_area();
+        let half = self.half_width();
         let (melt_rate, bud_time) = match self.reseed {
             Some(Reseed::Melting) => (controls::RESEED_MELT_RATE, BUD_TIME),
             Some(Reseed::Refill { .. }) => (MELT_RATE, BUD_TIME / controls::REFILL_BUD_SPEEDUP),
@@ -567,8 +519,7 @@ impl World {
                 continue;
             }
             // Walls that moved in on an attached blob nudge it along the pool.
-            let inside =
-                (0.5 * self.wall_width * self.shape.width_fraction(blob.y) - blob.radius).max(0.0);
+            let inside = (half - blob.radius).max(0.0);
             let excess = blob.x.abs() - inside;
             if excess > 0.0 {
                 blob.x -= blob.x.signum() * excess.min(MAX_SPEED * dt);
@@ -756,7 +707,7 @@ impl World {
         if self.pool_area - self.min_pool_area() < 0.5 * PI * target * target {
             return;
         }
-        let half = (self.half_width_at(0.0) - target).max(0.0);
+        let half = (self.half_width() - target).max(0.0);
         let x = match x {
             Some(x) => x.clamp(-half, half),
             // Mostly off the tops of the mounds, where the pool is deepest.
@@ -887,7 +838,7 @@ impl World {
             let (mut x, mut y) = (0.0, 0.0);
             for _ in 0..8 {
                 y = self.rng.range(0.25, 0.85);
-                let half = (self.half_width_at(y) - radius).max(0.0);
+                let half = (self.half_width() - radius).max(0.0);
                 x = self.rng.range(-half, half);
                 let clear = self
                     .blobs

@@ -23,7 +23,6 @@ pub enum Action {
     FacePicker,
     NextPalette,
     PalettePicker,
-    CycleFrame,
     ToggleClock,
     ToggleHour24,
     PomodoroToggle,
@@ -119,12 +118,6 @@ pub static KEYMAP: &[Row] = &[
     row(Lamp, "S", "style picker", &[(K('S'), A::StylePicker)]),
     row(Lamp, "p", "next palette", &[(K('p'), A::NextPalette)]),
     row(Lamp, "P", "palette picker", &[(K('P'), A::PalettePicker)]),
-    row(
-        Lamp,
-        "f",
-        "frame: auto/glass/bleed",
-        &[(K('f'), A::CycleFrame)],
-    ),
     row(
         Lamp,
         "[ ]",

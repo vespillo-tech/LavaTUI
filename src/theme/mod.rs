@@ -32,14 +32,14 @@ pub const TERMINAL_DEFAULT: Color = Color::Reset;
 /// The nine colour roles every palette defines (docs/design.md §5.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
-    /// App background outside the glass.
+    /// App background: behind the chrome, around the panel.
     Bg,
-    /// Glass interior / bleed background.
+    /// The lamp's liquid, behind the wax.
     Liquid,
     WaxCool,
     WaxMid,
     WaxHot,
-    /// Cap, base, overlay borders.
+    /// Overlay borders.
     Metal,
     Text,
     Dim,
@@ -325,33 +325,8 @@ impl Theme {
         self.color(Ink::Role(role))
     }
 
-    /// Mix two colours this theme produced (say, read back from a buffer),
-    /// `a` → `b` by `t`. Without blending, or with a terminal-default
-    /// colour on either side, the dominant side wins.
-    pub fn blend(&self, a: Color, b: Color, t: f32) -> Color {
-        let dominant = if t >= 0.5 { b } else { a };
-        if t <= 0.0 || t >= 1.0 || !self.blend {
-            return dominant;
-        }
-        let rgb = |c| match c {
-            Color::Rgb(r, g, b) => Some(Rgb(r, g, b)),
-            Color::Indexed(i) => Some(xterm::rgb(i)),
-            _ => None,
-        };
-        let (Some(a), Some(b)) = (rgb(a), rgb(b)) else {
-            return dominant;
-        };
-        Paint {
-            theme: self,
-            rgb: a.lerp(b, t),
-            fallback: dominant,
-            index: None,
-        }
-        .color()
-    }
-
     /// The app background: `bg`, or the terminal's own when `transparent`
-    /// (§9), for everything painted outside the glass.
+    /// (§9), for the chrome and around it.
     pub fn background(&self, transparent: bool) -> Color {
         if transparent {
             TERMINAL_DEFAULT

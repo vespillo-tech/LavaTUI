@@ -14,14 +14,15 @@ pub struct Canvas<'a> {
     /// The cells being drawn.
     pub area: Rect,
     pub(super) samples: &'a [Sample],
-    /// Per sample row: the container's `[lo, hi)` sample columns.
-    pub(super) mask: &'a [(usize, usize)],
     pub width: usize,
     pub height: usize,
     pub theme: &'a Theme,
     /// Seconds since launch, for styles that animate on their own.
     pub time: f64,
 }
+
+/// What shows where there's no wax.
+pub const LIQUID: Ink = Ink::Role(Role::Liquid);
 
 /// One terminal cell of the canvas, as handed to a style's cell loop.
 #[derive(Debug, Clone, Copy)]
@@ -32,9 +33,7 @@ pub struct At {
     /// The cell's top-left sample pixel.
     pub x: usize,
     pub y: usize,
-    /// What shows there with no wax ([`Canvas::backdrop`] of the top-left
-    /// pixel), and its colour.
-    pub backdrop: Ink,
+    /// What shows there with no wax: the liquid's colour.
     pub base: Color,
 }
 
@@ -43,24 +42,6 @@ impl Canvas<'_> {
     #[inline]
     pub fn at(&self, x: usize, y: usize) -> Sample {
         self.samples[y * self.width + x]
-    }
-
-    /// Whether the pixel is inside the container (always, in bleed).
-    #[inline]
-    pub fn inside(&self, x: usize, y: usize) -> bool {
-        let (lo, hi) = self.mask[y];
-        (lo..hi).contains(&x)
-    }
-
-    /// What shows where there's no wax: `liquid` inside the container,
-    /// `bg` outside it.
-    #[inline]
-    pub fn backdrop(&self, x: usize, y: usize) -> Ink {
-        Ink::Role(if self.inside(x, y) {
-            Role::Liquid
-        } else {
-            Role::Bg
-        })
     }
 
     /// Call `f` once for every cell of the area, row by row.
@@ -80,15 +61,12 @@ impl Canvas<'_> {
     pub fn cell_at(&self, cx: usize, cy: usize) -> At {
         let gx = self.width / usize::from(self.area.width);
         let gy = self.height / usize::from(self.area.height);
-        let (x, y) = (gx * cx, gy * cy);
-        let backdrop = self.backdrop(x, y);
         At {
             cx,
             cy,
-            x,
-            y,
-            backdrop,
-            base: self.theme.color(backdrop),
+            x: gx * cx,
+            y: gy * cy,
+            base: self.theme.color(LIQUID),
         }
     }
 
@@ -99,7 +77,7 @@ impl Canvas<'_> {
     }
 
     /// Draw a half-block canvas (1×2 pixels per cell): `pixel(x, y)` is
-    /// `None` for an empty pixel (the backdrop shows) or ink of a colour.
+    /// `None` for an empty pixel (the liquid shows) or ink of a colour.
     #[inline]
     pub fn draw_half_blocks(
         &self,

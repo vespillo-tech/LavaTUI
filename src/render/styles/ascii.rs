@@ -6,7 +6,7 @@
 use ratatui::buffer::Buffer;
 
 use crate::render::cell::{blank, glyph as set_glyph};
-use crate::render::{Canvas, Grid, LampStyle, coverage, wax_heat};
+use crate::render::{Canvas, Grid, LIQUID, LampStyle, coverage, wax_heat};
 use crate::sim::SURFACE;
 use crate::theme::{Ink, Role};
 
@@ -34,7 +34,7 @@ impl LampStyle for Ascii {
             let wax = Ink::Wax(heat);
             let fg = if c.theme.blends() {
                 // Rim glyphs fade from the liquid into the wax colour.
-                let paint = c.theme.paint(at.backdrop);
+                let paint = c.theme.paint(LIQUID);
                 paint.mix(wax, 0.35 + 0.65 * coverage(density)).color()
             } else if density < SURFACE {
                 c.theme.role(Role::Dim)

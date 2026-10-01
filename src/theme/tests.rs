@@ -385,28 +385,6 @@ fn with_role_repaints_the_role_and_its_ramps() {
     assert_eq!(weak.role(Role::Liquid), t16.role(Role::Liquid));
 }
 
-#[test]
-fn blend_mixes_resolved_colours_per_depth() {
-    let tc = Theme::new(lava(), ColorDepth::TrueColor);
-    let (a, b) = (Color::Rgb(0, 0, 0), Color::Rgb(200, 100, 40));
-    assert_eq!(tc.blend(a, b, 0.0), a);
-    assert_eq!(tc.blend(a, b, 1.0), b);
-    assert_eq!(tc.blend(a, b, 0.5), Color::Rgb(100, 52, 20));
-    // A terminal default can't be mixed: the dominant side wins.
-    assert_eq!(tc.blend(Color::Reset, b, 0.4), Color::Reset);
-
-    let t256 = Theme::new(lava(), ColorDepth::Ansi256);
-    // Black (16) half way to white (231) lands on a mid grey.
-    let Color::Indexed(i) = t256.blend(Color::Indexed(16), Color::Indexed(231), 0.5) else {
-        panic!("256 blends to an index");
-    };
-    assert!((240..=246).contains(&i), "{i}");
-
-    let t16 = Theme::new(lava(), ColorDepth::Ansi16);
-    assert_eq!(t16.blend(Color::Red, Color::Yellow, 0.4), Color::Red);
-    assert_eq!(t16.blend(Color::Red, Color::Yellow, 0.6), Color::Yellow);
-}
-
 /// How far (degrees) a shown index's hue may stray from the colour it
 /// stands for, and the chroma (OKLab) from which a colour has a hue to
 /// keep. Greys may stand in for anything.
@@ -504,7 +482,7 @@ fn ansi256_lamp_pixels_keep_their_truecolor_hue() {
     use ratatui::widgets::StatefulWidget;
 
     use crate::render::{LampOptions, LampState, LampView, StyleId};
-    use crate::sim::{Field, Shape, World};
+    use crate::sim::{Field, World};
 
     /// A cell's (top, bottom) pixel colours, or, for a glyph, its
     /// (fg, fg) and (bg, bg).
@@ -523,15 +501,12 @@ fn ansi256_lamp_pixels_keep_their_truecolor_hue() {
         _ => None,
     };
 
-    let lamps = [
-        (2, Shape::Tank, Rect::new(0, 0, 96, 30)),
-        (7, Shape::Bottle, Rect::new(0, 0, 30, 20)),
-    ];
+    let lamps = [(2, Rect::new(0, 0, 96, 30)), (7, Rect::new(0, 0, 30, 20))];
     let mut state = LampState::default();
     let mut bad = Vec::new();
-    for (seed, shape, area) in lamps {
+    for (seed, area) in lamps {
         let aspect = f64::from(area.width) / f64::from(area.height) / 2.0;
-        let mut world = World::new(seed, aspect, shape);
+        let mut world = World::new(seed, aspect);
         world.prewarm(600, 1.0 / 120.0);
         let mut field = Field::default();
         field.prepare(&world, 0.0);

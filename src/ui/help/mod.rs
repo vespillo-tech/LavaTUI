@@ -121,13 +121,13 @@ fn draw_body(buf: &mut Buffer, cols: &[Vec<Line>], inner: Rect, scroll: u16, ink
                 }
                 Line::Key { keys, label, key_w } => {
                     // Never a key without its label: a long label sheds
-                    // trailing words (`frame: auto/glass/bleed` → `frame`),
+                    // trailing words (`show/hide clock` → `show/hide`),
                     // and a key with no room for any is left out.
                     let lx = x + key_w as u16 + 2;
                     let room = usize::from((x + col_w).saturating_sub(lx));
                     if let Some(label) = fit_words(label, room) {
                         buf.set_string(x, y, keys, ink.accent);
-                        buf.set_string(lx, y, label.trim_end_matches(':'), ink.text);
+                        buf.set_string(lx, y, label, ink.text);
                     }
                 }
                 Line::Blank => {}

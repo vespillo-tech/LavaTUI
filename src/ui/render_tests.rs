@@ -84,7 +84,7 @@ fn draw(m: &Model, cols: u16, rows: u16) -> Buffer {
 /// Glyphs row by row, lamp cells as `~` (see the module docs).
 fn picture(m: &Model, buf: &Buffer) -> String {
     let bg = m.theme.role(Role::Bg);
-    let view = m.layout.lamp.map(|l| l.view);
+    let view = m.layout.lamp;
     let mut out = String::new();
     for y in 0..buf.area.height {
         let mut line = String::new();
@@ -314,7 +314,7 @@ fn help_shows_every_binding() {
             let label = if cols >= 80 {
                 r.label
             } else {
-                r.label.split([' ', ':']).next().unwrap()
+                r.label.split(' ').next().unwrap()
             };
             assert!(
                 seen.contains(&format!("{}  {label}", r.keys)) || seen.contains(label),
@@ -488,7 +488,6 @@ fn hint_keys_resolve_through_the_keymap() {
         ("s", Action::NextStyle),
         ("c", Action::NextFace),
         ("p", Action::NextPalette),
-        ("f", Action::CycleFrame),
         ("m", Action::ToggleMinimal),
         ("␣", Action::PomodoroToggle),
         ("?", Action::Help),
@@ -534,9 +533,9 @@ fn every_state_draws_at_every_size() {
     }
 }
 
-/// lava-ebq.3, lava-ebq.21, §9: `theme.transparent` leaves everything
-/// outside the glass to the terminal, the bottle rect's corners included,
-/// and no chrome (chip, toast, HUD, help, pickers) paints `bg` either.
+/// lava-ebq.3, lava-ebq.21, §9: `theme.transparent` leaves the background
+/// to the terminal: no chrome (panel, chip, toast, HUD, help, pickers)
+/// paints `bg`.
 #[test]
 fn transparent_never_paints_bg() {
     for (cols, rows) in [(80, 24), (120, 36), (34, 56), (50, 16), (20, 8)] {
@@ -575,15 +574,16 @@ fn reduced_grid_draws_the_whole_lamp() {
         m.frame_drawn(30.0, dt, t);
     }
     let reduced = draw(&m, 80, 24);
-    // Every lamp cell is still painted (bottle colours, never left blank).
-    let view = m.layout.lamp.unwrap().view;
+    // Every lamp cell is still painted (never left blank).
+    let view = m.layout.lamp.unwrap();
     let reset = ratatui::style::Color::Reset;
     assert!(view.positions().all(|p| reduced[p].bg != reset));
     let hud = |b: &Buffer| row(b, 0);
     assert_ne!(hud(&full), hud(&reduced), "HUD shows fewer samples");
     let px = |s: String| -> usize {
-        let k = s.split(" · ").nth(2).unwrap().trim();
-        k.trim_end_matches("k px").parse().unwrap()
+        // `1k px`, then the lamp the HUD sits on.
+        let k = s.split(" · ").nth(2).unwrap().split(' ').next().unwrap();
+        k.trim_end_matches('k').parse().unwrap()
     };
     assert!(px(hud(&reduced)) * 3 < px(hud(&full)) + 3);
 }

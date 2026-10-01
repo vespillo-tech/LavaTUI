@@ -53,7 +53,6 @@ pub struct Display {
 #[serde(default)]
 pub struct Lamp {
     pub style: String,
-    pub frame: FrameMode,
     /// 1..=5.
     pub heat: u8,
     /// 0.25 | 0.5 | 1 | 2 | 4 (snapped to the nearest).
@@ -64,7 +63,7 @@ pub struct Lamp {
 #[serde(default)]
 pub struct ThemeSettings {
     pub palette: String,
-    /// Never paint `bg` outside the glass.
+    /// Leave the background to the terminal: never paint `bg`.
     pub transparent: bool,
 }
 
@@ -122,34 +121,6 @@ pub enum ColorChoice {
     None,
 }
 
-/// `lamp.frame`; `f` cycles it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum FrameMode {
-    #[default]
-    Auto,
-    Glass,
-    Bleed,
-}
-
-impl FrameMode {
-    pub fn next(self) -> Self {
-        match self {
-            FrameMode::Auto => FrameMode::Glass,
-            FrameMode::Glass => FrameMode::Bleed,
-            FrameMode::Bleed => FrameMode::Auto,
-        }
-    }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            FrameMode::Auto => "auto",
-            FrameMode::Glass => "glass",
-            FrameMode::Bleed => "bleed",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum UiMode {
@@ -158,12 +129,13 @@ pub enum UiMode {
     Minimal,
 }
 
-/// Where minimal mode puts its tiny clock (§3).
+/// Whether minimal mode shows its tiny clock, in the corner (§3). `under`
+/// (under the glass lamp, which v1.1 dropped) loads as `corner`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum MinimalClock {
     #[default]
-    Under,
+    #[serde(alias = "under")]
     Corner,
     Off,
 }
@@ -182,7 +154,6 @@ impl Default for Lamp {
     fn default() -> Self {
         Self {
             style: "solid".into(),
-            frame: FrameMode::Auto,
             heat: 3,
             speed: 1.0,
         }
@@ -247,10 +218,10 @@ pub struct Parsed {
     pub clamped: Vec<(String, String)>,
 }
 
-/// Settings earlier versions had, as `section.key`: v1.1 dropped the
-/// lighting pass. A file that still has one loads without a word (it isn't
-/// an unknown key), and the next save takes it out.
-pub const RETIRED_KEYS: [&str; 1] = ["lamp.lighting"];
+/// Settings earlier versions had, as `section.key`: v1.1 dropped the glass
+/// frame and the lighting pass. A file that still has one loads without a
+/// word (it isn't an unknown key), and the next save takes it out.
+pub const RETIRED_KEYS: [&str; 2] = ["lamp.frame", "lamp.lighting"];
 
 /// Styles earlier versions had (v1.1 dropped them): a file naming one gets
 /// the default style, without a word. The command line rejects them like
@@ -527,7 +498,6 @@ mod tests {
     fn round_trips_every_field() {
         let mut s = Settings::default();
         s.display.color = ColorChoice::Ansi256;
-        s.lamp.frame = FrameMode::Bleed;
         s.ui.mode = UiMode::Minimal;
         s.minimal.clock = MinimalClock::Corner;
         s.pomodoro.focus_min = 50;
@@ -538,7 +508,7 @@ mod tests {
 
     #[test]
     fn one_bad_value_keeps_the_rest() {
-        for bad in ["frame = \"round\"", "heat = 300", "speed = \"fast\""] {
+        for bad in ["heat = -1", "heat = 300", "speed = \"fast\""] {
             let text = format!("[lamp]\nstyle = \"ascii\"\n{bad}\n[clock]\nface = \"words\"\n");
             let p = Settings::parse(&text).unwrap();
             assert_eq!(p.settings.lamp.style, "ascii", "{bad}");
@@ -602,7 +572,7 @@ mod tests {
 
     #[test]
     fn retired_keys_load_quietly() {
-        let text = "[lamp]\nlighting = true\nheat = 4\n";
+        let text = "[lamp]\nframe = \"glass\"\nlighting = true\nheat = 4\n";
         let p = Settings::parse(text).unwrap();
         assert!(p.ignored.is_empty() && p.unknown.is_empty(), "{p:?}");
         assert!(p.clamped.is_empty());
