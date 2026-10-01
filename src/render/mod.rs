@@ -14,6 +14,8 @@
 //! Adding a style: one file in `styles/` implementing [`LampStyle`], plus
 //! one line in the `styles::ALL` registry.
 
+#[cfg(test)]
+mod bench;
 mod canvas;
 mod cell;
 mod dither256;
