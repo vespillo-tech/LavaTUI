@@ -34,8 +34,8 @@
  p    next palette
  P    palette picker
  f    frame: auto/glass/bleed
- l    lighting
  [ ]  heat − +
+ - +  speed
 ── style picker ──
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

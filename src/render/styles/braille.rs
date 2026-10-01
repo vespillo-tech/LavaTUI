@@ -33,7 +33,7 @@ impl LampStyle for Braille {
                 let h = wax_heat(s.temp);
                 heat += h;
                 wax += 1.0;
-                is_edge(c, x, y) || tone(s.density, h, c.light(x, y)) > bayer(x, y)
+                is_edge(c, x, y) || tone(s.density, h) > bayer(x, y)
             });
             let dots = (bits != 0).then(|| {
                 let fg = c.theme.color(Ink::Wax(stepped_heat(heat / wax)));
@@ -46,7 +46,7 @@ impl LampStyle for Braille {
 
 /// Share of dots lit at a wax pixel: a light stipple under the skin,
 /// filling in to solid toward the core, sooner the hotter the wax.
-fn tone(density: f32, heat: f32, light: f32) -> f32 {
+fn tone(density: f32, heat: f32) -> f32 {
     let depth = smoothstep((density - SURFACE) / (0.5 - 0.25 * heat));
-    quantise((0.2 + 0.85 * depth) * light, TONES)
+    quantise(0.2 + 0.85 * depth, TONES)
 }

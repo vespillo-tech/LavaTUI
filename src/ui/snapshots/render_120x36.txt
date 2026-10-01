@@ -34,7 +34,7 @@
                           ▐███████████████████████▌
 
 
-    ● solid · lava                          s style  c clock  p palette  f frame  l light  m minimal  ␣ pomo  ? help
+    ● solid · lava                                   s style  c clock  p palette  f frame  m minimal  ␣ pomo  ? help
 ── help ──
 
 
@@ -52,12 +52,12 @@
                             │  p    next palette             t       show/hide clock       │
                             │  P    palette picker           T       12h / 24h             │
                             │  f    frame: auto/glass/bleed  ␣       start / pause         │
-                            │  l    lighting                 n       skip phase            │
-                            │  [ ]  heat − +                 r r     reset pomodoro        │
-                            │  - +  speed                                                  │
-                            │  z    freeze                   app                           │
-                            │  0    reset heat & speed       m       minimal               │
-                            │  R    reseed wax               ?       this help             │
+                            │  [ ]  heat − +                 n       skip phase            │
+                            │  - +  speed                    r r     reset pomodoro        │
+                            │  z    freeze                                                 │
+                            │  0    reset heat & speed       app                           │
+                            │  R    reseed wax               m       minimal               │
+                            │                                ?       this help             │
                             │                                q       quit · ctrl-c         │
                             │                                b       status bar            │
                             │                                d       debug hud             │
@@ -71,7 +71,7 @@
                           ▐███████████████████████▌
 
 
-    ● solid · lava                          s style  c clock  p palette  f frame  l light  m minimal  ␣ pomo  ? help
+    ● solid · lava                                   s style  c clock  p palette  f frame  m minimal  ␣ pomo  ? help
 ── style picker ──
 
 
@@ -219,7 +219,7 @@
                           ▐███████████████████████▌
 
 
-    ● solid · lava                          s style  c clock  p palette  f frame  l light  m minimal  ␣ pomo  ? help
+    ● solid · lava        60 fps · 2.1 ms · 1k px    s style  c clock  p palette  f frame  m minimal  ␣ pomo  ? help
 ── pomodoro running ──
 
 
@@ -256,7 +256,7 @@
                           ▐███████████████████████▌
 
 
-    ● solid · lava                          s style  c clock  p palette  f frame  l light  m minimal  ␣ pomo  ? help
+    ● solid · lava                                   s style  c clock  p palette  f frame  m minimal  ␣ pomo  ? help
 ── minimal pomodoro focus ──
 
 

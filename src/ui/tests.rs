@@ -437,8 +437,8 @@ fn hints_drop_in_spec_order() {
             .collect::<Vec<_>>()
             .join("")
     };
-    assert_eq!(keys(200), "scpflm␣?");
-    // m, l, f, ␣, p, c, s go first; ? help last.
+    assert_eq!(keys(200), "scpfm␣?");
+    // m, f, ␣, p, c, s go first; ? help last.
     let mut seen = Vec::new();
     for avail in (0..=200).rev() {
         let k = keys(avail);
@@ -448,17 +448,7 @@ fn hints_drop_in_spec_order() {
     }
     assert_eq!(
         seen,
-        [
-            "scpflm␣?",
-            "scpfl␣?",
-            "scpf␣?",
-            "scp␣?",
-            "scp?",
-            "sc?",
-            "s?",
-            "?",
-            ""
-        ]
+        ["scpfm␣?", "scpf␣?", "scp␣?", "scp?", "sc?", "s?", "?", ""]
     );
 }
 

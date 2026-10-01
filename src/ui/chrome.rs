@@ -15,7 +15,6 @@ pub const HINTS: &[(&str, &str, u8)] = &[
     ("c", "clock", 5),
     ("p", "palette", 4),
     ("f", "frame", 2),
-    ("l", "light", 1),
     ("m", "minimal", 0),
     ("␣", "pomo", 3),
     ("?", "help", 7),

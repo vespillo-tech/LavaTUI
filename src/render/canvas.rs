@@ -14,7 +14,6 @@ pub struct Canvas<'a> {
     /// The cells being drawn.
     pub area: Rect,
     pub(super) samples: &'a [Sample],
-    pub(super) light: Option<&'a [f32]>,
     /// Per sample row: the container's `[lo, hi)` sample columns.
     pub(super) mask: &'a [(usize, usize)],
     pub width: usize,
@@ -44,12 +43,6 @@ impl Canvas<'_> {
     #[inline]
     pub fn at(&self, x: usize, y: usize) -> Sample {
         self.samples[y * self.width + x]
-    }
-
-    /// Brightness factor at a pixel: 1.0 unless a lighting pass ran.
-    #[inline]
-    pub fn light(&self, x: usize, y: usize) -> f32 {
-        self.light.map_or(1.0, |l| l[y * self.width + x])
     }
 
     /// Whether the pixel is inside the container (always, in bleed).

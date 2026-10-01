@@ -392,12 +392,12 @@ fn saving_keeps_hand_edits_made_while_running() {
     std::fs::write(&path, "[lamp]\nheat = 2\n").unwrap();
     let (mut m, t0) = model_with(Session::default(), path.clone(), 80, 24);
     std::fs::write(&path, "[lamp]\nheat = 5\n\n[pomodoro]\nfocus_min = 50\n").unwrap();
-    m.update(Action::ToggleLighting, t0);
+    m.update(Action::Faster, t0);
     m.save();
     let saved = std::fs::read_to_string(&path).unwrap();
     assert_eq!(
         saved,
-        "[lamp]\nheat = 5\nlighting = true\n\n[pomodoro]\nfocus_min = 50\n"
+        "[lamp]\nheat = 5\nspeed = 2.0\n\n[pomodoro]\nfocus_min = 50\n"
     );
     assert!(
         m.toast

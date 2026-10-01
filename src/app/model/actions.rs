@@ -17,7 +17,6 @@ const RESEED_MIX: u64 = 0x9E37_79B9_7F4A_7C15;
 
 /// Toasts for the boolean settings' new value: `[on, off]`.
 const STATUS_BAR: [&str; 2] = ["status bar on", "status bar off"];
-const LIGHTING: [&str; 2] = ["lighting on", "lighting off"];
 const CLOCK: [&str; 2] = ["clock shown", "clock hidden"];
 const HOUR24: [&str; 2] = ["24h", "12h"];
 
@@ -87,7 +86,6 @@ impl Model {
             Action::FacePicker => self.open_picker(PickerKind::Face),
             Action::PalettePicker => self.open_picker(PickerKind::Palette),
             Action::CycleFrame => self.cycle_frame(now),
-            Action::ToggleLighting => self.toggle(now, |s| &mut s.lamp.lighting, LIGHTING),
             Action::ToggleClock => self.toggle(now, |s| &mut s.clock.show, CLOCK),
             Action::ToggleHour24 => self.toggle(now, |s| &mut s.clock.hour24, HOUR24),
             Action::PomodoroToggle => self.pomodoro_toggle(now),

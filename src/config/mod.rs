@@ -54,7 +54,6 @@ pub struct Display {
 pub struct Lamp {
     pub style: String,
     pub frame: FrameMode,
-    pub lighting: bool,
     /// 1..=5.
     pub heat: u8,
     /// 0.25 | 0.5 | 1 | 2 | 4 (snapped to the nearest).
@@ -184,7 +183,6 @@ impl Default for Lamp {
         Self {
             style: "solid".into(),
             frame: FrameMode::Auto,
-            lighting: false,
             heat: 3,
             speed: 1.0,
         }
@@ -248,6 +246,11 @@ pub struct Parsed {
     /// keeps the old one until that setting is changed in the app.
     pub clamped: Vec<(String, String)>,
 }
+
+/// Settings earlier versions had, as `section.key`: v1.1 dropped the
+/// lighting pass. A file that still has one loads without a word (it isn't
+/// an unknown key), and the next save takes it out.
+pub const RETIRED_KEYS: [&str; 1] = ["lamp.lighting"];
 
 /// Styles earlier versions had (v1.1 dropped them): a file naming one gets
 /// the default style, without a word. The command line rejects them like
@@ -412,7 +415,10 @@ where
     };
     for (key, value) in user {
         if !accepted.contains_key(key) {
-            unknown.push(format!("{name}.{key}"));
+            let dotted = format!("{name}.{key}");
+            if !RETIRED_KEYS.contains(&dotted.as_str()) {
+                unknown.push(dotted);
+            }
             continue;
         }
         let mut trial = accepted.clone();
@@ -592,6 +598,15 @@ mod tests {
             assert_eq!(p.settings.lamp.style, Lamp::default().style);
             assert!(StyleId::by_name(style).is_none(), "{style}");
         }
+    }
+
+    #[test]
+    fn retired_keys_load_quietly() {
+        let text = "[lamp]\nlighting = true\nheat = 4\n";
+        let p = Settings::parse(text).unwrap();
+        assert!(p.ignored.is_empty() && p.unknown.is_empty(), "{p:?}");
+        assert!(p.clamped.is_empty());
+        assert_eq!(p.settings.lamp.heat, 4);
     }
 
     #[test]

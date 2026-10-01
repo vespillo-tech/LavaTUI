@@ -489,7 +489,6 @@ fn hint_keys_resolve_through_the_keymap() {
         ("c", Action::NextFace),
         ("p", Action::NextPalette),
         ("f", Action::CycleFrame),
-        ("l", Action::ToggleLighting),
         ("m", Action::ToggleMinimal),
         ("␣", Action::PomodoroToggle),
         ("?", Action::Help),

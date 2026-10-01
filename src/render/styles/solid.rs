@@ -26,8 +26,7 @@ fn pixel(c: &Canvas, x: usize, y: usize) -> Option<Color> {
     let cover = coverage(s.density);
     let wax = Ink::Wax(wax_heat(s.temp));
     if c.theme.blends() {
-        let paint = c.theme.paint(c.backdrop(x, y)).mix(wax, cover);
-        Some(paint.shade(c.light(x, y)).color())
+        Some(c.theme.paint(c.backdrop(x, y)).mix(wax, cover).color())
     } else {
         (cover >= 0.5).then(|| c.theme.color(wax))
     }

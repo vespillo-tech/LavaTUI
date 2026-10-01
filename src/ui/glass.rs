@@ -4,13 +4,11 @@
 //! (its liquid and wax come from the style, its half-cell walls from
 //! `render`); the glass has no outline, except in 16-colour / NO_COLOR
 //! where there's no liquid tint to show it, so a thin `▕ │ ▏` edge marks
-//! the walls instead. With lighting on, a soft highlight streak runs down
-//! the bottle's left side.
+//! the walls instead.
 
 use ratatui::buffer::Buffer;
 use ratatui::style::Style;
 
-use crate::render::smoothstep;
 use crate::silhouette::{BASE, CAP, row_height, row_span};
 use crate::sim::Shape;
 use crate::theme::{Ink, Role, Theme};
@@ -18,22 +16,10 @@ use crate::ui::layout::{Glass, Lamp};
 
 /// Metal brightness at the top of the cap and the bottom of the base.
 const SHADE: (f32, f32) = (1.25, 0.7);
-/// Highlight streak: how far toward `text` at its brightest (§2.1: ~20 %),
-/// and where it sits, as a share of the bottle's half-width in from the
-/// left wall.
-const STREAK: f32 = 0.18;
-const STREAK_INSET: f64 = 0.32;
 
-/// Draw the cap, base and (by depth) the wall edges or highlight streak.
+/// Draw the cap, base and (in 16 colours / NO_COLOR) the wall edges.
 /// `flash` is the phase-change flash level (0..1).
-pub fn draw(
-    buf: &mut Buffer,
-    lamp: &Lamp,
-    glass: Glass,
-    theme: &Theme,
-    flash: f32,
-    lighting: bool,
-) {
+pub fn draw(buf: &mut Buffer, lamp: &Lamp, glass: Glass, theme: &Theme, flash: f32) {
     let r = lamp.region;
     // NO_COLOR: metal and wax are both the terminal's foreground, so metal
     // takes a lighter texture to keep the pool apart from the base.
@@ -63,8 +49,6 @@ pub fn draw(
 
     if !theme.blends() {
         edges(buf, lamp, Style::new().fg(theme.role(Role::Metal)));
-    } else if lighting {
-        streak(buf, lamp, theme);
     }
 }
 
@@ -122,51 +106,6 @@ fn edges(buf: &mut Buffer, lamp: &Lamp, style: Style) {
     }
 }
 
-/// The glass highlight: a one-cell band a little in from the left wall,
-/// following its curve, brightest down the upper body and fading out at
-/// the shoulder and above the base light. It sits on the glass, so wax
-/// passing behind it is lifted too.
-fn streak(buf: &mut Buffer, lamp: &Lamp, theme: &Theme) {
-    let v = lamp.view;
-    let text = theme.role(Role::Text);
-    let rows = f64::from(v.height);
-    for j in 0..v.height {
-        let world_y = |dy: f64| 1.0 - (f64::from(j) + dy) / rows;
-        let y = world_y(0.5) as f32;
-        let level = STREAK * smoothstep((y - 0.3) / 0.25) * smoothstep((0.97 - y) / 0.2);
-        if level <= 0.0 {
-            continue;
-        }
-        // Band centre in half columns from the view's left. Unrounded, so
-        // it drifts across cells smoothly.
-        let n = Shape::Bottle.width_fraction(world_y(0.5)) * f64::from(v.width);
-        let centre = f64::from(v.width) - n * (1.0 - STREAK_INSET);
-        // Never on a cell the wall cuts (those show `bg` on one side).
-        let inner = [0.25, 0.75].map(|dy| row_span(Shape::Bottle, v.width, world_y(dy)).0);
-        let first = inner[0].max(inner[1]).div_ceil(2);
-        // The nearest cell carries the full level and the next one fades
-        // in as the band crosses over, so it never dims or splits.
-        let near = (centre / 2.0).floor() as u32;
-        let d = (centre - f64::from(2 * near + 1)).abs() / 2.0;
-        let next = if centre >= f64::from(2 * near + 1) {
-            near + 1
-        } else {
-            near.wrapping_sub(1)
-        };
-        for (c, w) in [(near, 1.0), (next, d / (1.0 - d))] {
-            let amount = level * w as f32;
-            if c < first || c >= u32::from(v.width) || amount <= 0.0 {
-                continue;
-            }
-            if let Some(cell) = buf.cell_mut((v.x + c as u16, v.y + j)) {
-                let (fg, bg) = (cell.fg, cell.bg);
-                cell.set_fg(theme.blend(fg, text, amount))
-                    .set_bg(theme.blend(bg, text, amount));
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use ratatui::layout::Rect;
@@ -190,7 +129,7 @@ mod tests {
         };
         let theme = Theme::new(&Palette::all()[0], depth);
         let mut buf = Buffer::empty(region);
-        draw(&mut buf, &lamp, glass, &theme, 0.0, false);
+        draw(&mut buf, &lamp, glass, &theme, 0.0);
         (0..16).map(|x| buf[(x, 17)].symbol()).collect()
     }
 

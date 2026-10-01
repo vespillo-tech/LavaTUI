@@ -95,12 +95,9 @@ fn normalise(v: [f32; 3]) -> [f32; 3] {
 fn pixel(c: &Canvas, x: usize, y: usize) -> Color {
     let s = c.at(x, y);
     let cover = coverage(s.density);
-    // The wax has its own key light, so the lighting pass only reaches the
-    // liquid (base light + glow), fading out across the edge.
-    let light = 1.0 + (c.light(x, y) - 1.0) * (1.0 - cover);
     let backdrop = c.theme.paint(c.backdrop(x, y));
     if cover == 0.0 {
-        return backdrop.shade(light).color();
+        return backdrop.color();
     }
     let sh = shade(c, x, y);
     let heat = stepped_heat(wax_heat(s.temp));
@@ -111,6 +108,5 @@ fn pixel(c: &Canvas, x: usize, y: usize) -> Color {
         .scale(0.7 + 0.5 * sh.diffuse)
         .mix(Ink::Wax(1.0), cover * 0.75 * sh.rim)
         .mix(Ink::Role(Role::Text), cover * sh.spec)
-        .shade(light)
         .color()
 }

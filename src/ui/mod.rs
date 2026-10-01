@@ -26,7 +26,6 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 
 use crate::app::{Model, Overlay};
-use crate::light::{Lamplight, Lighting};
 use crate::render::{LampOptions, LampState, LampView};
 use crate::theme::{Ink, Role};
 use crate::ui::layout::Layout;
@@ -122,11 +121,6 @@ fn draw_lamp(frame: &mut Frame, l: &layout::Lamp, model: &Model, lamp: &mut Lamp
         style: model.style.style(),
         theme: lamp_theme,
         time: model.time(),
-        lighting: model
-            .settings
-            .lamp
-            .lighting
-            .then_some(&Lamplight as &dyn Lighting),
         options: LampOptions {
             reduced: model.quality.reduced_grid(),
             transparent: model.settings.theme.transparent,
@@ -134,14 +128,7 @@ fn draw_lamp(frame: &mut Frame, l: &layout::Lamp, model: &Model, lamp: &mut Lamp
     };
     frame.render_stateful_widget(view, l.view, lamp);
     if let Some(g) = l.glass {
-        glass::draw(
-            frame.buffer_mut(),
-            l,
-            g,
-            theme,
-            flash,
-            model.settings.lamp.lighting,
-        );
+        glass::draw(frame.buffer_mut(), l, g, theme, flash);
     }
 }
 

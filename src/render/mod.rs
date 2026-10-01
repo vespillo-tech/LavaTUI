@@ -6,12 +6,11 @@
 //!    cell ([`Grid`]: half-block 1×2, braille 2×4, …).
 //! 2. The field is sampled at that grid into a reused buffer (or at a
 //!    reduced grid and upsampled, above [`SAMPLE_BUDGET`]).
-//! 3. An optional [`Lighting`] pass fills a per-sample brightness buffer.
-//! 4. The style draws the [`Canvas`] (samples + mask + light + theme) into
-//!    the buffer, cell by cell, inside its `Rect` only.
-//! 5. Cells the container's walls cut through are reshaped to half / quarter
+//! 3. The style draws the [`Canvas`] (samples + mask + theme) into the
+//!    buffer, cell by cell, inside its `Rect` only.
+//! 4. Cells the container's walls cut through are reshaped to half / quarter
 //!    cells (`walls`), so the bottle's silhouette is smooth.
-//! 6. In 256 colours, blended colours are ordered-dithered between two
+//! 5. In 256 colours, blended colours are ordered-dithered between two
 //!    xterm indices, pixel by pixel (`dither256`, [`Theme::dithering`]).
 //!
 //! Adding a style: one file in `styles/` implementing [`LampStyle`], plus
@@ -31,7 +30,6 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::widgets::StatefulWidget;
 
-use crate::light::Lighting;
 use crate::sim::{Field, SURFACE, Sample, WAX_TEMP};
 use crate::theme::Theme;
 
@@ -150,19 +148,6 @@ pub fn wax_heat(temp: f32) -> f32 {
     ((temp - WAX_TEMP.0) / SPAN).clamp(0.0, 1.0)
 }
 
-/// Lighting as a nudge along a 0..1 level (heat, glyph density) rather
-/// than a colour scale, for depths that can't blend: "lighting adds
-/// density, not colour" (docs/design.md §5.3). Shadow sides step down,
-/// highlights and glow step up; unlit (1.0) leaves `level` as it is.
-#[inline]
-pub fn lit(level: f32, light: f32) -> f32 {
-    const GAIN: f32 = 0.6;
-    if light == 1.0 {
-        return level;
-    }
-    (level + GAIN * (light - 1.0)).clamp(0.0, 1.0)
-}
-
 /// Ordered-dither threshold in (0, 1) for pixel (`x`, `y`): an 8×8 Bayer
 /// matrix anchored to the canvas, so the pattern is static frame to frame.
 #[inline]
@@ -193,7 +178,6 @@ pub fn smoothstep(t: f32) -> f32 {
 pub struct LampState {
     samples: Vec<Sample>,
     coarse: Vec<Sample>,
-    light: Vec<f32>,
     mask: Vec<(usize, usize)>,
 }
 
@@ -201,15 +185,13 @@ pub struct LampState {
 /// This is the one seam the TUI uses:
 ///
 /// ```ignore
-/// frame.render_stateful_widget(LampView { field, style, theme, time, lighting: None, options: LampOptions::default() }, area, &mut lamp_state);
+/// frame.render_stateful_widget(LampView { field, style, theme, time, options: LampOptions::default() }, area, &mut lamp_state);
 /// ```
 pub struct LampView<'a> {
     pub field: &'a Field,
     pub style: &'a StyleEntry,
     pub theme: &'a Theme,
     pub time: f64,
-    /// Optional lighting pass (lava-5ak).
-    pub lighting: Option<&'a dyn Lighting>,
     pub options: LampOptions,
 }
 
@@ -270,26 +252,9 @@ impl StatefulWidget for LampView<'_> {
         let shape = self.field.shape();
         walls::mask(shape, area, grid, &mut state.mask);
 
-        let light = match self.lighting {
-            Some(lighting) => {
-                state.light.clear();
-                state.light.resize(n, 1.0);
-                lighting.shade(&state.samples, width, height, &mut state.light);
-                // Light lives inside the container: outside the glass is
-                // the app background, which stays unlit.
-                for (row, &(lo, hi)) in state.light.chunks_exact_mut(width).zip(&state.mask) {
-                    row[..lo].fill(1.0);
-                    row[hi..].fill(1.0);
-                }
-                Some(state.light.as_slice())
-            }
-            None => None,
-        };
-
         let canvas = Canvas {
             area,
             samples: &state.samples,
-            light,
             mask: &state.mask,
             width,
             height,

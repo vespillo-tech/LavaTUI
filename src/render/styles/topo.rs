@@ -8,7 +8,7 @@
 
 use ratatui::buffer::Buffer;
 
-use super::{quantise, stepped_heat};
+use super::stepped_heat;
 use crate::render::cell::{braille, braille_dots, mark};
 use crate::render::{Canvas, Grid, LampStyle, wax_heat};
 use crate::theme::{Ink, Role};
@@ -25,13 +25,12 @@ impl LampStyle for Topo {
 
     fn draw(c: &Canvas, buf: &mut Buffer) {
         c.for_each_cell(buf, |at, cell| {
-            let (mut top_line, mut heat, mut density, mut light) = (0u8, 0.0, 0.0, 0.0);
+            let (mut top_line, mut heat, mut density) = (0u8, 0.0, 0.0);
             let bits = braille_dots(at.cx, at.cy, |x, y| {
                 let b = band(c, x, y);
                 let s = c.at(x, y);
                 heat += wax_heat(s.temp);
                 density += s.density;
-                light += c.light(x, y);
                 // A line pixel sits on the high side of a level crossing.
                 let low = band(c, x + 1, y).min(band(c, x, y + 1));
                 let low = low.min(band(c, x.saturating_sub(1), y));
@@ -43,9 +42,7 @@ impl LampStyle for Topo {
             });
             let heat = stepped_heat(heat / 8.0);
             let bg = if c.theme.blends() {
-                // Hillshade: the bands take the light, in a few steps.
-                let fill = level(density / 8.0);
-                tint(c, at.backdrop, fill, heat, quantise(light / 8.0, 8.0))
+                tint(c, at.backdrop, level(density / 8.0), heat)
             } else {
                 at.base
             };
@@ -69,16 +66,13 @@ fn level(density: f32) -> u8 {
 
 /// Band fill: liquid below the surface, then wax colour deepening with
 /// elevation.
-fn tint(c: &Canvas, backdrop: Ink, band: u8, heat: f32, light: f32) -> ratatui::style::Color {
+fn tint(c: &Canvas, backdrop: Ink, band: u8, heat: f32) -> ratatui::style::Color {
     let paint = c.theme.paint(backdrop);
     if band < SURFACE_BAND {
-        return paint.shade(light).color();
+        return paint.color();
     }
     let up = f32::from(band - SURFACE_BAND) / (LEVELS.len() as f32 - f32::from(SURFACE_BAND));
-    paint
-        .mix(Ink::Wax(heat), 0.3 + 0.45 * up)
-        .shade(light)
-        .color()
+    paint.mix(Ink::Wax(heat), 0.3 + 0.45 * up).color()
 }
 
 /// Line colour: dim below the surface, the wax colour at and above it,

@@ -350,22 +350,6 @@ fn every_palette_resolves_every_role_at_every_depth() {
 }
 
 #[test]
-fn lighting_shade_darkens_and_eases_brightening() {
-    let dark = Rgb(40, 20, 10);
-    assert_eq!(dark.shade(1.0), dark);
-    assert_eq!(dark.shade(0.5), Rgb(20, 10, 5));
-    // Dark colours brighten almost fully; near-white barely moves.
-    let Rgb(r, ..) = dark.shade(2.0);
-    assert!((72..=80).contains(&r), "{r}");
-    let paper = Rgb(231, 222, 203);
-    let Rgb(r, g, b) = paper.shade(1.5);
-    assert!(r <= 247 && g <= 238 && b <= 220, "{:?}", (r, g, b));
-    // Saturated wax keeps its hue: red stays the dominant channel.
-    let Rgb(r, g, b) = Rgb(226, 71, 27).shade(1.3);
-    assert!(r > g && g > b && g < 100, "{:?}", (r, g, b));
-}
-
-#[test]
 fn with_role_repaints_the_role_and_its_ramps() {
     let theme = Theme::new(lava(), ColorDepth::TrueColor);
     let accent = theme.role(Role::Accent);
@@ -455,7 +439,7 @@ fn off_hue(c: Rgb) -> Vec<(u8, f32)> {
 
 #[test]
 fn ansi256_dark_wax_never_turns_another_hue() {
-    // The lava-ebq.32 repro: dim orange-brown wax (crt / chrome, lit) went
+    // The lava-ebq.32 repro: dim orange-brown wax (chrome) went
     // to 005f00 (22) and 5f5f00 (58), green dots on orange.
     for c in [
         Rgb(0x51, 0x30, 0x08),
@@ -470,8 +454,8 @@ fn ansi256_dark_wax_never_turns_another_hue() {
         );
         assert_eq!(off_hue(c), [], "{c:?}");
     }
-    // Every palette's wax ramp and roles, dimmed and brightened by
-    // light, and faded into the liquid and background, as styles draw them.
+    // Every palette's wax ramp and roles, dimmed and brightened the way
+    // styles scale them, and faded into the liquid and background.
     for palette in Palette::all().iter().filter(|p| p.has_rgb()) {
         // The hand-picked indices too (§5.2): an unmixed role shows its own.
         for role in Role::ALL {
@@ -484,9 +468,9 @@ fn ansi256_dark_wax_never_turns_another_hue() {
         let roles = Role::ALL.map(|r| theme.rgb(Ink::Role(r)));
         let bases = theme.wax.iter().chain(&roles);
         for &base in bases {
-            for k in [0.1, 0.2, 0.3, 0.45, 0.6, 0.8, 1.0, 1.2, 1.5] {
+            for k in [0.7, 0.8, 0.9, 1.0, 1.1, 1.15, 1.2, 1.25, 1.35] {
                 for (to, t) in [(Role::Liquid, 0.0), (Role::Liquid, 0.4), (Role::Bg, 0.7)] {
-                    let c = base.shade(k).lerp(theme.rgb(Ink::Role(to)), t);
+                    let c = base.scale(k).lerp(theme.rgb(Ink::Role(to)), t);
                     assert_eq!(off_hue(c), [], "{} {c:?}", palette.name);
                 }
             }
@@ -510,7 +494,7 @@ fn ansi256_no_colour_shows_another_hue() {
     }
 }
 
-/// Whole lamps, every style × palette, lit, from live sim worlds: every
+/// Whole lamps, every style × palette, from live sim worlds: every
 /// pixel 256 colours shows keeps the hue of the truecolor pixel it stands
 /// for.
 #[test]
@@ -519,7 +503,6 @@ fn ansi256_lamp_pixels_keep_their_truecolor_hue() {
     use ratatui::layout::Rect;
     use ratatui::widgets::StatefulWidget;
 
-    use crate::light::{Lamplight, Lighting};
     use crate::render::{LampOptions, LampState, LampView, StyleId};
     use crate::sim::{Field, Shape, World};
 
@@ -562,7 +545,6 @@ fn ansi256_lamp_pixels_keep_their_truecolor_hue() {
                         style: id.style(),
                         theme: &theme,
                         time: 1.0,
-                        lighting: Some(&Lamplight as &dyn Lighting),
                         options: LampOptions::default(),
                     }
                     .render(area, &mut buf, state);

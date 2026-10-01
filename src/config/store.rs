@@ -327,7 +327,8 @@ fn drops(text: &str, changed: &[Change]) -> bool {
 }
 
 /// Write the `changed` values of `fresh` (the serialized settings) into
-/// `doc`. Everything else in it is left alone. A changed value keeps its
+/// `doc`, and take out any [`RETIRED_KEYS`](super::RETIRED_KEYS).
+/// Everything else in it is left alone. A changed value keeps its
 /// comments; a missing section is added at the end (below a file's
 /// comments if that's all it holds); a section that isn't a table is
 /// replaced by one at the end.
@@ -335,6 +336,11 @@ fn merge(doc: &mut DocumentMut, fresh: &str, changed: &[Change]) {
     let Ok(fresh) = fresh.parse::<DocumentMut>() else {
         return;
     };
+    for (name, key) in super::RETIRED_KEYS.iter().filter_map(|k| k.split_once('.')) {
+        if let Some(table) = doc.get_mut(name).and_then(Item::as_table_like_mut) {
+            table.remove(key);
+        }
+    }
     for (dotted, ..) in changed {
         let Some((name, key)) = dotted.split_once('.') else {
             continue;
@@ -728,7 +734,7 @@ mod tests {
         assert_eq!(store.notes.len(), 4, "{:?}", store.notes);
 
         let mut settings = loaded.settings.clone();
-        settings.lamp.lighting = true;
+        settings.clock.show = false;
         store.save(&settings).unwrap();
         assert!(!dir.join("config.toml.bak").exists());
         let saved = fs::read_to_string(&path).unwrap();
@@ -793,11 +799,11 @@ mod tests {
             "[lamp]\nheat = 5\nstyle = \"ascii\"\n\n[pomodoro]\nfocus_min = 50 # long\n",
         )
         .unwrap();
-        settings.lamp.lighting = true;
+        settings.lamp.speed = 2.0;
         store.save(&settings).unwrap();
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
-            "[lamp]\nheat = 5\nstyle = \"ascii\"\nlighting = true\n\n[pomodoro]\nfocus_min = 50 # long\n"
+            "[lamp]\nheat = 5\nstyle = \"ascii\"\nspeed = 2.0\n\n[pomodoro]\nfocus_min = 50 # long\n"
         );
         // A value both changed: the app's newer change wins.
         settings.lamp.heat = 1;
@@ -805,6 +811,23 @@ mod tests {
         let loaded = Store::new(Some(path)).load().settings;
         assert_eq!(loaded.lamp.heat, 1);
         assert_eq!(loaded.pomodoro.focus_min, 50);
+    }
+
+    /// Settings earlier versions had load without a toast; the next save
+    /// takes them out (no backup: there's nothing to keep).
+    #[test]
+    fn retired_keys_load_quietly_and_go_on_save() {
+        let dir = TempDir::new("retired");
+        let path = dir.join("config.toml");
+        fs::write(&path, "[lamp]\nlighting = true # glow\nheat = 2\n").unwrap();
+        let mut store = Store::new(Some(path.clone()));
+        let loaded = store.load();
+        assert_eq!(loaded.problem, None);
+        let mut settings = loaded.settings;
+        settings.lamp.heat = 3;
+        store.save(&settings).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "[lamp]\nheat = 3\n");
+        assert_eq!(dir.names(), ["config.toml"]);
     }
 
     /// An edit in progress that breaks the file isn't clobbered.
@@ -816,7 +839,7 @@ mod tests {
         let mut store = Store::new(Some(path.clone()));
         let mut settings = store.load().settings;
         fs::write(&path, "[lamp]\nheat = \n").unwrap();
-        settings.lamp.lighting = true;
+        settings.lamp.speed = 2.0;
         assert_eq!(
             store.save(&settings),
             Err("config: invalid TOML line 2 · not saved".into())
@@ -828,7 +851,7 @@ mod tests {
         store.save(&settings).unwrap();
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
-            "[lamp]\nheat = 4\nlighting = true\n"
+            "[lamp]\nheat = 4\nspeed = 2.0\n"
         );
     }
 
@@ -981,7 +1004,7 @@ mod tests {
             Some("config: read-only · not saving")
         );
         let mut settings = loaded.settings;
-        settings.lamp.lighting = true;
+        settings.clock.show = false;
         assert_eq!(store.save(&settings), Ok(()));
         assert_eq!(fs::read_to_string(&path).unwrap(), text);
         assert_eq!(dir.names(), ["config.toml"]);
@@ -991,7 +1014,7 @@ mod tests {
         let mut store = Store::new(Some(path.clone()));
         let mut settings = store.load().settings;
         fs::set_permissions(&path, fs::Permissions::from_mode(0o444)).unwrap();
-        settings.lamp.lighting = true;
+        settings.clock.show = false;
         assert_eq!(
             store.save(&settings),
             Err("config: read-only · not saving".into())

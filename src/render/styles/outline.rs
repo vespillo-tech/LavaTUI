@@ -18,12 +18,11 @@ impl LampStyle for Outline {
 
     fn draw(c: &Canvas, buf: &mut Buffer) {
         c.for_each_cell(buf, |at, cell| {
-            let (mut heat, mut light, mut dots) = (0.0, 0.0, 0.0);
+            let (mut heat, mut dots) = (0.0, 0.0);
             let bits = braille_dots(at.cx, at.cy, |x, y| {
                 let edge = is_edge(c, x, y);
                 if edge {
                     heat += wax_heat(c.at(x, y).temp);
-                    light += c.light(x, y);
                     dots += 1.0;
                 }
                 edge
@@ -31,10 +30,7 @@ impl LampStyle for Outline {
             let line = (bits != 0).then(|| {
                 // Lifted toward hot so a thin line holds its own against the liquid.
                 let wax = Ink::Wax(0.3 + 0.7 * heat / dots);
-                (
-                    braille(bits),
-                    c.theme.paint(wax).shade(light / dots).color(),
-                )
+                (braille(bits), c.theme.color(wax))
             });
             mark(cell, line, at.base);
         });

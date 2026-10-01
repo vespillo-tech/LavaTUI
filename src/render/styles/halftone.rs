@@ -30,8 +30,7 @@ impl LampStyle for Halftone {
         c.for_each_cell(buf, |at, cell| {
             let (a, b) = (c.at(at.x, at.y), c.at(at.x, at.y + 1));
             let heat = wax_heat(0.5 * (a.temp + b.temp));
-            let light = 0.5 * (c.light(at.x, at.y) + c.light(at.x, at.y + 1));
-            let ink = ink(0.5 * (a.density + b.density), heat, light);
+            let ink = ink(0.5 * (a.density + b.density), heat);
             let steps = if (at.cx + at.cy) % 2 == 0 {
                 SCREEN
             } else {
@@ -49,7 +48,7 @@ impl LampStyle for Halftone {
 
 /// Ink coverage 0..1: fades in across a wide band around the surface so
 /// dots shrink toward the skin, and hotter wax prints heavier.
-fn ink(density: f32, heat: f32, light: f32) -> f32 {
+fn ink(density: f32, heat: f32) -> f32 {
     let body = smoothstep((density - (SURFACE - 0.15)) / 0.6);
-    body * (0.6 + 0.4 * heat) * light
+    body * (0.6 + 0.4 * heat)
 }
