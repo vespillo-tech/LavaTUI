@@ -60,8 +60,11 @@ pub fn draw_on_lava(buf: &mut Buffer, stack: &Stack, model: &Model, lamp: &Theme
 }
 
 /// Below this contrast ratio (WCAG) a floating word leaves its own ink
-/// for the palette's light or dark one.
+/// for the palette's light or dark one; or below how well its ink reads
+/// on the plain liquid, if that's less (paper's `dim`, 2.85 : 1), give or
+/// take [`SLACK`], so a palette's quiet ink stays quiet on its own liquid.
 const LEGIBLE: f32 = 3.0;
+const SLACK: f32 = 0.95;
 /// How much a word's ink from the last frame is favoured: another ink has
 /// to read this much better before the word flips, so a word flips once
 /// as wax drifts under it, never back and forth frame to frame.
@@ -203,6 +206,7 @@ fn float(buf: &mut Buffer, scratch: &Buffer, dim: Color, lamp: &Theme) {
         own.1
     };
     let (light_l, dark_l) = (lamp.luminance(light), lamp.luminance(dark));
+    let liquid_l = lamp.luminance(lamp.role(Role::Liquid));
     let lum = |ink| match ink {
         Ink::Light => light_l,
         Ink::Dark => dark_l,
@@ -234,8 +238,20 @@ fn float(buf: &mut Buffer, scratch: &Buffer, dim: Color, lamp: &Theme) {
             worst(&mut |_| light_l).map(|s| s * sticky(Ink::Light)),
             worst(&mut |_| dark_l).map(|s| s * sticky(Ink::Dark)),
         );
+        // The word's own ink, as it reads on the plain liquid.
+        let mut calm = f32::MAX;
+        for &i in &glyphs {
+            if let (Some(o), Some(l)) = (own_lum(scratch[at(i)].fg), liquid_l) {
+                calm = calm.min(theme::contrast(o, l));
+            }
+        }
+        let legible = if calm < LEGIBLE {
+            calm * SLACK
+        } else {
+            LEGIBLE
+        };
         let ink = match scores {
-            (Some(own), Some(l), Some(d)) if own < LEGIBLE => {
+            (Some(own), Some(l), Some(d)) if own < legible => {
                 if d > l {
                     Ink::Dark
                 } else {
@@ -516,6 +532,16 @@ mod tests {
         assert_eq!(ink_over(160), dark);
         assert_eq!(ink_over(133), dark, "inside the band: no flip back");
         assert_eq!(ink_over(100), text);
+    }
+
+    #[test]
+    fn a_quiet_ink_stays_quiet_on_its_own_liquid() {
+        // Paper's `dim` reads 2.85 : 1 on its liquid, under LEGIBLE.
+        let t = theme("paper");
+        let (liquid, dim) = (t.role(Role::Liquid), t.role(Role::Dim));
+        let buf = float_row(&t, &[(" ", liquid, liquid); 3], "thu", dim);
+        assert_eq!(buf[(0, 0)].fg, dim);
+        assert!(!buf[(0, 0)].modifier.contains(Modifier::BOLD));
     }
 
     #[test]

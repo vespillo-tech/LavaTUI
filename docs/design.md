@@ -826,7 +826,9 @@ or halo.
 **word**: glyphs joined along a line, and block glyphs up and down too,
 so a clock digit is one word and is never two-tone. A word keeps its own
 role ink (`text`, `accent`, `dim`) while that reads at least 3 : 1
-(WCAG contrast) against everything behind it, measured on what the eye
+(WCAG contrast; or as well as the ink reads on the palette's plain
+liquid, if that's less, so paper's 2.85 : 1 `dim` stays `dim` on its
+own liquid) against everything behind it, measured on what the eye
 sees there (a glyph style's own glyph counts half). Otherwise it takes
 whichever of the palette's light and dark inks (`text` and `bg`, the
 lighter first; white and black where they are the terminal's defaults)
@@ -913,8 +915,8 @@ the nearest xterm index in 256 colours, and no cover at all in 16
 colours or `NO_COLOR` (the cover forms aren't offered). Until the cover
 has arrived (or if it can't be had) a quiet placeholder holds its place
 (`bg` tinted 18 % toward `dim`, a dim `♪` in the middle), so nothing jumps
-when it lands. On the lava the cover is opaque; the soft backing frames
-it like the text.
+when it lands. On the lava the cover is opaque, drawn as it is (with
+`dock.backing = "soft"` the soft backing frames it like the text).
 
 **Without a player** the widget is one calm, dim sentence, wrapped at 20
 cols beside the lamp and 30 on the lava, and it has no chip: `♪ Spotify
@@ -982,7 +984,8 @@ the lamp's width pick the narrower ones on small lamps):
 ```
 
 **Look: no backing needed.** Role colours only, so it reads with or
-without the soft backing (lava-9vj.8 drops it by default): the current
+without the soft backing (none by default: the floating text's ink adapts
+to the wax, §4.6 "The backing"): the current
 line bold `text`, the others `dim`, lined up by the anchor (centred at
 the bottom). A line too wide for the form is cut with `…`, except the
 current one, which wraps onto the row below in the 3- and 5-row forms
