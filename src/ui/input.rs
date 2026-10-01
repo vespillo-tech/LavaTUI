@@ -7,6 +7,9 @@ pub enum Action {
     Quit,
     /// Draw a frame now (e.g. the terminal was resized).
     Redraw,
+    /// Temporary until the full keymap (lava-xxx): cycle style / palette.
+    NextStyle,
+    NextPalette,
 }
 
 pub fn action_for(event: &Event) -> Option<Action> {
@@ -22,6 +25,8 @@ fn key_action(key: &KeyEvent) -> Option<Action> {
     match key.code {
         KeyCode::Char('q') | KeyCode::Esc => Some(Action::Quit),
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Some(Action::Quit),
+        KeyCode::Char('s') => Some(Action::NextStyle),
+        KeyCode::Char('p') => Some(Action::NextPalette),
         _ => None,
     }
 }
@@ -51,6 +56,13 @@ mod tests {
             action_for(&press(KeyCode::Char('c'), KeyModifiers::NONE)),
             None
         );
+    }
+
+    #[test]
+    fn cycle_keys() {
+        let key = |c| press(KeyCode::Char(c), KeyModifiers::NONE);
+        assert_eq!(action_for(&key('s')), Some(Action::NextStyle));
+        assert_eq!(action_for(&key('p')), Some(Action::NextPalette));
     }
 
     #[test]

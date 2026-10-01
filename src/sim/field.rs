@@ -103,10 +103,6 @@ impl Field {
         self.view_width
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "read by render styles (lava-bdj)")
-    )]
     /// Container shape, for masking the glass.
     pub fn shape(&self) -> Shape {
         self.shape

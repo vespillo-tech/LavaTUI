@@ -12,7 +12,9 @@ use ratatui::DefaultTerminal;
 use ratatui::crossterm::event;
 
 use crate::config::Config;
+use crate::render::{LampState, StyleId};
 use crate::sim::{Field, Shape, SimSpeed, World};
+use crate::theme::{ColorDepth, Palette, Theme};
 use crate::timing::{FixedStep, FpsMeter, FramePacer};
 use crate::ui::{self, Action, Scene};
 
@@ -32,7 +34,12 @@ pub fn run(terminal: &mut DefaultTerminal, config: &Config) -> io::Result<()> {
     let speed = SimSpeed::default();
     world.prewarm(PREWARM_STEPS, sim_clock.dt_secs());
     let mut field = Field::default();
-    let mut samples = Vec::new();
+    let mut lamp = LampState::default();
+    let mut style = StyleId::default();
+    let depth = ColorDepth::detect();
+    let mut palette = 0;
+    let mut theme = Theme::new(&Palette::all()[palette], depth);
+    let start = Instant::now();
     let mut pacer = FramePacer::new(config.fps, Instant::now());
     let mut fps = FpsMeter::default();
     let mut last = Instant::now();
@@ -41,6 +48,11 @@ pub fn run(terminal: &mut DefaultTerminal, config: &Config) -> io::Result<()> {
     loop {
         match wait_for_input(pacer.deadline())? {
             Some(Action::Quit) => return Ok(()),
+            Some(Action::NextStyle) => style = style.next(),
+            Some(Action::NextPalette) => {
+                palette = (palette + 1) % Palette::all().len();
+                theme = Theme::new(&Palette::all()[palette], depth);
+            }
             Some(Action::Redraw) | None => {}
         }
 
@@ -55,10 +67,13 @@ pub fn run(terminal: &mut DefaultTerminal, config: &Config) -> io::Result<()> {
         field.prepare(&world, sim_clock.alpha());
         let scene = Scene {
             field: &field,
+            style,
+            theme: &theme,
+            time: (now - start).as_secs_f64(),
             fps: fps.fps(),
             minimal: config.minimal,
         };
-        terminal.draw(|frame| ui::draw(frame, &scene, &mut samples))?;
+        terminal.draw(|frame| ui::draw(frame, &scene, &mut lamp))?;
 
         let drawn = Instant::now();
         fps.tick(drawn);

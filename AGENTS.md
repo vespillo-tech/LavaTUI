@@ -156,6 +156,8 @@ cargo test                           # unit tests (timing, keymap, CLI)
 cargo fmt --check                    # formatting gate
 cargo clippy --all-targets -- -D warnings   # lint gate
 cargo test --release -- --ignored --nocapture bench_fill   # field sampler + step timing
+cargo test --release -- --ignored --nocapture bench_lamp   # per-style frame time + bytes/frame
+UPDATE_SNAPSHOTS=1 cargo test        # rewrite render snapshots (review the diff!)
 ```
 
 The binary needs a real TTY (it errors out cleanly without one). To smoke-test
@@ -183,13 +185,32 @@ headlessly, run it under a pty with a window size set (e.g. Python `pty.fork`
                 then `fill(&mut [Sample], cols, rows)` / `sample(u, v)`
                 (v down; density `>= SURFACE` is wax). Model notes and all
                 tuning constants are at the top of `sim/mod.rs`.
-- `render/`   — stub. Planned: `Style` trait + registry, one file per style.
-- `light/`    — stub. Optional lighting/glow pass on the sampled field.
+- `theme/`    — palettes + colour depth: the only place colours are decided.
+                `Palette` (9 `Role`s × 8 palettes from design §5.2, hex/256/16),
+                `ColorDepth::detect()` (NO_COLOR → COLORTERM → TERM, §5.3),
+                `Theme::new(palette, depth)`. Styles ask for `Ink::Role(r)`,
+                `Ink::Wax(t)` (cool→mid→hot) or `Ink::Heat(t)` (liquid→hot) via
+                `theme.color(ink)` / `theme.paint(ink).mix(..).scale(..).color()`;
+                16/none never blend (dominant side wins), 256 snaps to xterm.
+- `render/`   — render pipeline. `LampView { field, style, theme, time,
+                lighting }` is a `StatefulWidget` (state `LampState` = reused
+                scratch buffers); it samples the field at the style's `Grid`
+                (half-block 1×2, braille 2×4, …; >400k samples → coarse fill +
+                bilinear upsample), builds the glass mask, runs the optional
+                lighting pass, then calls `Style::draw(&Canvas, area, buf)`.
+                Styles live one per file in `render/styles/`, registered in
+                `styles::ALL` (`StyleId` cycles/looks up). Shared helpers:
+                `coverage` (quantised AA edge), `wax_heat`, `bayer`,
+                `cell::{half_block, braille}`. Snapshots: `render/snapshots/`
+                (`UPDATE_SNAPSHOTS=1 cargo test` to rewrite, then review).
+- `light/`    — `Lighting` trait: the seam for the glow pass (lava-5ak). Fills a
+                per-sample brightness buffer that styles read via `Canvas::light`.
 - `clock/`    — stub. Clock faces (`Face` trait) + pomodoro state machine.
-- `ui/`       — the only terminal-facing code. `draw(frame, &Scene, &mut samples)`;
+- `ui/`       — the only terminal-facing code. `draw(frame, &Scene, &mut LampState)`
+                renders `LampView` full-screen plus a one-line status hint;
                 `input.rs` maps crossterm events → `Action` (q/Esc/Ctrl-C quit,
-                resize → immediate redraw); `placeholder.rs` is a temporary
-                half-block density view of the field, replaced by lava-bdj.
+                `s` next style, `p` next palette — temporary until the lava-xxx
+                keymap — resize → immediate redraw).
 
 crossterm is used via ratatui's re-export (`ratatui::crossterm`) so the two
 never drift apart; there is no direct crossterm dependency.

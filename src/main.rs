@@ -7,6 +7,7 @@ mod config;
 mod light;
 mod render;
 mod sim;
+mod theme;
 mod timing;
 mod ui;
 
