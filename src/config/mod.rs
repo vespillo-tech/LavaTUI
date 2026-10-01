@@ -670,6 +670,17 @@ mod tests {
     }
 
     #[test]
+    fn dock_backing_loads_and_defaults_to_none() {
+        assert_eq!(Settings::default().dock.backing, dock::Backing::None);
+        let p = Settings::parse("[dock]\nbacking = \"soft\"\n").unwrap();
+        assert_eq!(p.settings.dock.backing, dock::Backing::Soft);
+        assert!(p.ignored.is_empty() && p.unknown.is_empty());
+        let p = Settings::parse("[dock]\nbacking = \"glass\"\n").unwrap();
+        assert_eq!(p.ignored, ["dock.backing"]);
+        assert_eq!(p.settings.dock.backing, dock::Backing::None);
+    }
+
+    #[test]
     fn dock_places_load_and_a_hidden_clock_carries_over() {
         let clock = &dock::Clock;
         let p = Settings::parse("[dock]\nclock = \"overlay\"\nanchor = \"top-left\"\n").unwrap();
