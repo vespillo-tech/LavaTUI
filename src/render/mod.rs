@@ -23,7 +23,6 @@ mod tests;
 mod walls;
 
 pub use canvas::Canvas;
-pub use walls::wall;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;

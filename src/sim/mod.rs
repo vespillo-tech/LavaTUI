@@ -45,6 +45,7 @@ mod rng;
 
 use std::f64::consts::PI;
 
+use crate::silhouette::{self, BOTTLE_ASPECT};
 pub use blob::{Blob, Phase};
 pub use controls::SimSpeed;
 pub use controls::{DEFAULT_HEAT, HEAT_LEVELS};
@@ -156,9 +157,6 @@ const FLOW_CELL: f64 = 0.8;
 const WALL_EASE: f64 = 0.08;
 /// Pool area eases toward the volume target at this rate (1/s).
 const POOL_EASE: f64 = 0.5;
-/// The bottle world's fixed aspect (bounding box width ÷ height): the
-/// §2.1 silhouette at the default cell aspect. Glass never resizes the sim.
-pub const BOTTLE_ASPECT: f64 = 0.5;
 /// Accepted lamp aspect range.
 const ASPECT_RANGE: (f64, f64) = (0.05, 20.0);
 
@@ -179,18 +177,7 @@ impl Shape {
     pub fn width_fraction(self, y: f64) -> f64 {
         match self {
             Shape::Tank => 1.0,
-            Shape::Bottle => {
-                // 0.56 at the base → 0.78 bulge at 72 % down → 0.40 at the
-                // top, relative to the 0.78 bulge.
-                const BULGE_Y: f64 = 0.28;
-                let (base, top) = (0.56 / 0.78, 0.40 / 0.78);
-                let y = y.clamp(0.0, 1.0);
-                if y < BULGE_Y {
-                    base + (1.0 - base) * y / BULGE_Y
-                } else {
-                    1.0 + (top - 1.0) * (y - BULGE_Y) / (1.0 - BULGE_Y)
-                }
-            }
+            Shape::Bottle => silhouette::bottle_width(y),
         }
     }
 
@@ -207,10 +194,7 @@ impl Shape {
     fn area(self, width: f64) -> f64 {
         match self {
             Shape::Tank => width,
-            Shape::Bottle => {
-                let f = |y| self.width_fraction(y);
-                width * (0.28 * (f(0.0) + f(0.28)) + 0.72 * (f(0.28) + f(1.0))) / 2.0
-            }
+            Shape::Bottle => width * silhouette::bottle_area(),
         }
     }
 }

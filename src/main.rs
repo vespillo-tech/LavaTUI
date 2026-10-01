@@ -6,6 +6,7 @@ mod clock;
 mod config;
 mod light;
 mod render;
+mod silhouette;
 mod sim;
 mod theme;
 mod timing;

@@ -14,25 +14,15 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 use super::Grid;
+use crate::silhouette::{row_height, row_span};
 use crate::sim::Shape;
 use crate::theme::Theme;
-
-/// Half-width of `shape` at height `world_y` (0 bottom … 1 top) in a view
-/// `cols` wide, in half columns either side of the view's centre. The same
-/// rounding as the glass cap and base (`ui::glass`), so they meet flush.
-pub fn wall(shape: Shape, cols: u16, world_y: f64) -> u32 {
-    let n = (shape.width_fraction(world_y) * f64::from(cols)).round();
-    n.clamp(1.0, f64::from(cols)) as u32
-}
 
 /// Inside span `[lo, hi)`, in half columns from the view's left edge, for
 /// each half row of cell row `row`: `[top, bottom]`.
 fn spans(shape: Shape, cols: u16, rows: u16, row: u16) -> [(u32, u32); 2] {
-    let half_row = |h: u32| {
-        let world_y = 1.0 - (f64::from(h) + 0.5) / (2.0 * f64::from(rows));
-        let n = wall(shape, cols, world_y);
-        (u32::from(cols) - n, u32::from(cols) + n)
-    };
+    let half_rows = 2 * u32::from(rows);
+    let half_row = |h: u32| row_span(shape, cols, row_height(h, half_rows));
     let h = 2 * u32::from(row);
     [half_row(h), half_row(h + 1)]
 }

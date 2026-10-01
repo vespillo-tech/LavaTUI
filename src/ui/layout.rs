@@ -22,6 +22,7 @@ use ratatui::layout::Rect;
 
 use crate::clock::{Face, FaceOptions, Form, Tier};
 use crate::config::{FrameMode, MinimalClock};
+use crate::silhouette;
 
 /// Everything the layout depends on besides the terminal size.
 #[derive(Clone, Copy)]
@@ -113,8 +114,6 @@ pub struct Layout {
     pub toast: Option<Rect>,
 }
 
-/// Lamp width ÷ height in cells, at `cell_aspect` 2.0 (§1.4: `W = 0.8 Ht`).
-const GLASS_WIDTH: f64 = 0.8;
 /// Auto picks glass with at least this many content rows and at most this
 /// visual aspect (§2.1); coming from bleed it needs the stricter pair.
 const AUTO_GLASS: (u16, f64) = (20, 2.2);
@@ -208,7 +207,7 @@ pub fn layout(area: Rect, input: &LayoutInput) -> Layout {
         ..area
     };
 
-    let k = GLASS_WIDTH * 2.0 / input.cell_aspect.clamp(1.0, 4.0);
+    let k = silhouette::LAMP_WIDTH * 2.0 / input.cell_aspect.clamp(1.0, 4.0);
     let micro = cols < 20 || rows < 8;
     let glass = match input.frame {
         _ if micro => false,
@@ -270,12 +269,10 @@ fn shrink(r: Rect, (v, h): (u16, u16)) -> Option<Rect> {
 /// A glass lamp `ht` rows tall at (`x`, `y`).
 fn glass_lamp(x: u16, y: u16, ht: u16, k: f64) -> Lamp {
     let w = glass_width(ht, k);
-    let cap = ((f64::from(ht) * 0.15).round() as u16).max(2);
-    let base = ((f64::from(ht) * 0.22).round() as u16).max(2);
-    let bottle = ht - cap - base;
-    // Bottle bulge is 0.78 of the width; keep the parity of `w` so both
+    let (cap, bottle, base) = silhouette::part_rows(ht);
+    // The bottle bulge spans the view; keep the parity of `w` so both
     // centre on the same column.
-    let side = (f64::from(w) * 0.11).round() as u16;
+    let side = (f64::from(w) * silhouette::BOTTLE_INSET).round() as u16;
     let region = Rect::new(x, y, w, ht);
     Lamp {
         region,

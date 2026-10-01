@@ -10,14 +10,12 @@
 use ratatui::buffer::Buffer;
 use ratatui::style::Style;
 
-use crate::render::{smoothstep, wall};
+use crate::render::smoothstep;
+use crate::silhouette::{BASE, CAP, row_height, row_span};
 use crate::sim::Shape;
 use crate::theme::{Ink, Role, Theme};
 use crate::ui::layout::{Glass, Lamp};
 
-/// Cap: 0.18 → 0.40 of the lamp width; base: 0.56 → 1.0 (§2.1).
-const CAP: (f64, f64) = (0.18, 0.40);
-const BASE: (f64, f64) = (0.56, 1.0);
 /// Metal brightness at the top of the cap and the bottom of the base.
 const SHADE: (f32, f32) = (1.25, 0.7);
 /// Highlight streak: how far toward `text` at its brightest (§2.1: ~20 %),
@@ -103,9 +101,8 @@ fn edges(buf: &mut Buffer, lamp: &Lamp, style: Style) {
     let v = lamp.view;
     let r = lamp.region;
     for j in 0..v.height {
-        let world_y = 1.0 - (f64::from(j) + 0.5) / f64::from(v.height);
-        let n = wall(Shape::Bottle, v.width, world_y);
-        let (lo, hi) = (u32::from(v.width) - n, u32::from(v.width) + n);
+        let world_y = row_height(u32::from(j), u32::from(v.height));
+        let (lo, hi) = row_span(Shape::Bottle, v.width, world_y);
         // Half-column → (cell, glyph); `None` if it falls off the region.
         let left = match lo % 2 {
             0 => (v.x + (lo / 2) as u16).checked_sub(1).map(|x| (x, '▕')),
@@ -145,8 +142,7 @@ fn streak(buf: &mut Buffer, lamp: &Lamp, theme: &Theme) {
         let n = Shape::Bottle.width_fraction(world_y(0.5)) * f64::from(v.width);
         let centre = f64::from(v.width) - n * (1.0 - STREAK_INSET);
         // Never on a cell the wall cuts (those show `bg` on one side).
-        let inner =
-            [0.25, 0.75].map(|dy| u32::from(v.width) - wall(Shape::Bottle, v.width, world_y(dy)));
+        let inner = [0.25, 0.75].map(|dy| row_span(Shape::Bottle, v.width, world_y(dy)).0);
         let first = inner[0].max(inner[1]).div_ceil(2);
         // The nearest cell carries the full level and the next one fades
         // in as the band crosses over, so it never dims or splits.
