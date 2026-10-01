@@ -3,7 +3,8 @@
 Status: **contract** for `lava-xxx` (TUI shell), `lava-bdj`/`lava-y7g`
 (styles), `lava-ef7` (faces) and `lava-h0f` (palettes/perf); v1.1
 (`lava-9vj`) dropped the glass frame, the lighting pass and the heatmap,
-dither and crt styles. If the code and this doc disagree, fix one of them on purpose,
+dither and crt styles, and turned the panel into a widget dock (§4.6):
+the clock and pomodoro each sit in the side panel, on the lava, or off. If the code and this doc disagree, fix one of them on purpose,
 not by accident.
 
 The one rule above all others: **the lamp is the hero, and the screen is
@@ -21,8 +22,10 @@ truncate mid-word, wrap, overlap or overflow.
 | **visual aspect** `A` | `cols / (rows × cell_aspect)`: the true on-screen width÷height. `cell_aspect` defaults to 2.0 (see §2.3). |
 | **content area** | Terminal minus the status bar row when it's shown. |
 | **lamp region** | The part of the content area that belongs to the lamp. The fluid fills it edge to edge: there is no frame or silhouette. |
-| **panel** | The clock + pomodoro block, placed beside the lamp (right panel) or below it (bottom panel). |
-| **chip** | The single-line fallback for the panel: ` 14:32 ` or ` ▸ 18:24 `, drawn over a corner of the lamp. |
+| **widget** | A dock widget (§4.6): the clock or the pomodoro (more to come). Each is placed `side`, `overlay` (on the lava) or `off`. |
+| **panel** | The widgets placed `side` (clock + pomodoro by default), stacked beside the lamp (right panel) or below it (bottom panel). |
+| **on the lava** | The widgets placed `overlay`, stacked over the lamp at the dock's anchor on a soft backing (§4.6). |
+| **chip** | The single-line fallback for a widget with no room where it was put: ` 14:32 ` or ` ▸ 18:24 `, drawn over a corner of the lamp. |
 | **toast** | A transient one-line message, e.g. the style name after pressing `s`. |
 
 ---
@@ -73,8 +76,9 @@ the lamp (§1.4).
 |---|---|---|
 | **Lamp** | always (if `cols < 4` or `rows < 2`, the screen is painted `bg`, nothing else) | fills what the status bar and panel leave (§2.1) |
 | **Status bar** | `rows ≥ 14 && cols ≥ 30 && status_bar_on` and not minimal mode | segments drop per §4.1 |
-| **Panel** | the placement algorithm (§1.4) finds a slot | face variant = largest that fits the panel's inner rect |
-| **Chip** | no panel, clock or pomodoro enabled, `cols ≥ 20 && rows ≥ 8` | shows the pomodoro while one is running (`▸`) or paused (`‖`), `break` before a break's time, else the clock |
+| **Panel** | some widget is placed `side` and the placement algorithm (§1.4) finds a slot | face variant = largest that fits the panel's inner rect |
+| **Widgets on the lava** | some widget is placed `overlay`, not Micro, the lamp is ≥ 28 × 10, and their smallest forms fit (§4.6) | largest forms that fit in 60 % of the lamp's width and half its height, backing included ≤ 35 % of its area |
+| **Chip** | a widget with no room where it was put (`side` with no panel, `overlay` that didn't fit), `cols ≥ 20 && rows ≥ 8` | the highest-ranked such widget: the pomodoro while one is running (`▸`) or paused (`‖`), `break` before a break's time, else the clock |
 | **Date line** | in panel, `rows ≥ 36`, and the panel still fits | `thu 1 oct`, dim, lowercase |
 | **Pomodoro label** `focus` / `break` | panel inner width ≥ 18 | — |
 | **Cycle dots** `●●○○` | panel inner width ≥ 22 | right-aligned on the label line |
@@ -87,8 +91,11 @@ go at the top). The lamp is never hidden.
 1. Extended key hints (dropped in the §4.1 order until only `? help` is left, then that too)
 2. Date line
 3. Cycle dots, then the pomodoro phase label
-4. Clock face size (XL → L → M → S → `text`)
-5. Panel (→ collapses into the chip; nothing is lost but size)
+4. Clock face size (XL → L → M → S → `text`). With several widgets in
+   one place, the last one shrinks first (on the lava: the pomodoro's
+   3 → 2 → 1 rows before the face shrinks).
+5. Panel, and the widgets on the lava (→ collapse into the chip;
+   nothing is lost but size)
 6. Status bar
 7. Clock chip (a running pomodoro chip outranks it)
 8. Pomodoro chip
@@ -100,7 +107,8 @@ go at the top). The lamp is never hidden.
 panel_w   = clamp(round(cols × 0.30), 22, 36)      // incl. 1-col inner padding each side
             // cols ≥ 200: widened to face_w + 2 (max 56) when the face needs it
 panel_h   = face_h + (date? 2) + 2 + 3             // face, gap, label/time/bar
-                                                   // (clock hidden: just 3)
+                                                   // (each side widget's height,
+                                                   // 2 rows between; pomodoro alone: 3)
 
 1. A ≥ 1.0 → right panel, flush with the right edge and vertically
    centred, if the lamp keeps ≥ 60 % of cols and ≥ 24 cols.
@@ -465,11 +473,14 @@ untouched (same blobs, same phase).
 * **Just the lamp.** No status bar, no panel, no hints, no borders. The
   lamp fills the screen.
 * **Tiny optional clock** (`minimal.clock = "corner" | "off"`, default
-  `corner`): the clock chip in the bottom-right corner. A running pomodoro
+  `corner`): the clock chip in the bottom-right corner (the panel's
+  widgets have no panel here). A running pomodoro
   replaces it with `▸ 18:24` in the phase colour, even with the clock
   off; a break also says so, `▸ break 4:12`, since phase colours can be
   near twins (and are one colour in 16 / none). The old value `under`
   (under the glass lamp) loads as `corner`.
+* Widgets placed on the lava (§4.6) stay: they're part of the lamp's
+  picture, not chrome. `t` / `f` cycle them as usual.
 * Every key still works. Toasts still appear (that's the only feedback
   minimal mode gives). `?` still opens help, and the pickers still open:
   minimal mode drops the resting chrome, not the overlays.
@@ -552,7 +563,7 @@ The form depends on the terminal size (`ui/help/sheet.rs`):
   with a **rounded border in `metal`**. Overlays are the only place
   borders appear. The title `keys` sits in the top border in `accent`,
   and `esc close` in the bottom-right border in `dim`. The sheet always
-  has two columns: *lamp* | *clock & pomodoro* then *app*, with section
+  has two columns: *lamp* then *widgets* | *clock & pomodoro* then *app*, with section
   headers in `dim`, keys in `accent` and labels in `text`. Labels line up
   per column at its widest key + 2; the left column takes its natural
   width (at least half) and a 2-col gutter separates them. The rows come
@@ -563,7 +574,7 @@ The form depends on the terminal size (`ui/help/sheet.rs`):
 * **Smaller (not Micro): a full-screen sheet**, one column, scrollable
   with `j/k/↑/↓`, no border: `keys` (accent) top-left and `esc close`
   (dim) top-right on the first row, the body from the third row. The
-  *app* section comes first (`m ? q` lead it), then lamp, then clock;
+  *app* section comes first (`m ? q` lead it), then lamp, clock, widgets;
   labels line up per section. When keys are cut off, a dim scroll hint
   sits after `keys`: `↓ j/k more` (`↑` at the end, `↕` between),
   shortened to `↓ more` or `↓` to fit.
@@ -584,19 +595,19 @@ the sheet would touch it, §8.2):
         │  lamp                         clock & pomodoro               │
         │  s    next style              c       next face              │
         │  S    style picker            C       face picker            │
-        │  p    next palette            t       show/hide clock        │
-        │  P    palette picker          T       12h / 24h              │
-        │  [ ]  heat − +                ␣       start / pause          │
-        │  - +  speed                   n       skip phase             │
-        │  z    freeze                  r r     reset pomodoro         │
-        │  0    reset heat & speed                                     │
-        │  R    reseed wax              app                            │
-        │                               m       minimal                │
+        │  p    next palette            T       12h / 24h              │
+        │  P    palette picker          ␣       start / pause          │
+        │  [ ]  heat − +                n       skip phase             │
+        │  - +  speed                   r r     reset pomodoro         │
+        │  z    freeze                                                 │
+        │  0    reset heat & speed      app                            │
+        │  R    reseed wax              m       minimal                │
         │                               ?       this help              │
-        │                               q       quit · ctrl-c          │
-        │                               b       status bar             │
-        │                               d       debug hud              │
-        │                               ctrl-l  redraw                 │
+        │  widgets                      q       quit · ctrl-c          │
+        │  t    clock side/lava/off     b       status bar             │
+        │  f    pomodoro side/lava/off  d       debug hud              │
+        │  l    move lava widgets       ctrl-l  redraw                 │
+        │                                                              │
         ╰─────────────────────────────────────────────────── esc close ╯
  ⣀⣀⣀⣀⣀⣠⣤⣴⣶⣶⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⣦⣤⣀⣀
 ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⣶⣤⣤⣤
@@ -712,6 +723,51 @@ lamp's liquid tint pulses, peaking at 35 % toward `accent`, one `sin` swell over
 toast says `break · 5:00`, and the terminal bell sounds if
 `pomodoro.bell = true` (default true). Skipping a phase with `n` only
 toasts: no flash, no bell.
+
+---
+
+### 4.6 The widget dock
+
+The clock and the pomodoro are *widgets* (`src/dock/`). Each has a
+place, persisted as `dock.<name>`, cycled by its key: `t` the clock, `f`
+the pomodoro (`focus`), each `side → overlay → off → side`. A toast says
+where it went (`clock · on the lava`), adding `· no room` when the
+layout couldn't fit it there (it's in the chip meanwhile) and `· not in
+minimal` for `side` in minimal mode.
+
+* **side**: stacked in the panel (§1.4, §4.5), 2 rows apart, in
+  registry order (clock above pomodoro). The default for both, so the
+  default screen is the v1 panel, cell for cell.
+* **overlay**: stacked on the lava, 1 row apart, at the anchor
+  (`dock.anchor`; `l` moves it: centre → top → top right → bottom
+  right → bottom → bottom left → top left). Widgets line up by the
+  anchor: centred, or flush left / right at the sides. Limits, so the
+  lamp stays the hero: the lamp must be ≥ 28 × 10; the stack ≤ 60 % of
+  the lamp's width and ≤ half its height; with its backing ≤ 35 % of the
+  lamp's area; inset (≥ 5 cols / 3 rows, more on big lamps) so the
+  backing never reaches the toast row or the chip's row. Forms shrink in
+  the hide order first; when not even the smallest fit, the widgets go to
+  the chip. Seconds are never shown on the lava (they'd be the one thing
+  ticking over the wax); the date line comes along in tall terminals.
+* **off**: not drawn (a running pomodoro still toasts and flashes).
+
+**The backing.** Over the lava the widgets sit on a soft pool of liquid,
+not a box: under the stack and half a row around it the lamp is veiled
+82 % of the way to `liquid` (its glyphs cleared, so text never sits on
+wax glyphs), and the veil fades to nothing over the next 1½ rows (a
+column counts half a row), within 4 cols / 2 rows of the stack. Wax
+drifting behind shows as a faint ghost and melts out at the edges. This
+was picked from pty captures of all nine styles and eight palettes
+against three alternatives: no backing (unreadable over ascii, matrix,
+braille), a halo following the glyphs (busy around the pomodoro's short
+lines) and per-row spans (ragged edges). In 256 colours the veil would
+snap to cube greys (a grey box), so below truecolor the backing is plain
+`liquid` wherever it's at least half strength: a crisp, slightly rounded
+cutout, exact to the liquid's index.
+
+Chrome rules still hold: an overlay sheet (help, picker) touching the
+stack's backing hides the whole stack (§8.2); the face picker sits on
+whichever side keeps the panel and the stack clear when it can.
 
 ---
 
@@ -888,7 +944,9 @@ so they can't drift.
 | `s` / `S` | next style / style picker | toast shows `name  i/n` |
 | `c` / `C` | next clock face / face picker | |
 | `p` / `P` | next palette / palette picker | |
-| `t` | clock shown/hidden | hides the face in the panel/chip; the pomodoro stays |
+| `t` | clock: side → on the lava → off | §4.6; toast `clock · on the lava` |
+| `f` | pomodoro: side → on the lava → off | §4.6 |
+| `l` | move the widgets on the lava | centre → top → top right → … → top left |
 | `T` | 12h / 24h | |
 | `space` | pomodoro start / pause / resume | starts a focus phase if idle |
 | `n` | pomodoro: skip to next phase | idle: toasts `pomodoro idle · ␣ to start` |
@@ -1032,7 +1090,6 @@ transparent = false      # true = never paint bg (the terminal's own shows)
 
 [clock]
 face = "blocks"
-show = true
 hour24 = true
 
 [pomodoro]
@@ -1051,6 +1108,11 @@ clock = "corner"         # corner | off
 
 [input]
 mouse = false
+
+[dock]
+anchor = "center"        # center | top | top-right | bottom-right | bottom | bottom-left | top-left
+clock = "side"           # side | overlay | off
+pomodoro = "side"        # one key per widget in the registry
 ```
 
 Out-of-range values are clamped rather than rejected: `fps` 1–240,
@@ -1059,7 +1121,10 @@ nearest step (≤ 0 or non-finite → 1), pomodoro minutes 1–1440, `cycles`
 1–12. The old style name `glass` is accepted as `chrome`.
 
 Retired in v1.1, and quietly ignored in an old file (no toast; the next
-save takes them out): `lamp.frame`, `lamp.lighting`. A file naming a
+save takes them out): `lamp.frame`, `lamp.lighting`, `clock.show`
+(`show = false` loads as `dock.clock = "off"` unless the file sets
+`dock.clock`; the next save writes that). A `dock.<name>` for a widget
+this build doesn't have is an unknown key, kept in the file. A file naming a
 removed style (`heatmap`, `dither`, `crt`) gets `solid`, also without a
 toast; on the command line those names are unknown, like any other.
 

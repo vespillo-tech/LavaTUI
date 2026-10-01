@@ -556,3 +556,23 @@ fn ansi256_lamp_pixels_keep_their_truecolor_hue() {
         bad[..bad.len().min(20)].join("\n")
     );
 }
+
+#[test]
+fn veil_blends_only_in_truecolor() {
+    use ratatui::style::Color;
+    let liquid = lava().swatch(Role::Liquid).rgb.unwrap();
+    let t = Theme::new(lava(), ColorDepth::TrueColor);
+    assert_eq!(
+        t.veil(Color::Rgb(255, 255, 255), Role::Liquid, 1.0),
+        Color::Rgb(liquid.0, liquid.1, liquid.2)
+    );
+    let half = t.veil(Color::Rgb(255, 255, 255), Role::Liquid, 0.5);
+    assert_ne!(half, t.role(Role::Liquid));
+    // Below truecolor: whichever side dominates, never a snapped tint.
+    for depth in [ColorDepth::Ansi256, ColorDepth::Ansi16, ColorDepth::None] {
+        let t = Theme::new(lava(), depth);
+        let c = Color::Indexed(196);
+        assert_eq!(t.veil(c, Role::Liquid, 0.4), c, "{depth:?}");
+        assert_eq!(t.veil(c, Role::Liquid, 0.6), t.role(Role::Liquid));
+    }
+}

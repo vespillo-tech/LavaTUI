@@ -349,6 +349,22 @@ impl Theme {
         }
     }
 
+    /// `c`, an already drawn colour, veiled `t` of the way toward `role`:
+    /// the soft backing behind widgets on the lava. Truecolor RGB only
+    /// (256 colours would snap the tints to greys); otherwise whichever
+    /// side dominates.
+    pub fn veil(&self, c: Color, role: Role, t: f32) -> Color {
+        let to = self.paint(Ink::Role(role));
+        match c {
+            Color::Rgb(r, g, b) if self.blend && self.depth == ColorDepth::TrueColor => {
+                let Rgb(r, g, b) = Rgb(r, g, b).lerp(to.rgb, t);
+                Color::Rgb(r, g, b)
+            }
+            _ if t >= 0.5 => to.color(),
+            _ => c,
+        }
+    }
+
     /// A text style in `role`. In NO_COLOR, `accent` becomes bold (§5.3).
     pub fn text(&self, role: Role) -> Style {
         let style = Style::new().fg(self.role(role));

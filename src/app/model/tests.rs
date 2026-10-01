@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use super::*;
+use crate::dock::{Anchor, Clock, DockWidget, Place, Pomodoro};
 use crate::ui::keymap::Action;
 use crate::ui::picker::{self, Placement};
 
@@ -165,7 +166,7 @@ fn pomodoro_phase_end_toasts_flashes_and_rings() {
     let (mut m, t0) = model("pomodoro");
     m.update(Action::PomodoroToggle, t0);
     assert_eq!(m.pomodoro.status(), Status::Running);
-    assert_eq!(m.chip_text().unwrap().0, ChipKind::Pomodoro);
+    assert!(Pomodoro.chip(&m).is_some());
     let end = t0 + Duration::from_secs(25 * 60);
     tick(&mut m, end);
     assert_eq!(m.toast.as_ref().unwrap().text, "break · 5:00");
@@ -305,13 +306,12 @@ fn heat_and_speed_clamp_and_reset() {
 fn chip_tells_focus_from_break() {
     let (mut m, t0) = model("chip-phase");
     m.update(Action::PomodoroToggle, t0);
-    assert_eq!(m.chip_text().unwrap().1, "▸ 25:00");
+    assert_eq!(Pomodoro.chip(&m).unwrap().text, "▸ 25:00");
     m.update(Action::PomodoroSkip, t0);
-    let (kind, text) = m.chip_text().unwrap();
-    assert_eq!(kind, ChipKind::Pomodoro);
+    let text = Pomodoro.chip(&m).unwrap().text;
     assert!(text.starts_with("▸ break "), "{text}");
     m.update(Action::PomodoroToggle, t0);
-    assert!(m.chip_text().unwrap().1.starts_with("‖ break "));
+    assert!(Pomodoro.chip(&m).unwrap().text.starts_with("‖ break "));
 }
 
 #[test]
@@ -575,4 +575,55 @@ fn flash_level_rises_and_falls_once() {
     assert!((m.flash_level() - 0.5).abs() < 0.01);
     m.now = t0 + FLASH_TIME;
     assert!(m.flash_level() < 0.01);
+}
+
+#[test]
+fn widget_keys_cycle_places_and_persist() {
+    let path = temp_config("dock");
+    let (mut m, t0) = model_with(Session::default(), path.clone(), 120, 36);
+    let clock = m.layout.panel.as_ref().unwrap().items[0];
+    assert_eq!(clock.widget, 0);
+    m.update(Action::Place("clock"), t0);
+    assert_eq!(m.settings.dock.place(&Clock), Place::Overlay);
+    assert_eq!(m.toast.as_ref().unwrap().text, "clock · on the lava");
+    assert_eq!(m.layout.on_lava.as_ref().unwrap().items[0].widget, 0);
+    m.update(Action::Place("pomodoro"), t0);
+    assert!(m.layout.panel.is_none(), "nothing left beside the lamp");
+    assert_eq!(m.layout.lamp.unwrap().width, 120);
+    m.update(Action::Place("clock"), t0);
+    assert_eq!(m.toast.as_ref().unwrap().text, "clock · off");
+    assert!(m.layout.placed(0).is_none());
+    m.update(Action::NextAnchor, t0);
+    assert_eq!(m.settings.dock.anchor, Anchor::Top);
+    assert_eq!(m.toast.as_ref().unwrap().text, "on the lava · top");
+    m.save_at = Some(t0);
+    m.save();
+
+    let (m, _) = model_with(Session::default(), path, 120, 36);
+    assert_eq!(m.settings.dock.place(&Clock), Place::Off);
+    assert_eq!(m.settings.dock.place(&Pomodoro), Place::Overlay);
+    assert_eq!(m.settings.dock.anchor, Anchor::Top);
+}
+
+#[test]
+fn widget_toasts_say_when_there_is_no_room() {
+    let (mut m, t0) = model_with(Session::default(), temp_config("dock-room"), 24, 9);
+    m.update(Action::Place("clock"), t0);
+    assert_eq!(
+        m.toast.as_ref().unwrap().text,
+        "clock · on the lava · no room"
+    );
+    assert_eq!(m.layout.chip.unwrap().widget, 0, "the chip stands in");
+    m.update(Action::ToggleMinimal, t0);
+    m.update(Action::Place("clock"), t0);
+    m.update(Action::Place("clock"), t0);
+    assert_eq!(
+        m.toast.as_ref().unwrap().text,
+        "clock · side panel · not in minimal"
+    );
+    m.update(Action::NextAnchor, t0);
+    assert_eq!(
+        m.toast.as_ref().unwrap().text,
+        "on the lava · top · nothing there yet"
+    );
 }

@@ -33,6 +33,10 @@ in minimal mode:
 | **Style picker** (`S`) with live preview | **16 colours** (`--color 16`) |
 | ![style picker over a synthwave lamp](docs/screenshots/picker.png) | ![ascii style in 16 colours](docs/screenshots/color16.png) |
 
+| **On the lava** (`t`, `f`): clock and pomodoro over the wax | **Clock on the lava, pomodoro beside it** |
+|---|---|
+| ![clock and pomodoro on the lava, solid style](docs/screenshots/overlay.png) | ![clock on the lava in braille, pomodoro in the side panel](docs/screenshots/overlay-mix.png) |
+
 | Portrait terminal (36×56): panel moves below | Tiny terminal (26×10): lamp + clock chip |
 |---|---|
 | ![tall narrow terminal in abyss](docs/screenshots/portrait.png) | ![tiny terminal](docs/screenshots/tiny.png) |
@@ -50,6 +54,12 @@ in minimal mode:
   (light) and ansi (your terminal's own colours).
 - **Edge to edge.** The wax fills the window, with the clock and
   pomodoro beside it (or below it in a tall, narrow terminal).
+- **Widgets go where you want them.** The clock (`t`) and the pomodoro
+  (`f`) each sit in the side panel, on the lava, or off. On the lava they
+  float on a soft pool of liquid that the wax melts into at the edges,
+  readable over every style; `l` moves them round (centre, top, corners,
+  bottom). They shrink, then fall back to the corner chip, rather than
+  ever covering the lamp.
 - **Clock faces**: blocks, segment, analog, binary, words and text. Each
   face comes in several sizes, and the largest one that fits is used; on
   a very large terminal the panel widens for the biggest ones.
@@ -124,11 +134,14 @@ unknown `--style` or `--palette` name exits with the list of valid ones.
 | `R` | reseed the wax |
 | **Clock & pomodoro** | |
 | `c` / `C` | next clock face / face picker |
-| `t` | show/hide the clock |
 | `T` | 12h / 24h |
 | `space` | pomodoro start / pause / resume |
 | `n` | skip to the next phase |
 | `r` `r` | reset the pomodoro (press twice within 2 s) |
+| **Widgets** | |
+| `t` | clock: side panel → on the lava → off |
+| `f` | pomodoro: side panel → on the lava → off |
+| `l` | move the widgets on the lava (centre, top, the corners, bottom) |
 | **App** | |
 | `m` | minimal mode on/off |
 | `b` | status bar on/off |
@@ -183,7 +196,6 @@ transparent = false      # true = never paint the background (keeps terminal tra
 
 [clock]
 face = "blocks"          # blocks | segment | analog | binary | words | text
-show = true
 hour24 = true
 
 [pomodoro]
@@ -202,6 +214,11 @@ clock = "corner"         # corner | off
 
 [input]
 mouse = false
+
+[dock]
+anchor = "center"        # center | top | top-right | bottom-right | bottom | bottom-left | top-left
+clock = "side"           # side | overlay | off
+pomodoro = "side"        # side | overlay | off
 ```
 
 The file is meant to be edited by hand, even while the lamp runs. A bad
@@ -213,7 +230,8 @@ when you quit. A TOML syntax error is reported with its line and the lamp
 starts from the defaults.
 
 Settings from older versions load without a word: `lamp.frame` and
-`lamp.lighting` are ignored (and dropped at the next save), a removed
+`lamp.lighting` are ignored (and dropped at the next save), `clock.show =
+false` becomes `dock.clock = "off"`, a removed
 style (`heatmap`, `dither`, `crt`) becomes `solid`, and `minimal.clock =
 "under"` means `corner`.
 

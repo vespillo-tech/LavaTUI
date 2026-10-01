@@ -23,7 +23,10 @@ pub enum Action {
     FacePicker,
     NextPalette,
     PalettePicker,
-    ToggleClock,
+    /// Move the dock widget of this name on: side → lava → off → side.
+    Place(&'static str),
+    /// Move the widgets on the lava to the next spot.
+    NextAnchor,
     ToggleHour24,
     PomodoroToggle,
     PomodoroSkip,
@@ -72,6 +75,8 @@ pub enum Key {
 pub enum Section {
     Lamp,
     Clock,
+    /// Where the dock widgets go.
+    Widgets,
     App,
 }
 
@@ -80,6 +85,7 @@ impl Section {
         match self {
             Section::Lamp => "lamp",
             Section::Clock => "clock & pomodoro",
+            Section::Widgets => "widgets",
             Section::App => "app",
         }
     }
@@ -111,7 +117,7 @@ const fn row(
 
 use Action as A;
 use Key::{Char as K, Ctrl};
-use Section::{App, Clock, Lamp};
+use Section::{App, Clock, Lamp, Widgets};
 
 pub static KEYMAP: &[Row] = &[
     row(Lamp, "s", "next style", &[(K('s'), A::NextStyle)]),
@@ -144,7 +150,6 @@ pub static KEYMAP: &[Row] = &[
     row(Lamp, "R", "reseed wax", &[(K('R'), A::Reseed)]),
     row(Clock, "c", "next face", &[(K('c'), A::NextFace)]),
     row(Clock, "C", "face picker", &[(K('C'), A::FacePicker)]),
-    row(Clock, "t", "show/hide clock", &[(K('t'), A::ToggleClock)]),
     row(Clock, "T", "12h / 24h", &[(K('T'), A::ToggleHour24)]),
     row(
         Clock,
@@ -158,6 +163,25 @@ pub static KEYMAP: &[Row] = &[
         "r r",
         "reset pomodoro",
         &[(K('r'), A::PomodoroReset)],
+    ),
+    // One row per dock widget (`Action::Place` names it), plus the anchor.
+    row(
+        Widgets,
+        "t",
+        "clock side/lava/off",
+        &[(K('t'), A::Place("clock"))],
+    ),
+    row(
+        Widgets,
+        "f",
+        "pomodoro side/lava/off",
+        &[(K('f'), A::Place("pomodoro"))],
+    ),
+    row(
+        Widgets,
+        "l",
+        "move lava widgets",
+        &[(K('l'), A::NextAnchor)],
     ),
     // m ? q first: the small full-screen help leads with them (§4.3).
     row(App, "m", "minimal", &[(K('m'), A::ToggleMinimal)]),
@@ -361,6 +385,27 @@ mod tests {
                     "{key:?}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn every_dock_widget_has_a_place_key() {
+        let placed: Vec<&str> = KEYMAP
+            .iter()
+            .flat_map(|r| r.binds)
+            .filter_map(|b| match b.1 {
+                Action::Place(name) => Some(name),
+                _ => None,
+            })
+            .collect();
+        for w in crate::dock::WIDGETS {
+            assert!(placed.contains(&w.name()), "no key places {}", w.name());
+        }
+        for name in placed {
+            assert!(
+                crate::dock::by_name(name).is_some(),
+                "{name} isn't a widget"
+            );
         }
     }
 

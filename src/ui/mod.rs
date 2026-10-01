@@ -1,19 +1,21 @@
 //! Everything that touches the terminal: layout, the keymap, and drawing
-//! the [`Model`] — lamp, panel, chip, status bar, toasts, help and
-//! pickers. Colours only ever come from the model's `Theme`.
+//! the [`Model`] — lamp, dock (panel, widgets on the lava, chip), status
+//! bar, toasts, help and pickers. Colours only ever come from the model's
+//! `Theme`.
 //!
-//! Draw order, back to front: background → lamp → panel / chip →
-//! status bar → toast → HUD → overlay.
+//! Draw order, back to front: background → lamp → widgets on the lava →
+//! panel / chip → status bar → toast → HUD → overlay.
 //!
 //! Chrome never shares a cell with other chrome (§8.2): anything an open
-//! overlay would cover (or touch, for the panel and chip) is left out
-//! whole rather than clipped, and a toast outranks the corner HUD.
+//! overlay would cover (or touch, for the panel, the chip and the widgets
+//! on the lava) is left out whole rather than clipped, and a toast
+//! outranks the corner HUD.
 
 pub(crate) mod chrome;
+mod dock;
 pub mod help;
 pub mod keymap;
 pub mod layout;
-mod panel;
 pub mod picker;
 #[cfg(test)]
 mod render_tests;
@@ -26,8 +28,8 @@ use ratatui::style::{Color, Style};
 
 use crate::app::{Model, Overlay};
 use crate::render::{LampOptions, LampState, LampView};
-use crate::theme::{Ink, Role};
-use crate::ui::layout::Layout;
+use crate::theme::{Ink, Role, Theme};
+use crate::ui::layout::{Layout, halo};
 
 /// How far the liquid goes toward `accent` at the flash's peak. Under ½,
 /// so depths that can't blend (no liquid tint) never flip the whole lamp.
@@ -58,18 +60,24 @@ pub fn draw(frame: &mut Frame, model: &Model, lamp: &mut LampState) {
             .fg(theme.role(Role::Text)),
     );
 
+    // Phase-change flash (§4.5): the liquid pulses toward `accent`.
+    let flashed = flashed(model);
+    let lamp_theme = flashed.as_ref().unwrap_or(theme);
     if let Some(l) = layout.lamp {
-        draw_lamp(frame, l, model, lamp);
+        draw_lamp(frame, l, model, lamp_theme, lamp);
     }
 
     let buf = frame.buffer_mut();
     let covered = overlay_footprint(area, layout, model);
     let free = |r: Rect, gap: u16| covered.is_none_or(|c| !picker::grow(c, gap).intersects(r));
+    if let Some(s) = layout.on_lava.as_ref().filter(|s| free(halo(s.rect), 1)) {
+        dock::draw_on_lava(buf, s, model, lamp_theme);
+    }
     if let Some(p) = layout.panel.as_ref().filter(|p| free(p.rect, 1)) {
-        panel::draw_panel(buf, p, model);
+        dock::draw_panel(buf, p, model);
     }
     if let Some(c) = layout.chip.as_ref().filter(|c| free(c.rect, 1)) {
-        panel::draw_chip(buf, c, model);
+        dock::draw_chip(buf, c, model);
     }
     if let Some(s) = layout.status.filter(|&s| free(s, 0)) {
         chrome::draw_status(buf, s, model);
@@ -97,22 +105,27 @@ pub fn draw(frame: &mut Frame, model: &Model, lamp: &mut LampState) {
     }
 }
 
-/// The lamp: the field in the current style and theme.
-fn draw_lamp(frame: &mut Frame, area: Rect, model: &Model, lamp: &mut LampState) {
-    let theme = &model.theme;
-    // Phase-change flash (§4.5): the liquid pulses toward `accent`.
+/// The theme with the liquid mid-flash, while a phase-change flash runs.
+fn flashed(model: &Model) -> Option<Theme> {
     let flash = model.flash_level();
-    let flashed;
-    let lamp_theme = if flash > 0.0 {
+    (flash > 0.0).then(|| {
+        let theme = &model.theme;
         let liquid = theme.paint(Ink::Role(Role::Liquid));
-        flashed = theme.with_role(
+        theme.with_role(
             Role::Liquid,
             liquid.mix(Ink::Role(Role::Accent), FLASH * flash),
-        );
-        &flashed
-    } else {
-        theme
-    };
+        )
+    })
+}
+
+/// The lamp: the field in the current style and `lamp_theme`.
+fn draw_lamp(
+    frame: &mut Frame,
+    area: Rect,
+    model: &Model,
+    lamp_theme: &Theme,
+    lamp: &mut LampState,
+) {
     let view = LampView {
         field: &model.field,
         style: model.style.style(),

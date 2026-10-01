@@ -18,12 +18,13 @@ use crate::clock::{
 };
 use crate::config::store::Store;
 use crate::config::{self, ColorChoice, Overridden, Session, Settings};
+use crate::dock::{Place, WIDGETS};
 use crate::render::StyleId;
 use crate::sim::{Field, HEAT_LEVELS, SimSpeed, World};
 use crate::theme::{ColorDepth, Palette, Theme};
 use crate::timing::{FixedStep, Quality};
 use crate::ui::keymap::InputMode;
-use crate::ui::layout::{self, ChipKind, Layout, LayoutInput, SizeTier};
+use crate::ui::layout::{self, DockItem, Layout, LayoutInput, SizeTier};
 
 pub use pickers::{Picker, PickerKind};
 
@@ -267,11 +268,10 @@ impl Model {
             .map_or(Duration::ZERO, |d| {
                 Duration::from_nanos(d.subsec_nanos().into())
             });
-        let seconds_shown = self.settings.clock.show
-            && self
-                .layout
-                .panel
-                .is_some_and(|p| p.face.is_some_and(|(_, form)| form.seconds));
+        let seconds_shown = [&self.layout.panel, &self.layout.on_lava]
+            .into_iter()
+            .flatten()
+            .any(|s| s.items.iter().any(|p| p.form.seconds));
         let to_clock = if seconds_shown {
             second - into_second
         } else {
@@ -319,30 +319,6 @@ impl Model {
 
     pub fn minimal(&self) -> bool {
         self.settings.minimal()
-    }
-
-    /// What a chip would show right now, and its text: `14:32`,
-    /// `▸ 24:58` (focus) or `▸ break 4:58`; `‖` when paused.
-    pub fn chip_text(&self) -> Option<(ChipKind, String)> {
-        let glyph = match self.pomodoro.status() {
-            Status::Running => '▸',
-            Status::Paused => '‖',
-            Status::Idle if self.settings.clock.show => {
-                let hour24 = self.settings.clock.hour24;
-                let text = clock::readout(self.local.time, hour24, false, !hour24);
-                return Some((ChipKind::Clock, text));
-            }
-            Status::Idle => return None,
-        };
-        let remaining = format_remaining(self.pomodoro.remaining(self.now));
-        // A break says so: phase colours alone can be near twins (or, in
-        // 16 colours and none, the same).
-        let phase = if self.pomodoro.phase().is_break() {
-            "break "
-        } else {
-            ""
-        };
-        Some((ChipKind::Pomodoro, format!("{glyph} {phase}{remaining}")))
     }
 
     pub fn face_options(&self, seconds: bool) -> clock::FaceOptions {
@@ -430,15 +406,27 @@ impl Model {
 
     /// The layout the current state gets at `area` (pure).
     pub fn layout_for(&self, area: Rect) -> Layout {
-        let chip = self.chip_text();
+        let dock: Vec<DockItem> = WIDGETS
+            .iter()
+            .map(|w| {
+                let place = self.settings.dock.place(*w);
+                DockItem {
+                    place,
+                    forms: match place {
+                        Place::Off => Vec::new(),
+                        _ => w.forms(self, place),
+                    },
+                    chip: w
+                        .chip(self)
+                        .map(|c| (c.text.chars().count() as u16, c.rank)),
+                }
+            })
+            .collect();
         let input = LayoutInput {
             minimal: self.minimal(),
             status_bar: self.settings.ui.status_bar,
-            show_clock: self.settings.clock.show,
-            face: self.face,
-            hour24: self.settings.clock.hour24,
-            chip: chip.map(|(kind, text)| (kind, text.chars().count() as u16)),
-            minimal_clock: self.settings.minimal.clock,
+            dock: &dock,
+            anchor: self.settings.dock.anchor,
             cell_aspect: self.cell_aspect,
         };
         layout::layout(area, &input)

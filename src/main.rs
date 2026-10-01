@@ -4,6 +4,7 @@ mod app;
 mod cli;
 mod clock;
 mod config;
+mod dock;
 mod render;
 mod sim;
 mod theme;

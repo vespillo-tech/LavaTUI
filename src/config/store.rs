@@ -63,6 +63,9 @@ pub struct Store {
     /// writes only the settings that differ from it; `None` (never
     /// loaded) writes them all.
     known: Option<Settings>,
+    /// The last load's [`Parsed::baseline`](super::Parsed::baseline),
+    /// until [`Store::load`] makes it `known`.
+    baseline: Option<Settings>,
     /// The file wasn't TOML when loaded (and the user was told so): a
     /// save may replace it, after the backup.
     replace_invalid: bool,
@@ -86,6 +89,7 @@ impl Store {
         Self {
             path: path.or_else(default_path),
             known: None,
+            baseline: None,
             replace_invalid: false,
             writable: true,
             notes: Vec::new(),
@@ -96,7 +100,7 @@ impl Store {
         self.notes.clear();
         self.replace_invalid = false;
         let settings = self.read();
-        self.known = Some(settings.clone());
+        self.known = Some(self.baseline.take().unwrap_or_else(|| settings.clone()));
         let problem = match &self.notes[..] {
             [] => None,
             [one] => Some(format!("config: {one}")),
@@ -163,6 +167,7 @@ impl Store {
                         .iter()
                         .map(|key| format!("unknown key {key}")),
                 );
+                self.baseline = Some(parsed.baseline);
                 parsed.settings
             }
             Err(err) => {
@@ -734,7 +739,7 @@ mod tests {
         assert_eq!(store.notes.len(), 4, "{:?}", store.notes);
 
         let mut settings = loaded.settings.clone();
-        settings.clock.show = false;
+        settings.clock.hour24 = false;
         store.save(&settings).unwrap();
         assert!(!dir.join("config.toml.bak").exists());
         let saved = fs::read_to_string(&path).unwrap();
@@ -830,6 +835,33 @@ mod tests {
         assert_eq!(dir.names(), ["config.toml"]);
     }
 
+    /// v1.1's `clock.show = false` loads as `dock.clock = "off"`; the next
+    /// save writes that and takes the old key out.
+    #[test]
+    fn a_hidden_clock_moves_to_the_dock_on_save() {
+        let dir = TempDir::new("clockshow");
+        let path = dir.join("config.toml");
+        fs::write(
+            &path,
+            "[clock]\nshow = false # no clock\nface = \"words\"\n",
+        )
+        .unwrap();
+        let mut store = Store::new(Some(path.clone()));
+        let loaded = store.load();
+        assert_eq!(loaded.problem, None);
+        let clock = &crate::dock::Clock;
+        assert_eq!(loaded.settings.dock.place(clock), crate::dock::Place::Off);
+        let mut settings = loaded.settings;
+        settings.lamp.heat = 4;
+        store.save(&settings).unwrap();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "[clock]\nface = \"words\"\n\n[dock]\nclock = \"off\"\n\n[lamp]\nheat = 4\n"
+        );
+        assert_eq!(Store::new(Some(path)).load().settings, settings);
+        assert_eq!(dir.names(), ["config.toml"]);
+    }
+
     /// An edit in progress that breaks the file isn't clobbered.
     #[test]
     fn file_broken_while_running_is_not_written() {
@@ -859,7 +891,7 @@ mod tests {
     fn a_non_table_section_is_replaced() {
         let dir = TempDir::new("nontable");
         let path = dir.join("config.toml");
-        fs::write(&path, "lamp = 5\n[clock]\nshow = false\n").unwrap();
+        fs::write(&path, "lamp = 5\n[clock]\nhour24 = false\n").unwrap();
         let mut store = Store::new(Some(path.clone()));
         let loaded = store.load();
         assert_eq!(loaded.problem.as_deref(), Some("config: ignored lamp"));
@@ -867,7 +899,7 @@ mod tests {
         // The new table goes at the end, with no leading blank line.
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
-            "[clock]\nshow = true\n\n[lamp]\nstyle = \"ascii\"\n"
+            "[clock]\nhour24 = true\n\n[lamp]\nstyle = \"ascii\"\n"
         );
         assert_eq!(Store::new(Some(path.clone())).load().settings, ascii());
         assert!(dir.join("config.toml.bak").exists());
@@ -1004,7 +1036,7 @@ mod tests {
             Some("config: read-only · not saving")
         );
         let mut settings = loaded.settings;
-        settings.clock.show = false;
+        settings.clock.hour24 = false;
         assert_eq!(store.save(&settings), Ok(()));
         assert_eq!(fs::read_to_string(&path).unwrap(), text);
         assert_eq!(dir.names(), ["config.toml"]);
@@ -1014,7 +1046,7 @@ mod tests {
         let mut store = Store::new(Some(path.clone()));
         let mut settings = store.load().settings;
         fs::set_permissions(&path, fs::Permissions::from_mode(0o444)).unwrap();
-        settings.clock.show = false;
+        settings.clock.hour24 = false;
         assert_eq!(
             store.save(&settings),
             Err("config: read-only · not saving".into())

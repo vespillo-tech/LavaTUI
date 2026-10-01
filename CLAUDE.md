@@ -122,9 +122,14 @@ numbers); `docs/design.md` is the layout/visual contract.
                 error → defaults + toast), save (anything a save would drop
                 is first copied to `config.toml.bak`; saves keep comments,
                 follow symlinks and are atomic). Settings older versions had
-                (`RETIRED_KEYS`: `lamp.frame`, `lamp.lighting`) load without
-                a toast and a save takes them out; a removed style name
-                (`RETIRED_STYLES`) quietly becomes `solid`.
+                (`RETIRED_KEYS`: `lamp.frame`, `lamp.lighting`, `clock.show`)
+                load without a toast and a save takes them out
+                (`clock.show = false` carries over as `dock.clock = "off"`;
+                `Parsed::baseline` makes the next save write it); a removed
+                style name (`RETIRED_STYLES`) quietly becomes `solid`.
+                `[dock]` is `dock::DockSettings`: `anchor` plus one
+                `<widget name> = side|overlay|off` per registered widget
+                (a flattened map, so a new widget needs no config code).
 - `app/`      — `mod.rs` is the loop only: poll input until the frame
                 deadline → `Model::update(action)` (any input draws at once;
                 queued events are drained first, as one burst that
@@ -226,25 +231,44 @@ numbers); `docs/design.md` is the layout/visual contract.
                 `fit()` picks the largest that fits) and the pomodoro state
                 machine (`Pomodoro`, pure, `Instant` passed in) +
                 `PomodoroWidget`. Faces leave spaces transparent.
+- `dock/`     — the widget dock (design §4.6): `DockWidget` trait (`name`,
+                `default_place`, `forms(model, place)` → fixed-size
+                `WidgetForm`s most preferred first, with `Needs` (huge /
+                tall terminal) and `fill`; `draw(model, form, rect, Look)`;
+                `chip(model)` → one-line fallback with a rank) + `WIDGETS`
+                registry (`clock.rs`, `pomodoro.rs`). `Place` (side /
+                overlay / off), `Anchor`. Widgets are stateless views of the
+                `Model`. Seconds never on the lava; date forms need tall.
 - `ui/`       — the only terminal-facing code. `layout.rs`: the pure
                 `layout(area, &LayoutInput) -> Layout` of design §1 (the lamp
-                rect, right/bottom panel, chip, status row, toast row; hide
-                order date → face size → panel). `keymap.rs`: the single `KEYMAP` table that drives
+                rect, right/bottom panel = `Stack` of side widgets, `on_lava`
+                = `Stack` of overlay widgets at the anchor (≤ 60 % × 50 % of
+                the lamp, backing ≤ 35 % of its area, lamp ≥ 28×10, clear of
+                toast/chip rows), chip for the top-ranked widget with no
+                room, status row, toast row). `LayoutInput.dock` is one
+                `DockItem` (place, forms, chip width/rank) per widget;
+                `first_fit` tries form combinations in hide order (last
+                widget shrinks first; date → face size → stack → chip). `keymap.rs`: the single `KEYMAP` table that drives
                 both dispatch (`action_for(event, InputMode)`) and the help
-                overlay. `mod.rs` draws back to front; `panel.rs` (face + date + pomodoro, chip), `chrome.rs` (status
+                overlay. `mod.rs` draws back to front; `dock.rs` (panel, widgets on the
+                lava over their soft backing: veiled 82 % to liquid, fading
+                out over 1½ rows, truecolor only — plain liquid below it —
+                and the chip), `chrome.rs` (status
                 bar + hint fitting, HUD, toasts), `help/` (`sheet.rs`: the
                 pure geometry the model also reads — form per size, lines,
                 body rect, `footprint`, `max_scroll`; `mod.rs` draws),
                 `picker.rs` (`placement`/`hit`: geometry shared by draw and
                 mouse).
                 Chrome never shares cells: `ui::draw` leaves out whole any
-                panel/chip/toast/HUD an overlay (or a toast) would touch.
+                panel/lava stack/chip/toast/HUD an overlay (or a toast)
+                would touch.
                 `render_tests.rs`: whole frames via `TestBackend` at the
                 mockup sizes (help, pickers, toasts, HUD, minimal), lamp
                 cells printed `~`; snapshots `ui/snapshots/render_*.txt`.
                 `tests.rs`: size sweep 1×1..300×100 × 8 setting variants
-                (no overlap/overflow, lamp always there) + mockup-size checks
-                + layout snapshots in `ui/snapshots/`.
+                plus 12×5..300×90 × 35 lava/side/anchor mixes (no
+                overlap/overflow, lamp always there, lava limits, right chip)
+                + mockup-size checks + layout snapshots in `ui/snapshots/`.
 
 crossterm is used via ratatui's re-export (`ratatui::crossterm`) so the two
 never drift apart; there is no direct crossterm dependency.
@@ -264,6 +288,21 @@ never drift apart; there is no direct crossterm dependency.
   fixed-size `forms` most-preferred first, `draw` inside the form via
   `draw::Pen`), then add it to `clock::FACES`. The text fallback form is
   appended for you (`all_forms`).
+- **A dock widget** (e.g. now-playing): one module implementing
+  `dock::DockWidget` — `name` (also its config key `dock.<name>`),
+  `default_place` (new widgets: `Place::Off`, so the default screen
+  doesn't change), `forms(model, place)` (fixed sizes, most preferred
+  first; `WidgetForm::fixed` / `::fill`, `variant` is yours to tell them
+  apart in `draw`), `draw` (inside the rect only; colours via
+  `model.theme`; `look.align` for forms narrower than the rect; spaces
+  stay see-through, the ui adds the backing on the lava), `chip` (or
+  `None`). Add it to `dock::WIDGETS` (order = stacking order and shrink
+  priority) and give it a key: one `row(Widgets, "<k>", "<name>
+  side/lava/off", &[(K('<k>'), A::Place("<name>"))])` in `KEYMAP` (a test
+  checks every widget has one). Config, layout, help, toasts, chip
+  ranking and the sweep tests pick it up; whatever state it shows lives
+  on the `Model` (or its own module) and it reads it from there. Run
+  `UPDATE_SNAPSHOTS=1 cargo test` only if a default changes.
 - **A key**: add an `Action` variant (`ui/keymap.rs`), a `row(section,
   keys, label, &[(key, action)])` in `KEYMAP` (that's both dispatch and
   the help overlay), and its arm in `Model::global_action`

@@ -54,18 +54,24 @@ fn align(mut lines: Vec<Line>) -> Vec<Line> {
     lines
 }
 
-/// Two columns (lamp | clock & pomodoro + app), labels lined up per
-/// column; or one, app first so `m ? q` are on screen at the smallest
-/// sizes, labels lined up per section (room is short there).
+/// Two columns (lamp + widgets | clock & pomodoro + app), labels lined
+/// up per column; or one, app first so `m ? q` are on screen at the
+/// smallest sizes, labels lined up per section (room is short there).
 fn columns(two: bool) -> Vec<Vec<Line>> {
     if two {
-        let mut right = section(Section::Clock);
-        right.push(Line::Blank);
-        right.extend(section(Section::App));
-        return vec![align(section(Section::Lamp)), align(right)];
+        let pair = |a, b| {
+            let mut col = section(a);
+            col.push(Line::Blank);
+            col.extend(section(b));
+            align(col)
+        };
+        return vec![
+            pair(Section::Lamp, Section::Widgets),
+            pair(Section::Clock, Section::App),
+        ];
     }
     let mut one = align(section(Section::App));
-    for s in [Section::Lamp, Section::Clock] {
+    for s in [Section::Lamp, Section::Clock, Section::Widgets] {
         one.push(Line::Blank);
         one.extend(align(section(s)));
     }

@@ -3,8 +3,9 @@
 //! help, each picker, toasts, the HUD, a running pomodoro and minimal mode.
 //!
 //! The pictures print every cell's glyph, except that the lamp's own cells
-//! (anything in the lamp view not painted on the app background) print as
-//! `~`: chrome always paints `bg`, the wax never does. That keeps the
+//! (anything in the lamp view not painted on the app background, outside
+//! the widgets on the lava) print as `~`: chrome always paints `bg`, the
+//! wax never does. That keeps the
 //! snapshots about the chrome, not the sim (a test checks two seeds give
 //! the same picture). `UPDATE_SNAPSHOTS=1 cargo test` rewrites
 //! `ui/snapshots/render_*.txt`; review the diff.
@@ -85,12 +86,17 @@ fn draw(m: &Model, cols: u16, rows: u16) -> Buffer {
 fn picture(m: &Model, buf: &Buffer) -> String {
     let bg = m.theme.role(Role::Bg);
     let view = m.layout.lamp;
+    // The widgets on the lava sit on a cleared backing: print them.
+    let lava = m.layout.on_lava.as_ref().map(|s| s.rect);
     let mut out = String::new();
     for y in 0..buf.area.height {
         let mut line = String::new();
         for x in 0..buf.area.width {
             let cell = &buf[(x, y)];
-            let lamp = view.is_some_and(|v| v.contains((x, y).into())) && cell.bg != bg;
+            let pos = (x, y).into();
+            let lamp = view.is_some_and(|v| v.contains(pos))
+                && lava.is_none_or(|l| !l.contains(pos))
+                && cell.bg != bg;
             line.push_str(if lamp { "~" } else { cell.symbol() });
         }
         out.push_str(line.trim_end());
@@ -137,6 +143,19 @@ fn scenarios() -> Vec<(&'static str, Setup)> {
             m.update(Action::PomodoroSkip, t);
             m.toast = None;
             m.flash = None;
+        }),
+        ("clock on the lava", |m, t| {
+            m.update(Action::Place("clock"), t);
+            m.toast = None;
+        }),
+        ("both on the lava, top left, running", |m, t| {
+            m.update(Action::Place("clock"), t);
+            m.update(Action::Place("pomodoro"), t);
+            for _ in 0..6 {
+                m.update(Action::NextAnchor, t);
+            }
+            m.update(Action::PomodoroToggle, t);
+            m.toast = None;
         }),
         ("minimal + hud", |m, t| {
             m.update(Action::ToggleMinimal, t);
@@ -198,7 +217,7 @@ fn picker_sheets_never_cut_the_panel() {
             Action::PalettePicker,
         ] {
             let (mut m, t0) = model(cols, rows, 7);
-            let panel = m.layout.panel.expect("panel at this size").rect;
+            let panel = m.layout.panel.as_ref().expect("panel at this size").rect;
             m.update(opener, t0);
             let buf = draw(&m, cols, rows);
             let Overlay::Picker(p) = m.overlay else {

@@ -236,6 +236,8 @@ SHOTS = {
     "picker": Shot(100, 30, '[lamp];style="solid";[theme];palette="synthwave"', "1:S,2:j,2.5:j", "--seed 4"),
     "portrait": Shot(36, 56, '[lamp];style="halftone";[theme];palette="abyss"', "0.5: ", "--seed 6"),
     "tiny": Shot(26, 10, '[lamp];style="solid"'),
+    "overlay": Shot(100, 30, '[lamp];style="solid";[dock];clock="overlay";pomodoro="overlay"', "0.5: "),
+    "overlay-mix": Shot(100, 30, '[lamp];style="braille";[theme];palette="abyss";[dock];clock="overlay"', "0.5: ", "--seed 5"),
     "color16": Shot(80, 24, '[lamp];style="ascii"', args="--seed 2 --color 16"),
 }
 TILES = {f"style-{s}": Shot(34, 30, TILE + f'style="{s}"') for s in STYLES}

@@ -8,34 +8,107 @@ use ratatui::layout::Rect;
 use super::chrome::{HINTS, fit_hints, fit_words};
 use super::layout::*;
 use crate::clock::{self, Face, Tier};
-use crate::config::MinimalClock;
+use crate::dock::{Anchor, Place, clock_forms, clock_parts, pomodoro_forms};
 
-fn input(face: &dyn Face) -> LayoutInput<'_> {
-    LayoutInput {
+/// A dock setup to lay out: where the clock (index 0) and the pomodoro
+/// (index 1) go, the face, and which chips they'd show.
+#[derive(Clone, Copy)]
+struct Case {
+    minimal: bool,
+    status_bar: bool,
+    clock: Place,
+    pomodoro: Place,
+    face: &'static dyn Face,
+    hour24: bool,
+    /// The clock's chip (none in minimal with `minimal.clock = "off"`).
+    clock_chip: bool,
+    /// A running pomodoro's chip width; `None` while idle.
+    pomodoro_chip: Option<u16>,
+    anchor: Anchor,
+    cell_aspect: f64,
+}
+
+const CLOCK: usize = 0;
+const POMODORO: usize = 1;
+
+fn case(face: &'static dyn Face) -> Case {
+    Case {
         minimal: false,
         status_bar: true,
-        show_clock: true,
+        clock: Place::Side,
+        pomodoro: Place::Side,
         face,
         hour24: true,
-        chip: Some((ChipKind::Clock, 5)),
-        minimal_clock: MinimalClock::Corner,
+        clock_chip: true,
+        pomodoro_chip: None,
+        anchor: Anchor::Center,
         cell_aspect: 2.0,
     }
 }
 
-fn at(cols: u16, rows: u16, input: &LayoutInput) -> Layout {
-    layout(Rect::new(0, 0, cols, rows), input)
+impl Case {
+    fn items(&self) -> Vec<DockItem> {
+        let forms = |place: Place, f: &dyn Fn(Place) -> Vec<_>| match place {
+            Place::Off => Vec::new(),
+            p => f(p),
+        };
+        vec![
+            DockItem {
+                place: self.clock,
+                forms: forms(self.clock, &|p| clock_forms(self.face, self.hour24, p)),
+                chip: self.clock_chip.then_some((5, 1)),
+            },
+            DockItem {
+                place: self.pomodoro,
+                forms: forms(self.pomodoro, &|p| pomodoro_forms(p, 5)),
+                chip: self.pomodoro_chip.map(|w| (w, 2)),
+            },
+        ]
+    }
+
+    fn input<'a>(&self, items: &'a [DockItem]) -> LayoutInput<'a> {
+        LayoutInput {
+            minimal: self.minimal,
+            status_bar: self.status_bar,
+            dock: items,
+            anchor: self.anchor,
+            cell_aspect: self.cell_aspect,
+        }
+    }
+
+    fn place(&self, widget: usize) -> Place {
+        [self.clock, self.pomodoro][widget]
+    }
+}
+
+fn at(cols: u16, rows: u16, case: &Case) -> Layout {
+    let items = case.items();
+    layout(Rect::new(0, 0, cols, rows), &case.input(&items))
 }
 
 fn blocks() -> &'static dyn Face {
     clock::face_by_name("blocks").unwrap()
 }
 
+/// The clock face's form and rects in a placed clock.
+fn clock_of(l: &Layout, case: &Case) -> Option<(clock::Form, Rect, Option<Rect>)> {
+    let p = l.placed(CLOCK)?;
+    let align = if case.clock == Place::Side {
+        ratatui::layout::Alignment::Left
+    } else {
+        case.anchor.align()
+    };
+    clock_parts(case.face, case.hour24, case.clock, p.form, p.rect, align)
+}
+
 /// Every invariant §1 promises, for one layout.
-fn check(l: &Layout, input: &LayoutInput) {
+fn check(l: &Layout, case: &Case) {
     let area = l.area;
     let (cols, rows) = (area.width, area.height);
-    let ctx = format!("{cols}x{rows} minimal={}", input.minimal);
+    let ctx = format!(
+        "{cols}x{rows} minimal={} clock={:?} pomodoro={:?} {:?}",
+        case.minimal, case.clock, case.pomodoro, case.anchor
+    );
     let inside = |r: Rect, what: &str| {
         assert!(!r.is_empty(), "{ctx}: empty {what}");
         assert_eq!(r.intersection(area), r, "{ctx}: {what} {r:?} out of bounds");
@@ -44,13 +117,14 @@ fn check(l: &Layout, input: &LayoutInput) {
     let Some(lamp) = l.lamp else {
         assert!(cols < 4 || rows < 2, "{ctx}: no lamp");
         assert!(l.status.is_none() && l.panel.is_none() && l.chip.is_none());
+        assert!(l.on_lava.is_none());
         return;
     };
     inside(lamp, "lamp");
     // No frame: the lamp starts in the top-left corner and spans the
     // screen's width unless the panel sits beside it.
     assert_eq!((lamp.x, lamp.y), (area.x, area.y), "{ctx}: lamp inset");
-    if l.panel.is_none_or(|p| p.rect.x < lamp.right()) {
+    if l.panel.as_ref().is_none_or(|p| p.rect.x < lamp.right()) {
         assert_eq!(lamp.width, cols, "{ctx}: lamp narrower than the screen");
     }
 
@@ -58,7 +132,7 @@ fn check(l: &Layout, input: &LayoutInput) {
     if let Some(s) = l.status {
         inside(s, "status");
         assert!(
-            !input.minimal && rows >= 14 && cols >= 30,
+            !case.minimal && rows >= 14 && cols >= 30,
             "{ctx}: status shown"
         );
         assert_eq!(s.height, 1);
@@ -66,67 +140,144 @@ fn check(l: &Layout, input: &LayoutInput) {
         assert!(!s.intersects(lamp), "{ctx}: status over lamp");
     } else {
         assert!(
-            input.minimal || !input.status_bar || rows < 14 || cols < 30,
+            case.minimal || !case.status_bar || rows < 14 || cols < 30,
             "{ctx}: status missing"
         );
     }
 
-    if let Some(p) = l.panel {
-        assert!(!input.minimal && !micro, "{ctx}: panel in minimal/micro");
+    for (stack, place) in [(&l.panel, Place::Side), (&l.on_lava, Place::Overlay)] {
+        let Some(stack) = stack else { continue };
+        // A stack holds exactly the widgets put there, in order.
+        let want: Vec<usize> = (0..2).filter(|&w| case.place(w) == place).collect();
+        let got: Vec<usize> = stack.items.iter().map(|p| p.widget).collect();
+        assert_eq!(got, want, "{ctx}: {place:?} stack");
+        for (i, a) in stack.items.iter().enumerate() {
+            inside(a.rect, "widget");
+            assert_eq!(a.rect.height, a.form.size.height, "{ctx}");
+            assert!(a.rect.width >= a.form.size.width, "{ctx}");
+            if !a.form.fill {
+                assert_eq!(a.rect.width, a.form.size.width, "{ctx}");
+            }
+            assert_eq!(
+                a.rect.intersection(stack.rect),
+                a.rect,
+                "{ctx}: widget {a:?} outside {:?}",
+                stack.rect
+            );
+            if a.form.needs.tall {
+                assert!(rows >= 36, "{ctx}: date line too early");
+            }
+            if a.form.needs.huge {
+                assert!(reaches(cols, rows, HUGE), "{ctx}: XL too early");
+            }
+            for b in &stack.items[i + 1..] {
+                assert!(!a.rect.intersects(b.rect), "{ctx}: widgets overlap");
+            }
+        }
+    }
+    if let Some((form, face, date)) = clock_of(l, case) {
+        assert_eq!(face.as_size(), form.size, "{ctx}");
+        let seconds_ok = case.clock == Place::Side && form.tier >= Tier::L;
+        assert!(!form.seconds || seconds_ok, "{ctx}: seconds {form:?}");
+        if let Some(d) = date {
+            assert!(rows >= 36, "{ctx}: date line too early");
+            assert!(!d.intersects(face), "{ctx}: date over face");
+        }
+    }
+
+    if let Some(p) = &l.panel {
+        assert!(!case.minimal && !micro, "{ctx}: panel in minimal/micro");
         inside(p.rect, "panel");
         assert!(!p.rect.intersects(lamp), "{ctx}: panel over lamp");
         if let Some(s) = l.status {
             assert!(!p.rect.intersects(s), "{ctx}: panel over status");
         }
-        let mut parts = vec![p.pomodoro];
-        assert_eq!(p.pomodoro.height, 3);
-        assert!(p.pomodoro.width >= 20, "{ctx}: pomodoro too narrow");
-        if let Some((r, form)) = p.face {
-            assert_eq!(r.as_size(), form.size, "{ctx}");
-            assert!(input.show_clock);
+        for a in &p.items {
             assert!(
-                !form.seconds || form.tier >= Tier::L,
-                "{ctx}: seconds below L"
-            );
-            parts.push(r);
-        } else {
-            assert!(!input.show_clock, "{ctx}: face missing");
-        }
-        if let Some(d) = p.date {
-            assert!(rows >= 36, "{ctx}: date line too early");
-            parts.push(d);
-        }
-        for (i, a) in parts.iter().enumerate() {
-            assert_eq!(
-                a.intersection(p.rect),
-                *a,
-                "{ctx}: panel part {a:?} outside {:?}",
-                p.rect
-            );
-            assert!(
-                a.x > p.rect.x && a.right() < p.rect.right(),
+                a.rect.x > p.rect.x && a.rect.right() < p.rect.right(),
                 "{ctx}: no side padding"
             );
-            for b in &parts[i + 1..] {
-                assert!(!a.intersects(*b), "{ctx}: panel parts overlap");
+            if a.widget == POMODORO {
+                assert_eq!(a.rect.height, 3);
+                assert!(a.rect.width >= 20, "{ctx}: pomodoro too narrow");
             }
         }
-        assert!(l.chip.is_none(), "{ctx}: chip and panel");
     }
 
+    if let Some(s) = &l.on_lava {
+        assert!(!micro, "{ctx}: widgets on a micro lamp");
+        assert!(
+            reaches(lamp.width, lamp.height, (28, 10)),
+            "{ctx}: lamp too small"
+        );
+        // Never more than 60 % of the lamp's width or half its height,
+        // and the backing stays inside the lamp, off its top row (toasts)
+        // and its bottom row (the chip).
+        assert!(
+            u32::from(s.rect.width) * 5 <= u32::from(lamp.width) * 3,
+            "{ctx}: too wide on the lava"
+        );
+        assert!(s.rect.height <= lamp.height / 2, "{ctx}: too tall");
+        let back = halo(s.rect);
+        let area = |r: Rect| u32::from(r.width) * u32::from(r.height);
+        assert!(
+            area(back) * 100 <= area(lamp) * 35,
+            "{ctx}: covers the lamp"
+        );
+        assert_eq!(back.intersection(lamp), back, "{ctx}: backing off the lamp");
+        assert!(back.y > lamp.y, "{ctx}: backing on the toast row");
+        assert!(
+            back.bottom() < lamp.bottom(),
+            "{ctx}: backing on the chip row"
+        );
+        for other in [l.status, l.panel.as_ref().map(|p| p.rect), l.toast]
+            .into_iter()
+            .flatten()
+        {
+            assert!(!back.intersects(other), "{ctx}: lava stack over {other:?}");
+        }
+        if let Some(c) = l.chip {
+            assert!(!back.intersects(c.rect), "{ctx}: lava stack over the chip");
+        }
+    }
+
+    // The chip: the highest-ranked widget with no room where it was put.
+    let homeless = |w: usize| match case.place(w) {
+        Place::Side => l.panel.is_none(),
+        Place::Overlay => l.on_lava.is_none(),
+        Place::Off => false,
+    };
+    let chips = [
+        case.clock_chip.then_some(1u8),
+        case.pomodoro_chip.map(|_| 2u8),
+    ];
+    let want = (0..2)
+        .filter(|&w| homeless(w))
+        .filter_map(|w| chips[w].map(|rank| (rank, w)))
+        .max()
+        .map(|(_, w)| w);
     if let Some(c) = l.chip {
         inside(c.rect, "chip");
         assert!(!micro, "{ctx}: chip in micro");
         assert_eq!(c.rect.height, 1);
+        assert_eq!(Some(c.widget), want, "{ctx}: wrong chip");
         if let Some(s) = l.status {
             assert!(!c.rect.intersects(s), "{ctx}: chip over status");
         }
+        if let Some(p) = &l.panel {
+            assert!(!c.rect.intersects(p.rect), "{ctx}: chip over panel");
+        }
+    } else {
+        assert!(micro || want.is_none(), "{ctx}: chip missing");
     }
 
     if let Some(t) = l.toast {
         inside(t, "toast");
         assert!(cols >= 16 && rows >= 4);
-        for other in [l.status, l.panel.map(|p| p.rect)].into_iter().flatten() {
+        for other in [l.status, l.panel.as_ref().map(|p| p.rect)]
+            .into_iter()
+            .flatten()
+        {
             assert!(!t.intersects(other), "{ctx}: toast row over {other:?}");
         }
     } else {
@@ -134,93 +285,180 @@ fn check(l: &Layout, input: &LayoutInput) {
     }
 }
 
-#[test]
-fn every_size_is_clean() {
-    let faces = ["blocks", "analog", "words"].map(|n| clock::face_by_name(n).unwrap());
-    let base = input(faces[0]);
-    let variants = [
-        base,
-        LayoutInput {
-            face: faces[1],
-            hour24: false,
-            ..base
-        },
-        LayoutInput {
-            face: faces[2],
-            ..base
-        },
-        LayoutInput {
-            chip: Some((ChipKind::Pomodoro, 7)),
-            ..base
-        },
-        LayoutInput {
-            show_clock: false,
-            status_bar: false,
-            chip: None,
-            ..base
-        },
-        LayoutInput {
-            minimal: true,
-            ..base
-        },
-        LayoutInput {
-            minimal: true,
-            chip: Some((ChipKind::Pomodoro, 9)),
-            ..base
-        },
-        LayoutInput {
-            minimal: true,
-            minimal_clock: MinimalClock::Off,
-            cell_aspect: 2.4,
-            ..base
-        },
-    ];
-    for cols in 1..=300 {
-        for rows in 1..=100 {
-            for v in &variants {
-                check(&at(cols, rows, v), v);
+/// Check every size in `cols × rows` for each case (items built once).
+fn sweep(cols: std::ops::RangeInclusive<u16>, rows: std::ops::RangeInclusive<u16>, cases: &[Case]) {
+    let built: Vec<(Case, Vec<DockItem>)> = cases.iter().map(|c| (*c, c.items())).collect();
+    for c in cols {
+        for r in rows.clone() {
+            for (case, items) in &built {
+                let l = layout(Rect::new(0, 0, c, r), &case.input(items));
+                check(&l, case);
             }
         }
     }
 }
 
 #[test]
+fn every_size_is_clean() {
+    let faces = ["blocks", "analog", "words"].map(|n| clock::face_by_name(n).unwrap());
+    let base = case(faces[0]);
+    let variants = [
+        base,
+        Case {
+            face: faces[1],
+            hour24: false,
+            ..base
+        },
+        Case {
+            face: faces[2],
+            ..base
+        },
+        Case {
+            pomodoro_chip: Some(7),
+            ..base
+        },
+        Case {
+            clock: Place::Off,
+            status_bar: false,
+            clock_chip: false,
+            ..base
+        },
+        Case {
+            minimal: true,
+            ..base
+        },
+        Case {
+            minimal: true,
+            pomodoro_chip: Some(9),
+            ..base
+        },
+        Case {
+            minimal: true,
+            clock_chip: false,
+            cell_aspect: 2.4,
+            ..base
+        },
+    ];
+    sweep(1..=300, 1..=100, &variants);
+}
+
+/// The dock's places mixed: widgets on the lava at every anchor, beside
+/// side ones, in minimal mode, with chips, across 12×5 … 300×90.
+#[test]
+fn every_size_is_clean_with_widgets_on_the_lava() {
+    let faces = ["blocks", "analog", "words", "segment", "binary", "text"]
+        .map(|n| clock::face_by_name(n).unwrap());
+    let base = Case {
+        clock: Place::Overlay,
+        ..case(faces[0])
+    };
+    let mut cases = Vec::new();
+    for (i, anchor) in [
+        Anchor::Center,
+        Anchor::Top,
+        Anchor::TopRight,
+        Anchor::BottomRight,
+        Anchor::Bottom,
+        Anchor::BottomLeft,
+        Anchor::TopLeft,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let face = faces[i % faces.len()];
+        cases.extend([
+            Case {
+                anchor,
+                face,
+                ..base
+            },
+            Case {
+                anchor,
+                face,
+                pomodoro: Place::Overlay,
+                pomodoro_chip: Some(7),
+                ..base
+            },
+            Case {
+                anchor,
+                face,
+                clock: Place::Side,
+                pomodoro: Place::Overlay,
+                hour24: false,
+                ..base
+            },
+            Case {
+                anchor,
+                face,
+                pomodoro: Place::Overlay,
+                minimal: true,
+                ..base
+            },
+            Case {
+                anchor,
+                face,
+                clock: Place::Off,
+                clock_chip: false,
+                pomodoro: Place::Overlay,
+                pomodoro_chip: Some(12),
+                cell_aspect: 2.4,
+                ..base
+            },
+        ]);
+    }
+    sweep(12..=300, 5..=90, &cases);
+}
+
+#[test]
 fn huge_sizes_are_clean() {
-    let base = input(blocks());
+    let base = case(blocks());
     for (cols, rows) in [(400, 120), (500, 40), (60, 300), (1000, 1000)] {
         for minimal in [false, true] {
-            let v = LayoutInput { minimal, ..base };
-            check(&at(cols, rows, &v), &v);
+            for clock in [Place::Side, Place::Overlay] {
+                let v = Case {
+                    minimal,
+                    clock,
+                    pomodoro: clock,
+                    ..base
+                };
+                check(&at(cols, rows, &v), &v);
+            }
         }
     }
 }
 
 #[test]
 fn layout_is_deterministic_and_stateless() {
-    let v = input(blocks());
+    let v = case(blocks());
     assert_eq!(at(80, 24, &v), at(80, 24, &v));
     let _ = at(300, 100, &v);
-    assert_eq!(at(80, 24, &v), layout(Rect::new(0, 0, 80, 24), &v));
+    let items = v.items();
+    assert_eq!(
+        at(80, 24, &v),
+        layout(Rect::new(0, 0, 80, 24), &v.input(&items))
+    );
 }
 
 // --- the mockup sizes (§1.5) -----------------------------------------------
 
-fn face_tier(l: &Layout) -> Option<(Tier, u16, u16)> {
-    l.panel?
-        .face
-        .map(|(_, f)| (f.tier, f.size.width, f.size.height))
+fn face_tier(l: &Layout, case: &Case) -> Option<(Tier, u16, u16)> {
+    clock_of(l, case).map(|(f, ..)| (f.tier, f.size.width, f.size.height))
+}
+
+fn has_date(l: &Layout, case: &Case) -> bool {
+    clock_of(l, case).is_some_and(|(.., date)| date.is_some())
 }
 
 #[test]
 fn micro_is_lamp_only() {
-    let l = at(16, 6, &input(blocks()));
+    let l = at(16, 6, &case(blocks()));
     assert_eq!(l.lamp, Some(Rect::new(0, 0, 16, 6)));
     assert!(l.status.is_none() && l.panel.is_none() && l.chip.is_none());
 }
 
 #[test]
 fn tiny_is_the_lamp_with_a_corner_chip() {
-    let l = at(20, 8, &input(blocks()));
+    let l = at(20, 8, &case(blocks()));
     assert_eq!(l.lamp, Some(Rect::new(0, 0, 20, 8)));
     assert!(l.status.is_none() && l.panel.is_none());
     let chip = l.chip.unwrap();
@@ -229,7 +467,7 @@ fn tiny_is_the_lamp_with_a_corner_chip() {
 
 #[test]
 fn small_50x16_has_status_and_chip_but_no_panel() {
-    let l = at(50, 16, &input(blocks()));
+    let l = at(50, 16, &case(blocks()));
     assert!(l.status.is_some());
     assert!(l.panel.is_none(), "lamp would keep only 56 % of the width");
     assert!(l.chip.is_some());
@@ -237,40 +475,43 @@ fn small_50x16_has_status_and_chip_but_no_panel() {
 
 #[test]
 fn small_wide_72x18_gets_a_right_panel() {
-    let l = at(72, 18, &input(blocks()));
+    let c = case(blocks());
+    let l = at(72, 18, &c);
     assert_eq!(l.lamp.unwrap().width, 50);
-    assert_eq!(face_tier(&l), Some((Tier::M, 17, 3)));
-    assert!(l.panel.unwrap().date.is_none());
+    assert_eq!(face_tier(&l, &c), Some((Tier::M, 17, 3)));
+    assert!(!has_date(&l, &c));
 }
 
 #[test]
 fn medium_80x24_gets_a_right_panel() {
-    let l = at(80, 24, &input(blocks()));
+    let c = case(blocks());
+    let l = at(80, 24, &c);
     assert_eq!(l.lamp, Some(Rect::new(0, 0, 56, 23)));
-    assert_eq!(l.panel.unwrap().rect.x, 56);
-    assert_eq!(face_tier(&l), Some((Tier::M, 17, 3)));
+    assert_eq!(l.panel.as_ref().unwrap().rect.x, 56);
+    assert_eq!(face_tier(&l, &c), Some((Tier::M, 17, 3)));
     assert_eq!(l.status.unwrap(), Rect::new(2, 23, 76, 1));
 }
 
 #[test]
 fn large_120x36_gets_l_face_and_date() {
-    let l = at(120, 36, &input(blocks()));
-    assert_eq!(face_tier(&l), Some((Tier::L, 34, 5)));
-    assert!(l.panel.unwrap().date.is_some());
+    let c = case(blocks());
+    let l = at(120, 36, &c);
+    assert_eq!(face_tier(&l, &c), Some((Tier::L, 34, 5)));
+    assert!(has_date(&l, &c));
     assert_eq!(l.lamp, Some(Rect::new(0, 0, 84, 35)));
 }
 
 #[test]
 fn wide_160x22_has_the_full_panel_and_no_date() {
-    let l = at(160, 22, &input(blocks()));
-    let p = l.panel.unwrap();
-    assert_eq!(p.rect.width, 36);
-    assert!(p.date.is_none());
+    let c = case(blocks());
+    let l = at(160, 22, &c);
+    assert_eq!(l.panel.as_ref().unwrap().rect.width, 36);
+    assert!(!has_date(&l, &c));
 }
 
 #[test]
 fn ultra_tall_34x56_puts_the_panel_below() {
-    let l = at(34, 56, &input(blocks()));
+    let l = at(34, 56, &case(blocks()));
     let lamp = l.lamp.unwrap();
     let p = l.panel.unwrap();
     assert_eq!(p.rect.y, lamp.bottom() + 1, "a blank row above the panel");
@@ -279,43 +520,44 @@ fn ultra_tall_34x56_puts_the_panel_below() {
 
 #[test]
 fn huge_250x70_has_the_panel_and_date() {
-    let l = at(250, 70, &input(blocks()));
-    let p = l.panel.unwrap();
-    assert!(p.date.is_some());
+    let c = case(blocks());
+    let l = at(250, 70, &c);
+    assert!(has_date(&l, &c));
     // The panel grows past 36 for the blocks XL face (51×8), no further.
-    assert_eq!(face_tier(&l), Some((Tier::XL, 51, 8)));
-    assert_eq!(p.rect.width, 53);
+    assert_eq!(face_tier(&l, &c), Some((Tier::XL, 51, 8)));
+    assert_eq!(l.panel.unwrap().rect.width, 53);
 }
 
 #[test]
 fn wide_but_short_gets_blocks_l_with_seconds() {
     // 200 cols lets the panel grow; 50 rows isn't Huge, so no XL.
-    let l = at(220, 50, &input(blocks()));
-    let p = l.panel.unwrap();
-    let (_, form) = p.face.unwrap();
+    let c = case(blocks());
+    let l = at(220, 50, &c);
+    let (form, ..) = clock_of(&l, &c).unwrap();
     assert_eq!(
         (form.tier, form.seconds, form.size.width),
         (Tier::L, true, 54)
     );
-    assert_eq!(p.rect.width, 56);
+    assert_eq!(l.panel.unwrap().rect.width, 56);
     // Below 200 cols the panel stays at 36 and seconds don't fit.
-    let l = at(199, 50, &input(blocks()));
-    assert_eq!(l.panel.unwrap().rect.width, 36);
-    assert_eq!(face_tier(&l), Some((Tier::L, 34, 5)));
+    let l = at(199, 50, &c);
+    assert_eq!(l.panel.as_ref().unwrap().rect.width, 36);
+    assert_eq!(face_tier(&l, &c), Some((Tier::L, 34, 5)));
 }
 
 #[test]
 fn narrow_faces_keep_the_36_col_panel_when_huge() {
-    let l = at(250, 70, &input(clock::face_by_name("analog").unwrap()));
-    assert_eq!(face_tier(&l), Some((Tier::XL, 31, 16)));
+    let c = case(clock::face_by_name("analog").unwrap());
+    let l = at(250, 70, &c);
+    assert_eq!(face_tier(&l, &c), Some((Tier::XL, 31, 16)));
     assert_eq!(l.panel.unwrap().rect.width, 36);
 }
 
 #[test]
 fn minimal_is_the_lamp_with_a_corner_chip() {
-    let v = LayoutInput {
+    let v = Case {
         minimal: true,
-        ..input(blocks())
+        ..case(blocks())
     };
     let l = at(80, 24, &v);
     assert_eq!(l.lamp, Some(Rect::new(0, 0, 80, 24)));
@@ -325,34 +567,125 @@ fn minimal_is_the_lamp_with_a_corner_chip() {
 
 #[test]
 fn minimal_off_hides_the_clock_but_not_the_pomodoro() {
-    let v = LayoutInput {
+    let off = Case {
         minimal: true,
-        ..input(blocks())
-    };
-    let off = LayoutInput {
-        minimal_clock: MinimalClock::Off,
-        ..v
+        clock_chip: false,
+        ..case(blocks())
     };
     assert!(at(60, 12, &off).chip.is_none());
-    let pomo = LayoutInput {
-        chip: Some((ChipKind::Pomodoro, 7)),
+    let pomo = Case {
+        pomodoro_chip: Some(7),
         ..off
     };
-    assert!(
-        at(60, 12, &pomo).chip.is_some(),
-        "a running pomodoro still shows"
-    );
+    let chip = at(60, 12, &pomo)
+        .chip
+        .expect("a running pomodoro still shows");
+    assert_eq!(chip.widget, POMODORO);
 }
 
 #[test]
 fn hidden_clock_keeps_the_pomodoro_panel() {
-    let v = LayoutInput {
-        show_clock: false,
-        ..input(blocks())
+    let v = Case {
+        clock: Place::Off,
+        ..case(blocks())
     };
     let p = at(80, 24, &v).panel.unwrap();
-    assert!(p.face.is_none() && p.date.is_none());
+    assert_eq!(p.items.len(), 1);
+    assert_eq!(p.items[0].widget, POMODORO);
     assert_eq!(p.rect.height, 3);
+}
+
+// --- widgets on the lava --------------------------------------------------
+
+#[test]
+fn both_on_the_lava_give_the_lamp_the_whole_width() {
+    let c = Case {
+        clock: Place::Overlay,
+        pomodoro: Place::Overlay,
+        ..case(blocks())
+    };
+    let l = at(80, 24, &c);
+    assert!(l.panel.is_none() && l.chip.is_none());
+    assert_eq!(l.lamp, Some(Rect::new(0, 0, 80, 23)));
+    let s = l.on_lava.as_ref().unwrap();
+    // Blocks L over the full pomodoro, centred, a row apart.
+    assert_eq!(face_tier(&l, &c), Some((Tier::L, 34, 5)));
+    assert_eq!(s.rect, Rect::new(23, 7, 34, 9));
+    assert_eq!(s.items[1].rect, Rect::new(23, 13, 34, 3));
+}
+
+#[test]
+fn the_clock_on_the_lava_leaves_the_pomodoro_in_the_panel() {
+    let c = Case {
+        clock: Place::Overlay,
+        ..case(blocks())
+    };
+    let l = at(80, 24, &c);
+    let p = l.panel.as_ref().unwrap();
+    assert_eq!((p.items.len(), p.items[0].widget), (1, POMODORO));
+    assert_eq!(l.on_lava.as_ref().unwrap().items[0].widget, CLOCK);
+    assert!(l.lamp.unwrap().width < 80);
+}
+
+#[test]
+fn the_lava_stack_shrinks_then_falls_back_to_the_chip() {
+    let c = Case {
+        clock: Place::Overlay,
+        ..case(blocks())
+    };
+    // The face shrinks with the lamp (at 80×24 the pomodoro's panel
+    // leaves it 56 cols, too few for L's 34)…
+    let tiers: Vec<_> = [(120, 36), (80, 24), (40, 14), (28, 10)]
+        .map(|(w, h)| face_tier(&at(w, h, &c), &c).map(|t| t.0))
+        .into();
+    assert_eq!(
+        tiers,
+        [
+            Some(Tier::L),
+            Some(Tier::M),
+            Some(Tier::M),
+            Some(Tier::Text)
+        ]
+    );
+    // …and on a lamp under 28×10, it's the chip.
+    let l = at(27, 10, &c);
+    assert!(l.on_lava.is_none());
+    assert_eq!(l.chip.unwrap().widget, CLOCK);
+}
+
+#[test]
+fn anchors_put_the_stack_where_they_say() {
+    let base = Case {
+        clock: Place::Overlay,
+        ..case(blocks())
+    };
+    let lamp = |a| {
+        let l = at(120, 36, &Case { anchor: a, ..base });
+        (l.lamp.unwrap(), l.on_lava.unwrap().rect)
+    };
+    let (lamp_r, centre) = lamp(Anchor::Center);
+    let mid = |r: Rect| (2 * r.x + r.width, 2 * r.y + r.height);
+    let (lx, ly) = mid(lamp_r);
+    let (cx, cy) = mid(centre);
+    assert!(lx.abs_diff(cx) <= 1 && ly.abs_diff(cy) <= 1, "centred");
+    let (_, tl) = lamp(Anchor::TopLeft);
+    let (_, br) = lamp(Anchor::BottomRight);
+    assert!(tl.x < centre.x && tl.y < centre.y);
+    assert!(br.right() > centre.right() && br.bottom() > centre.bottom());
+    let (_, top) = lamp(Anchor::Top);
+    assert_eq!((top.x, top.y), (centre.x, tl.y));
+}
+
+#[test]
+fn no_seconds_on_the_lava() {
+    let c = Case {
+        clock: Place::Overlay,
+        ..case(blocks())
+    };
+    for (w, h) in [(220, 50), (300, 90)] {
+        let (form, ..) = clock_of(&at(w, h, &c), &c).unwrap();
+        assert!(!form.seconds, "{w}x{h}");
+    }
 }
 
 // --- status bar & toasts ----------------------------------------------------
@@ -391,10 +724,11 @@ fn toasts_drop_whole_words() {
 
 // --- snapshots ----------------------------------------------------------------
 
-/// A layout as a character map: `L` lamp, `P`
-/// panel padding, `f` face, `d` date, `o` pomodoro, `S` status, `c` chip,
-/// `t` toast row, `.` background.
-fn picture(l: &Layout) -> String {
+/// A layout as a character map: `L` lamp, `P` panel padding, `f` face,
+/// `d` date, `o` pomodoro, `~` the backing of the widgets on the lava
+/// (their own cells as in the panel), `S` status, `c` chip, `t` toast
+/// row, `.` background.
+fn picture(l: &Layout, case: &Case) -> String {
     let (w, h) = (usize::from(l.area.width), usize::from(l.area.height));
     let mut grid = vec![vec!['.'; w]; h];
     let mut fill = |r: Rect, ch: char| {
@@ -410,15 +744,24 @@ fn picture(l: &Layout) -> String {
     if let Some(lamp) = l.lamp {
         fill(lamp, 'L');
     }
-    if let Some(p) = l.panel {
+    if let Some(p) = &l.panel {
         fill(p.rect, 'P');
-        if let Some((r, _)) = p.face {
-            fill(r, 'f');
+    }
+    if let Some(s) = &l.on_lava {
+        fill(halo(s.rect), '~');
+    }
+    for p in [&l.panel, &l.on_lava].into_iter().flatten() {
+        for item in &p.items {
+            if item.widget == POMODORO {
+                fill(item.rect, 'o');
+            }
         }
-        if let Some(d) = p.date {
+    }
+    if let Some((_, face, date)) = clock_of(l, case) {
+        fill(face, 'f');
+        if let Some(d) = date {
             fill(d, 'd');
         }
-        fill(p.pomodoro, 'o');
     }
     if let Some(s) = l.status {
         fill(s, 'S');
@@ -433,9 +776,14 @@ fn picture(l: &Layout) -> String {
 
 #[test]
 fn snapshots_at_mockup_sizes() {
-    let full = input(blocks());
-    let minimal = LayoutInput {
+    let full = case(blocks());
+    let minimal = Case {
         minimal: true,
+        ..full
+    };
+    let lava = Case {
+        clock: Place::Overlay,
+        pomodoro: Place::Overlay,
         ..full
     };
     let cases = [
@@ -449,11 +797,41 @@ fn snapshots_at_mockup_sizes() {
         ("250x70", 250, 70, full),
         ("34x56", 34, 56, full),
         ("minimal_80x24", 80, 24, minimal),
+        ("lava_30x10", 30, 10, lava),
+        ("lava_80x24", 80, 24, lava),
+        (
+            "lava_clock_120x36",
+            120,
+            36,
+            Case {
+                pomodoro: Place::Side,
+                ..lava
+            },
+        ),
+        (
+            "lava_top_right_160x40",
+            160,
+            40,
+            Case {
+                anchor: Anchor::TopRight,
+                ..lava
+            },
+        ),
+        (
+            "lava_minimal_80x24",
+            80,
+            24,
+            Case {
+                minimal: true,
+                anchor: Anchor::BottomLeft,
+                ..lava
+            },
+        ),
     ];
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui/snapshots");
     let update = std::env::var_os("UPDATE_SNAPSHOTS").is_some();
     for (name, cols, rows, v) in cases {
-        let got = picture(&at(cols, rows, &v));
+        let got = picture(&at(cols, rows, &v), &v);
         let path = dir.join(format!("layout_{name}.txt"));
         if update {
             std::fs::create_dir_all(&dir).unwrap();

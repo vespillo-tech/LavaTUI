@@ -6,7 +6,8 @@
 //! * Roomy: a 26-wide sheet. The style and palette pickers sit on the
 //!   right (over the panel; the lamp stays un-dimmed so you can watch it
 //!   change); the face picker sits on the left when that keeps the panel
-//!   clear, so the face it previews stays in view.
+//!   and the widgets on the lava clear, so the face it previews stays in
+//!   view.
 //! * Small: a bottom sheet, up to half the height, across the lamp's
 //!   columns (clear of a right panel) or the full width.
 //! * Tiny / micro: an inline `‹ braille ›` selector in the top row, which
@@ -118,10 +119,17 @@ pub fn placement(area: Rect, layout: &Layout, picker: &Picker) -> Option<Placeme
         let y = area.y + (area.height - status - h) / 2;
         let right = Rect::new(area.right().saturating_sub(hm + SHEET_W), y, SHEET_W, h);
         let left = Rect::new(area.x + hm, y, SHEET_W, h);
-        // The face picker previews the panel: keep the sheet off it when
-        // the other side is free.
-        let clear_of_panel = |r: Rect| layout.panel.is_none_or(|p| !grow(p.rect, 1).intersects(r));
-        let sheet = if picker.kind == PickerKind::Face && clear_of_panel(left) {
+        // The face picker previews the clock: keep the sheet off the panel
+        // and the widgets on the lava when the other side is free.
+        let clear_of_clock = |r: Rect| {
+            let panel = layout.panel.as_ref().map(|p| grow(p.rect, 1));
+            let lava = layout.lava_footprint().map(|f| grow(f, 1));
+            [panel, lava]
+                .into_iter()
+                .flatten()
+                .all(|c| !c.intersects(r))
+        };
+        let sheet = if picker.kind == PickerKind::Face && clear_of_clock(left) {
             left
         } else {
             right
@@ -138,7 +146,7 @@ pub fn placement(area: Rect, layout: &Layout, picker: &Picker) -> Option<Placeme
     let y = area.bottom() - status - h;
     // Across the lamp only, when a panel sits to its right (its own
     // padding column keeps them apart).
-    let w = match layout.panel {
+    let w = match &layout.panel {
         Some(p) if p.rect.x >= area.x + MIN_BOTTOM_W && p.rect.bottom() > y => p.rect.x - area.x,
         _ => area.width,
     };

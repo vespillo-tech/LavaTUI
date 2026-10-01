@@ -21,6 +21,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::clock;
+use crate::dock::{self, DockSettings, Place};
 use crate::render::StyleId;
 use crate::sim::SimSpeed;
 use crate::theme::Palette;
@@ -36,6 +37,7 @@ pub struct Settings {
     pub ui: Ui,
     pub minimal: Minimal,
     pub input: Input,
+    pub dock: DockSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -71,7 +73,6 @@ pub struct ThemeSettings {
 #[serde(default)]
 pub struct Clock {
     pub face: String,
-    pub show: bool,
     pub hour24: bool,
 }
 
@@ -173,7 +174,6 @@ impl Default for Clock {
     fn default() -> Self {
         Self {
             face: "blocks".into(),
-            show: true,
             hour24: true,
         }
     }
@@ -216,12 +216,18 @@ pub struct Parsed {
     /// `("lamp.heat", "99 → 5")`. The app runs on the new value; the file
     /// keeps the old one until that setting is changed in the app.
     pub clamped: Vec<(String, String)>,
+    /// The settings as the file has them, before values carried over from
+    /// retired keys ([`RETIRED_KEYS`]): what a save compares against, so
+    /// the next save writes the carried-over value as the old key goes.
+    pub baseline: Settings,
 }
 
 /// Settings earlier versions had, as `section.key`: v1.1 dropped the glass
-/// frame and the lighting pass. A file that still has one loads without a
-/// word (it isn't an unknown key), and the next save takes it out.
-pub const RETIRED_KEYS: [&str; 2] = ["lamp.frame", "lamp.lighting"];
+/// frame and the lighting pass, and `clock.show` became `dock.clock`
+/// (`show = false` loads as `"off"`). A file that still has one loads
+/// without a word (it isn't an unknown key), and the next save takes it
+/// out.
+pub const RETIRED_KEYS: [&str; 3] = ["lamp.frame", "lamp.lighting", "clock.show"];
 
 /// Styles earlier versions had (v1.1 dropped them): a file naming one gets
 /// the default style, without a word. The command line rejects them like
@@ -230,8 +236,8 @@ const RETIRED_STYLES: [&str; 3] = ["heatmap", "dither", "crt"];
 
 impl Settings {
     /// The sections of `config.toml`, in file order.
-    const SECTIONS: [&str; 8] = [
-        "display", "lamp", "theme", "clock", "pomodoro", "ui", "minimal", "input",
+    const SECTIONS: [&str; 9] = [
+        "display", "lamp", "theme", "clock", "pomodoro", "ui", "minimal", "input", "dock",
     ];
 
     /// Parse a hand-editable `config.toml`. Only a TOML syntax error fails;
@@ -243,6 +249,7 @@ impl Settings {
             ignored: Vec::new(),
             unknown: Vec::new(),
             clamped: Vec::new(),
+            baseline: Settings::default(),
         };
         for key in file.keys() {
             if !Self::SECTIONS.contains(&key.as_str()) {
@@ -259,8 +266,11 @@ impl Settings {
             ui: section("ui", &file, ig, un),
             minimal: section("minimal", &file, ig, un),
             input: section("input", &file, ig, un),
+            dock: section("dock", &file, ig, un),
         };
         settings.check_names(&mut out.ignored);
+        out.baseline = settings.clone().sanitized();
+        settings.carry_over(&file);
         out.settings = settings.clone().sanitized();
         out.clamped = changed(Some(&settings), &out.settings)
             .into_iter()
@@ -301,6 +311,17 @@ impl Settings {
             known,
             Clock::default().face,
         );
+    }
+
+    /// Values from retired keys: `clock.show = false` hides the clock,
+    /// unless the file also says where the clock goes.
+    fn carry_over(&mut self, file: &toml::Table) {
+        let old = |section: &str, key: &str| file.get(section)?.as_table()?.get(key).cloned();
+        let clock = &dock::Clock as &dyn dock::DockWidget;
+        let placed = old("dock", clock.name()).is_some();
+        if old("clock", "show") == Some(toml::Value::Boolean(false)) && !placed {
+            self.dock.set(clock, Place::Off);
+        }
     }
 
     /// Clamp every numeric field into its valid range (hand-edited files).
@@ -577,6 +598,31 @@ mod tests {
         assert!(p.ignored.is_empty() && p.unknown.is_empty(), "{p:?}");
         assert!(p.clamped.is_empty());
         assert_eq!(p.settings.lamp.heat, 4);
+    }
+
+    #[test]
+    fn dock_places_load_and_a_hidden_clock_carries_over() {
+        let clock = &dock::Clock;
+        let p = Settings::parse("[dock]\nclock = \"overlay\"\nanchor = \"top-left\"\n").unwrap();
+        assert_eq!(p.settings.dock.place(clock), Place::Overlay);
+        assert_eq!(p.settings.dock.anchor, dock::Anchor::TopLeft);
+        assert_eq!(p.settings.dock.place(&dock::Pomodoro), Place::Side);
+        // A bad place costs just that key; a widget that doesn't exist
+        // (yet) is an unknown key, kept in the file.
+        let p = Settings::parse("[dock]\nclock = \"sideways\"\nradio = \"side\"\n").unwrap();
+        assert_eq!(p.ignored, ["dock.clock"]);
+        assert_eq!(p.unknown, ["dock.radio"]);
+        assert_eq!(p.settings.dock, DockSettings::default());
+        // v1.1's `clock.show = false` hides the clock, quietly…
+        let p = Settings::parse("[clock]\nshow = false\n").unwrap();
+        assert!(p.ignored.is_empty() && p.unknown.is_empty(), "{p:?}");
+        assert_eq!(p.settings.dock.place(clock), Place::Off);
+        assert_eq!(p.baseline.dock.place(clock), Place::Side);
+        // …unless the file also places it.
+        let p = Settings::parse("[clock]\nshow = false\n[dock]\nclock = \"overlay\"\n").unwrap();
+        assert_eq!(p.settings.dock.place(clock), Place::Overlay);
+        let p = Settings::parse("[clock]\nshow = true\n").unwrap();
+        assert_eq!(p.settings, Settings::default());
     }
 
     #[test]

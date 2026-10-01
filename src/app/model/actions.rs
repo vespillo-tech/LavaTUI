@@ -7,6 +7,7 @@ use std::time::Instant;
 use super::{Model, Overlay, PickerKind, REPEAT_GAP, heat_toast, speed_toast};
 use crate::clock::{self, Status, format_remaining};
 use crate::config::{Overridden, Settings, UiMode};
+use crate::dock::{self, Place};
 use crate::sim::{DEFAULT_HEAT, SimSpeed};
 use crate::ui::keymap::Action;
 
@@ -16,7 +17,6 @@ const RESEED_MIX: u64 = 0x9E37_79B9_7F4A_7C15;
 
 /// Toasts for the boolean settings' new value: `[on, off]`.
 const STATUS_BAR: [&str; 2] = ["status bar on", "status bar off"];
-const CLOCK: [&str; 2] = ["clock shown", "clock hidden"];
 const HOUR24: [&str; 2] = ["24h", "12h"];
 
 impl Model {
@@ -84,7 +84,8 @@ impl Model {
             Action::StylePicker => self.open_picker(PickerKind::Style),
             Action::FacePicker => self.open_picker(PickerKind::Face),
             Action::PalettePicker => self.open_picker(PickerKind::Palette),
-            Action::ToggleClock => self.toggle(now, |s| &mut s.clock.show, CLOCK),
+            Action::Place(name) => self.move_widget(name, now),
+            Action::NextAnchor => self.next_anchor(now),
             Action::ToggleHour24 => self.toggle(now, |s| &mut s.clock.hour24, HOUR24),
             Action::PomodoroToggle => self.pomodoro_toggle(now),
             Action::PomodoroSkip => match self.pomodoro.skip(now) {
@@ -128,6 +129,38 @@ impl Model {
         *value = !*value;
         let text = if *value { on } else { off };
         self.toast(text);
+        self.changed(now);
+    }
+
+    /// A widget's key: side → lava → off → side. The toast says where it
+    /// went, and when it has no room there.
+    fn move_widget(&mut self, name: &str, now: Instant) {
+        let Some((index, widget)) = dock::by_name(name) else {
+            return;
+        };
+        let place = self.settings.dock.place(widget).next();
+        self.settings.dock.set(widget, place);
+        self.changed(now);
+        self.relayout(self.layout.area);
+        let note = match place {
+            Place::Off => "",
+            _ if self.layout.placed(index).is_some() => "",
+            Place::Side if self.minimal() => " · not in minimal",
+            _ => " · no room",
+        };
+        self.toast(format!("{name} · {}{note}", place.describe()));
+    }
+
+    /// The widgets on the lava move round: centre, then the edge clockwise.
+    fn next_anchor(&mut self, now: Instant) {
+        let dock = &mut self.settings.dock;
+        dock.anchor = dock.anchor.next();
+        let anchor = dock.anchor.name();
+        let any = dock::WIDGETS
+            .iter()
+            .any(|w| self.settings.dock.place(*w) == Place::Overlay);
+        let note = if any { "" } else { " · nothing there yet" };
+        self.toast(format!("on the lava · {anchor}{note}"));
         self.changed(now);
     }
 
