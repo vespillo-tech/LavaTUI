@@ -16,6 +16,11 @@ pub struct Cli {
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..=240))]
     pub fps: Option<u32>,
 
+    /// Seed the wax simulation: the same seed always plays out the same lamp
+    /// (default: a new seed every launch).
+    #[arg(long, value_name = "U64")]
+    pub seed: Option<u64>,
+
     /// Exit after rendering N frames (smoke tests / benchmarking).
     #[arg(long, value_name = "N", hide = true)]
     pub frames: Option<u64>,
@@ -28,6 +33,7 @@ impl Cli {
             minimal: self.minimal,
             fps: self.fps.unwrap_or(defaults.fps),
             max_frames: self.frames,
+            seed: self.seed,
         }
     }
 }
@@ -47,6 +53,13 @@ mod tests {
         let config = Cli::parse_from(["lavatui", "--minimal", "--fps", "30"]).into_config();
         assert!(config.minimal);
         assert_eq!(config.fps, 30);
+    }
+
+    #[test]
+    fn parses_seed() {
+        let config = Cli::parse_from(["lavatui", "--seed", "18446744073709551615"]).into_config();
+        assert_eq!(config.seed, Some(u64::MAX));
+        assert!(Cli::try_parse_from(["lavatui", "--seed", "-1"]).is_err());
     }
 
     #[test]

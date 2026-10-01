@@ -373,3 +373,157 @@ fn bench_fill() {
         );
     }
 }
+
+// --- controls ------------------------------------------------------------
+
+/// Mean blob count and mean |vy| of free blobs over `secs` seconds, sampled
+/// every half second.
+fn activity(world: &mut World, secs: u32) -> (f64, f64) {
+    let (mut count, mut speed, mut speed_n, mut samples) = (0.0, 0.0, 0.0_f64, 0.0);
+    for _ in 0..secs * 2 {
+        world.run(60);
+        count += world.blobs.len() as f64;
+        samples += 1.0;
+        for b in world.blobs.iter().filter(|b| b.phase == Phase::Free) {
+            speed += b.vy.abs();
+            speed_n += 1.0;
+        }
+    }
+    (count / samples, speed / speed_n.max(1.0))
+}
+
+#[test]
+fn heat_level_clamps() {
+    let mut world = World::new(1, 1.0, Shape::Tank);
+    assert_eq!(world.heat(), DEFAULT_HEAT);
+    world.set_heat(0);
+    assert_eq!(world.heat(), 1);
+    world.set_heat(9);
+    assert_eq!(world.heat(), *HEAT_LEVELS.end());
+}
+
+#[test]
+fn more_heat_means_more_faster_blobs() {
+    let mut results = Vec::new();
+    for heat in [1, 3, 5] {
+        let mut world = World::new(21, 1.5, Shape::Tank);
+        world.set_heat(heat);
+        world.run(120 * 60); // settle into the new regime
+        results.push(activity(&mut world, 120));
+    }
+    let [(cold_n, cold_v), (mid_n, mid_v), (hot_n, hot_v)] = results[..] else {
+        unreachable!()
+    };
+    assert!(cold_n < mid_n && mid_n < hot_n, "blob counts {results:?}");
+    assert!(cold_v < mid_v && mid_v < hot_v, "speeds {results:?}");
+}
+
+#[test]
+fn heat_change_eases_in_without_velocity_jumps() {
+    let mut base = World::new(8, 1.2, Shape::Tank);
+    base.run(600);
+    let mut hot = World::new(8, 1.2, Shape::Tank);
+    hot.run(600);
+    hot.set_heat(5);
+
+    // One step later the two lamps are still all but identical...
+    base.step(DT);
+    hot.step(DT);
+    for (a, b) in base.blobs.iter().zip(&hot.blobs) {
+        assert_eq!(a.id, b.id);
+        assert!((a.vy - b.vy).abs() < 1e-5, "velocity jumped: {a:?} {b:?}");
+    }
+
+    // ...and the heat the sim uses climbs smoothly to the new level.
+    let mut last = hot.heat_level;
+    for _ in 0..120 * 6 {
+        hot.step(DT);
+        let step = hot.heat_level - last;
+        assert!((0.0..0.02).contains(&step), "heat stepped by {step}");
+        last = hot.heat_level;
+    }
+    assert!(hot.heat_level > 4.9, "eased to {}", hot.heat_level);
+}
+
+#[test]
+fn reseed_melts_everything_conserving_wax_then_refills() {
+    let mut world = World::new(7, 1.2, Shape::Tank);
+    world.prewarm(600, DT);
+    let wax = world.wax_area();
+    let old_ids = world.next_id;
+    assert!(!world.blobs.is_empty());
+
+    world.reseed(99);
+    assert!(world.is_reseeding());
+    let mut melted_at = None;
+    for step in 0..120 * 20 {
+        world.step(DT);
+        assert_close(world.wax_area(), wax, 1e-9);
+        if melted_at.is_none() && world.blobs.iter().all(|b| b.id >= old_ids) {
+            melted_at = Some(step as f64 * DT);
+        }
+        if !world.is_reseeding() {
+            break;
+        }
+    }
+    let melted_at = melted_at.expect("old wax melted");
+    assert!(melted_at <= 2.5, "melt took {melted_at:.2}s");
+    assert!(!world.is_reseeding(), "reseed completed");
+
+    // The new lamp buds and rises.
+    world.run(120 * 10);
+    let risen = world
+        .blobs
+        .iter()
+        .filter(|b| b.id >= old_ids && b.phase == Phase::Free && b.y > 0.2)
+        .count();
+    assert!(risen >= 2, "new blobs afloat: {:?}", world.blobs);
+    assert_close(world.wax_area(), wax, 1e-9);
+    assert_sane(&world);
+}
+
+#[test]
+fn heat_pulse_makes_nearby_wax_rise() {
+    let mut world = World::bare(1.0);
+    let warmed = world.add(-0.25, 0.6, 0.06, 0.35);
+    let control = world.add(0.25, 0.6, 0.06, 0.35);
+    // Field coordinates of the left blob: u across, v down.
+    world.heat_pulse(0.5 - 0.25, 1.0 - 0.6);
+    world.run(120 * 4);
+    let (w, c) = (world.blob(warmed), world.blob(control));
+    assert!(w.temp > NEUTRAL_TEMP + 0.1, "warmed to {}", w.temp);
+    assert!(c.temp < NEUTRAL_TEMP, "control untouched: {}", c.temp);
+    assert!(w.y > 0.65 && w.y > c.y + 0.1, "rose: {} vs {}", w.y, c.y);
+}
+
+#[test]
+fn heat_pulse_on_the_pool_raises_a_bud() {
+    let mut world = World::new(3, 1.0, Shape::Tank);
+    world.blobs.clear();
+    world.pool_area = world.wax_target;
+    world.spawn_timer = 1e9; // no natural budding
+    world.heat_pulse(0.7, 0.98);
+    let bud = world.blobs.first().expect("a bud started");
+    assert!(matches!(bud.phase, Phase::Budding { .. }));
+    assert_close(bud.x, 0.2, 0.05);
+}
+
+#[test]
+fn same_seed_and_controls_same_lamp() {
+    let play = |seed| {
+        let mut world = World::new(seed, 1.1, Shape::Tank);
+        world.run(500);
+        world.set_heat(5);
+        world.heat_pulse(0.4, 0.5);
+        world.run(500);
+        world.reseed(seed ^ 0xABCD);
+        world.run(1500);
+        world.set_heat(2);
+        world.run(1500);
+        world
+    };
+    let (a, b, c) = (play(42), play(42), play(43));
+    assert_eq!(a.blobs, b.blobs);
+    assert_eq!(a.pool_area.to_bits(), b.pool_area.to_bits());
+    assert_ne!(a.blobs, c.blobs);
+}

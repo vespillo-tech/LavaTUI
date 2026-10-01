@@ -12,7 +12,7 @@ use ratatui::DefaultTerminal;
 use ratatui::crossterm::event;
 
 use crate::config::Config;
-use crate::sim::{Field, Shape, World};
+use crate::sim::{Field, Shape, SimSpeed, World};
 use crate::timing::{FixedStep, FpsMeter, FramePacer};
 use crate::ui::{self, Action, Scene};
 
@@ -24,11 +24,12 @@ const PREWARM_STEPS: u32 = 600;
 pub fn run(terminal: &mut DefaultTerminal, config: &Config) -> io::Result<()> {
     let size = terminal.size()?;
     let mut world = World::new(
-        seed(),
+        config.seed.unwrap_or_else(time_seed),
         ui::lamp_aspect(size.width, size.height),
         Shape::Tank,
     );
     let mut sim_clock = FixedStep::new(SIM_HZ);
+    let speed = SimSpeed::default();
     world.prewarm(PREWARM_STEPS, sim_clock.dt_secs());
     let mut field = Field::default();
     let mut samples = Vec::new();
@@ -46,7 +47,7 @@ pub fn run(terminal: &mut DefaultTerminal, config: &Config) -> io::Result<()> {
         let size = terminal.size()?;
         world.set_aspect(ui::lamp_aspect(size.width, size.height));
         let now = Instant::now();
-        for _ in 0..sim_clock.advance(now - last) {
+        for _ in 0..sim_clock.advance(speed.scale(now - last)) {
             world.step(sim_clock.dt_secs());
         }
         last = now;
@@ -69,8 +70,8 @@ pub fn run(terminal: &mut DefaultTerminal, config: &Config) -> io::Result<()> {
     }
 }
 
-/// A different lamp every launch. (A `--seed` flag can pin it later.)
-fn seed() -> u64 {
+/// A different lamp every launch, unless `--seed` pins it.
+fn time_seed() -> u64 {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos() as u64)
