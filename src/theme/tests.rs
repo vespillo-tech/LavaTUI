@@ -216,8 +216,8 @@ fn dark_tints_dither_to_keep_their_hue() {
     // coloured second index mixed in; mixed in linear light they land
     // near the colour's own lightness.
     for c in [
-        Rgb(0x1B, 0x0B, 0x2B),
-        Rgb(0x17, 0x0F, 0x2C),
+        Rgb(0x29, 0x10, 0x4F),
+        Rgb(0x2A, 0x0F, 0x30),
         Rgb(0x3C, 0x18, 0x0F),
         Rgb(0x0B, 0x4F, 0x6C),
     ] {
@@ -241,6 +241,12 @@ fn dark_tints_dither_to_keep_their_hue() {
             (mixed - want).abs() < want.max(0.01) * 0.6,
             "{c:?}: {mixed} vs {want}"
         );
+    }
+    // Synthwave's and ultraviolet's liquids have no dark index near their
+    // hue: they stay grey, like their §5.2 index, rather than dithering
+    // with blue (00005f, 30-40° off).
+    for c in [Rgb(0x1B, 0x0B, 0x2B), Rgb(0x17, 0x0F, 0x2C)] {
+        assert!(dither_counts(c).keys().all(|&i| i >= 232), "{c:?}");
     }
 }
 
@@ -419,4 +425,181 @@ fn blend_mixes_resolved_colours_per_depth() {
     let t16 = Theme::new(lava(), ColorDepth::Ansi16);
     assert_eq!(t16.blend(Color::Red, Color::Yellow, 0.4), Color::Red);
     assert_eq!(t16.blend(Color::Red, Color::Yellow, 0.6), Color::Yellow);
+}
+
+/// How far (degrees) a shown index's hue may stray from the colour it
+/// stands for, and the chroma (OKLab) from which a colour has a hue to
+/// keep. Greys may stand in for anything.
+const HUE_TOLERANCE: f32 = 35.0;
+const CHROMATIC: f32 = 0.03;
+
+/// The hue gap between `want` and what `shown` shows, when `want` has a
+/// hue and `shown` isn't grey.
+fn hue_gap(want: Rgb, shown: Rgb) -> Option<f32> {
+    let (cw, hw) = xterm::chroma_hue(want);
+    let (cs, hs) = xterm::chroma_hue(shown);
+    if cw < CHROMATIC || cs < xterm::GREY {
+        return None;
+    }
+    let d = (hw - hs).abs() % 360.0;
+    Some(d.min(360.0 - d))
+}
+
+/// Every index `c` can show in 256 colours (flat match and every dither
+/// threshold) that is off its hue.
+fn off_hue(c: Rgb) -> Vec<(u8, f32)> {
+    let mut shown = dither_counts(c);
+    shown.insert(xterm::nearest(c), 0);
+    shown
+        .into_keys()
+        .filter_map(|i| hue_gap(c, xterm::rgb(i)).map(|d| (i, d)))
+        .filter(|&(_, d)| d > HUE_TOLERANCE)
+        .collect()
+}
+
+#[test]
+fn ansi256_dark_wax_never_turns_another_hue() {
+    // The lava-ebq.32 repro: dim orange-brown wax (crt / chrome, lit) went
+    // to 005f00 (22) and 5f5f00 (58), green dots on orange.
+    for c in [
+        Rgb(0x51, 0x30, 0x08),
+        Rgb(0x6D, 0x3C, 0x08),
+        Rgb(0x5D, 0x34, 0x1C),
+        Rgb(0x59, 0x45, 0x0C),
+    ] {
+        let shown = dither_counts(c);
+        assert!(
+            !shown.contains_key(&22) && !shown.contains_key(&58),
+            "{c:?}: {shown:?}"
+        );
+        assert_eq!(off_hue(c), [], "{c:?}");
+    }
+    // Every palette's wax and thermal ramps, dimmed and brightened by
+    // light, and faded into the liquid and background, as styles draw them.
+    for palette in Palette::all().iter().filter(|p| p.has_rgb()) {
+        // The hand-picked indices too (§5.2): an unmixed role shows its own.
+        for role in Role::ALL {
+            let s = palette.swatch(role);
+            let (want, shown) = (s.rgb.unwrap(), xterm::rgb(s.x256.unwrap()));
+            let gap = hue_gap(want, shown).unwrap_or(0.0);
+            assert!(gap <= HUE_TOLERANCE, "{} {role:?}: {gap}°", palette.name);
+        }
+        let theme = Theme::new(palette, ColorDepth::Ansi256);
+        let roles = Role::ALL.map(|r| theme.rgb(Ink::Role(r)));
+        let bases = theme.wax.iter().chain(&theme.heat).chain(&roles);
+        for &base in bases {
+            for k in [0.1, 0.2, 0.3, 0.45, 0.6, 0.8, 1.0, 1.2, 1.5] {
+                for (to, t) in [(Role::Liquid, 0.0), (Role::Liquid, 0.4), (Role::Bg, 0.7)] {
+                    let c = base.shade(k).lerp(theme.rgb(Ink::Role(to)), t);
+                    assert_eq!(off_hue(c), [], "{} {c:?}", palette.name);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn ansi256_no_colour_shows_another_hue() {
+    // The whole RGB cube, coarsely: no tinted colour is ever matched or
+    // dithered to an index of another hue.
+    let levels = (0..=255u8).step_by(9).chain([255]);
+    let levels: Vec<u8> = levels.collect();
+    for &r in &levels {
+        for &g in &levels {
+            for &b in &levels {
+                let c = Rgb(r, g, b);
+                assert_eq!(off_hue(c), [], "{c:?}");
+            }
+        }
+    }
+}
+
+/// Whole lamps, every style × palette, lit, from live sim worlds: every
+/// pixel 256 colours shows keeps the hue of the truecolor pixel it stands
+/// for.
+#[test]
+fn ansi256_lamp_pixels_keep_their_truecolor_hue() {
+    use ratatui::buffer::{Buffer, Cell};
+    use ratatui::layout::Rect;
+    use ratatui::widgets::StatefulWidget;
+
+    use crate::light::{Lamplight, Lighting};
+    use crate::render::{LampOptions, LampState, LampView, StyleId};
+    use crate::sim::{Field, Shape, World};
+
+    /// A cell's (top, bottom) pixel colours, or, for a glyph, its
+    /// (fg, fg) and (bg, bg).
+    fn pixels(cell: &Cell) -> [(Color, Color); 2] {
+        match cell.symbol() {
+            "▀" => [(cell.fg, cell.bg); 2],
+            "▄" => [(cell.bg, cell.fg); 2],
+            "█" => [(cell.fg, cell.fg); 2],
+            " " => [(cell.bg, cell.bg); 2],
+            _ => [(cell.fg, cell.fg), (cell.bg, cell.bg)],
+        }
+    }
+    let rgb = |c: Color| match c {
+        Color::Rgb(r, g, b) => Some(Rgb(r, g, b)),
+        Color::Indexed(i) => Some(xterm::rgb(i)),
+        _ => None,
+    };
+
+    let lamps = [
+        (2, Shape::Tank, Rect::new(0, 0, 96, 30)),
+        (7, Shape::Bottle, Rect::new(0, 0, 30, 20)),
+    ];
+    let mut state = LampState::default();
+    let mut bad = Vec::new();
+    for (seed, shape, area) in lamps {
+        let aspect = f64::from(area.width) / f64::from(area.height) / 2.0;
+        let mut world = World::new(seed, aspect, shape);
+        world.prewarm(600, 1.0 / 120.0);
+        let mut field = Field::default();
+        field.prepare(&world, 0.0);
+        for palette in Palette::all() {
+            for id in StyleId::all() {
+                let draw = |depth, state: &mut LampState| {
+                    let theme = Theme::new(palette, depth);
+                    let mut buf = Buffer::empty(area);
+                    LampView {
+                        field: &field,
+                        style: id.style(),
+                        theme: &theme,
+                        time: 1.0,
+                        lighting: Some(&Lamplight as &dyn Lighting),
+                        options: LampOptions::default(),
+                    }
+                    .render(area, &mut buf, state);
+                    buf
+                };
+                let truecolor = draw(ColorDepth::TrueColor, &mut state);
+                let ansi256 = draw(ColorDepth::Ansi256, &mut state);
+                for (pos, (want, shown)) in area
+                    .positions()
+                    .zip(truecolor.content().iter().zip(ansi256.content()))
+                {
+                    for (w, s) in pixels(want).into_iter().zip(pixels(shown)) {
+                        for (w, s) in [(w.0, s.0), (w.1, s.1)] {
+                            let (Some(w), Some(s)) = (rgb(w), rgb(s)) else {
+                                continue;
+                            };
+                            if let Some(d) = hue_gap(w, s).filter(|&d| d > HUE_TOLERANCE) {
+                                bad.push(format!(
+                                    "{} {} {pos:?}: {w:?} shown as {s:?} ({d:.0}°)",
+                                    palette.name,
+                                    id.style().name()
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "{} off-hue pixels:\n{}",
+        bad.len(),
+        bad[..bad.len().min(20)].join("\n")
+    );
 }
