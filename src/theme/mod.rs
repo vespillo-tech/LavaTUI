@@ -76,10 +76,25 @@ impl Rgb {
         )
     }
 
-    /// Multiply brightness by `k` (lighting); saturates at white.
+    /// Multiply brightness by `k`; saturates at white.
     pub fn scale(self, k: f32) -> Rgb {
         let s = |c: u8| (f32::from(c) * k).round().clamp(0.0, 255.0) as u8;
         Rgb(s(self.0), s(self.1), s(self.2))
+    }
+
+    /// Apply a lighting factor (`Canvas::light`). Darkening multiplies;
+    /// brightening (`k > 1`) is eased by the colour's own lightness, so
+    /// dark liquid glows nearly the full amount while light colours barely
+    /// move: highlights keep their hue and the light palette doesn't blow
+    /// out into white halos.
+    pub fn shade(self, k: f32) -> Rgb {
+        if k <= 1.0 {
+            return self.scale(k);
+        }
+        let luma =
+            (0.2126 * f32::from(self.0) + 0.7152 * f32::from(self.1) + 0.0722 * f32::from(self.2))
+                / 255.0;
+        self.scale(1.0 + (k - 1.0) * (1.0 - luma))
     }
 }
 
@@ -357,6 +372,16 @@ impl Paint<'_> {
     pub fn scale(self, k: f32) -> Self {
         Paint {
             rgb: self.rgb.scale(k),
+            index: if k == 1.0 { self.index } else { None },
+            ..self
+        }
+    }
+
+    /// Apply a lighting factor (`Canvas::light`, see [`Rgb::shade`]).
+    /// Like [`scale`](Self::scale), only visible when blending.
+    pub fn shade(self, k: f32) -> Self {
+        Paint {
+            rgb: self.rgb.shade(k),
             index: if k == 1.0 { self.index } else { None },
             ..self
         }

@@ -90,7 +90,8 @@ cargo test                           # unit tests (sim, render, layout sweep, ke
 cargo fmt --check                    # formatting gate
 cargo clippy --all-targets -- -D warnings   # lint gate
 cargo test --release -- --ignored --nocapture bench_fill   # field sampler + step timing
-cargo test --release -- --ignored --nocapture bench_lamp   # per-style frame time + bytes/frame
+cargo test --release -- --ignored --nocapture bench_lamp   # per-style frame time + bytes/frame (lit / unlit)
+cargo test --release -- --ignored --nocapture bench_light  # lighting pass alone
 UPDATE_SNAPSHOTS=1 cargo test        # rewrite render + layout snapshots (review the diff!)
 ```
 
@@ -160,10 +161,20 @@ reads your quit key; on macOS a read on the master after exit is EOF/EIO.
                 `coverage` (quantised AA edge), `wax_heat`, `bayer`,
                 `cell::{half_block, braille}`. Snapshots: `render/snapshots/`
                 (`UPDATE_SNAPSHOTS=1 cargo test` to rewrite, then review).
-- `light/`    — `Lighting` trait: the seam for the glow pass (lava-5ak). Fills a
-                per-sample brightness buffer that styles read via `Canvas::light`.
-                `ui::draw` passes `lighting: None` today; the `l` key and
-                `lamp.lighting` setting are already wired for it.
+- `light/`    — `Lighting` trait + `Lamplight`, the lighting pass (lava-5ak).
+                Fills a per-sample brightness buffer (1.0 = unlit) that styles
+                read via `Canvas::light`: dome normals from depth + density
+                gradient → half-Lambert key light (up-left) + small specular,
+                flattened on hot wax; glow from the kernel tail of hot wax;
+                warm base light in the bottom third. One branch-free,
+                vectorised sweep, no scratch; output quantised (bandwidth).
+                Blending styles apply it with `paint.shade(light)` (eases
+                brightening by lightness; `scale` stays a plain multiply for a
+                style's own effects); glyph depths use `render::lit` to shift
+                density instead (§5.3). Styles with their own key light
+                (glass) take it on the liquid only. `LampView` resets light
+                to 1.0 outside the glass. Tuning at the top of the file.
+                `ui::draw` passes it when `lamp.lighting` is on (`l` toggles).
 - `clock/`    — clock faces (`Face` trait + `FACES` registry: blocks, segment,
                 analog, binary, words, text; each lists fixed-size `Form`s and
                 `fit()` picks the largest that fits) and the pomodoro state

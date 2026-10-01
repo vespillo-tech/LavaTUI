@@ -25,13 +25,14 @@ impl Style for Outline {
     fn draw(&self, c: &Canvas, area: Rect, buf: &mut Buffer) {
         for cy in 0..usize::from(area.height) {
             for cx in 0..usize::from(area.width) {
-                let (mut bits, mut heat, mut dots) = (0u8, 0.0, 0.0);
+                let (mut bits, mut heat, mut light, mut dots) = (0u8, 0.0, 0.0, 0.0);
                 for dy in 0..4 {
                     for dx in 0..2 {
                         let (x, y) = (2 * cx + dx, 4 * cy + dy);
                         if is_edge(c, x, y) {
                             bits |= braille_bit(dx, dy);
                             heat += wax_heat(c.at(x, y).temp);
+                            light += c.light(x, y);
                             dots += 1.0;
                         }
                     }
@@ -42,7 +43,8 @@ impl Style for Outline {
                     cell.set_char(' ').set_bg(base);
                 } else {
                     // Lifted toward hot so a thin line holds its own against the liquid.
-                    let fg = c.theme.color(Ink::Wax(0.3 + 0.7 * heat / dots));
+                    let wax = Ink::Wax(0.3 + 0.7 * heat / dots);
+                    let fg = c.theme.paint(wax).shade(light / dots).color();
                     cell.set_char(braille(bits)).set_fg(fg).set_bg(base);
                 }
             }

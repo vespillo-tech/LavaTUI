@@ -66,7 +66,8 @@ impl Style for Matrix {
                             .theme
                             .paint(Ink::Wax(heat))
                             .mix(Ink::Role(Role::Liquid), 0.6 * fade)
-                            .scale(1.2 * c.light(cx, cy))
+                            .scale(1.2)
+                            .shade(c.light(cx, cy))
                             .color();
                         (glyph(cx, cy, c.time * MUTATE_HZ), fg)
                     }

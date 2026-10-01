@@ -154,6 +154,19 @@ pub fn wax_heat(temp: f32) -> f32 {
     ((temp - 0.25) / 0.65).clamp(0.0, 1.0)
 }
 
+/// Lighting as a nudge along a 0..1 level (heat, glyph density) rather
+/// than a colour scale, for depths that can't blend: "lighting adds
+/// density, not colour" (docs/design.md §5.3). Shadow sides step down,
+/// highlights and glow step up; unlit (1.0) leaves `level` as it is.
+#[inline]
+pub fn lit(level: f32, light: f32) -> f32 {
+    const GAIN: f32 = 0.6;
+    if light == 1.0 {
+        return level;
+    }
+    (level + GAIN * (light - 1.0)).clamp(0.0, 1.0)
+}
+
 /// Ordered-dither threshold in (0, 1) for pixel (`x`, `y`): an 8×8 Bayer
 /// matrix anchored to the canvas, so the pattern is static frame to frame.
 #[inline]
@@ -242,6 +255,12 @@ impl StatefulWidget for LampView<'_> {
                 state.light.clear();
                 state.light.resize(n, 1.0);
                 lighting.shade(&state.samples, width, height, &mut state.light);
+                // Light lives inside the container: outside the glass is
+                // the app background, which stays unlit.
+                for (row, &(lo, hi)) in state.light.chunks_exact_mut(width).zip(&state.mask) {
+                    row[..lo].fill(1.0);
+                    row[hi..].fill(1.0);
+                }
                 Some(state.light.as_slice())
             }
             None => None,

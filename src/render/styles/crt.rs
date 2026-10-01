@@ -74,7 +74,8 @@ fn pixel(c: &Canvas, x: usize, y: usize, gain: f32) -> Color {
     c.theme
         .paint(c.backdrop(x, y))
         .mix(wax, quantise(cover.max(glow), 12.0))
-        .scale(gain * lit * c.light(x, y))
+        .scale(gain * lit)
+        .shade(c.light(x, y))
         .color()
 }
 

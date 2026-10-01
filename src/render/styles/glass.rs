@@ -52,9 +52,7 @@ impl Style for Glass {
                 let (ch, ink) = if a.spec.max(b.spec) > 0.5 {
                     ('█', Ink::Role(Role::Text))
                 } else {
-                    let lit =
-                        0.5 * (a.diffuse + b.diffuse) * 0.5 * (c.light(cx, yt) + c.light(cx, yb));
-                    let ch = match lit {
+                    let ch = match 0.5 * (a.diffuse + b.diffuse) {
                         l if l < 0.25 => '░',
                         l if l < 0.5 => '▒',
                         l if l < 0.75 => '▓',
@@ -105,9 +103,12 @@ fn normalise(v: [f32; 3]) -> [f32; 3] {
 fn pixel(c: &Canvas, x: usize, y: usize) -> Color {
     let s = c.at(x, y);
     let cover = coverage(s.density);
+    // The wax has its own key light, so the lighting pass only reaches the
+    // liquid (base light + glow), fading out across the edge.
+    let light = 1.0 + (c.light(x, y) - 1.0) * (1.0 - cover);
     let backdrop = c.theme.paint(c.backdrop(x, y));
     if cover == 0.0 {
-        return backdrop.color();
+        return backdrop.shade(light).color();
     }
     let sh = shade(c, x, y);
     let heat = quantise(wax_heat(s.temp), 16.0);
@@ -118,6 +119,6 @@ fn pixel(c: &Canvas, x: usize, y: usize) -> Color {
         .scale(0.7 + 0.5 * sh.diffuse)
         .mix(Ink::Wax(1.0), cover * 0.75 * sh.rim)
         .mix(Ink::Role(Role::Text), cover * sh.spec)
-        .scale(c.light(x, y))
+        .shade(light)
         .color()
 }

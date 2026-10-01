@@ -9,7 +9,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 use crate::render::cell::half_block;
-use crate::render::{Canvas, Grid, Style, bayer, smoothstep, wax_heat};
+use crate::render::{Canvas, Grid, Style, bayer, lit, smoothstep, wax_heat};
 use crate::sim::SURFACE;
 use crate::theme::{Ink, Role};
 
@@ -47,7 +47,9 @@ impl Style for Dither {
 fn pixel(c: &Canvas, x: usize, y: usize) -> Option<Color> {
     let s = c.at(x, y);
     let cover = smoothstep((s.density - (SURFACE - EDGE / 2.0)) / EDGE);
-    let heat = wax_heat(s.temp);
+    // Light shifts the dithered ink level: shadows cooler, highlights hotter.
+    let light = c.light(x, y);
+    let heat = lit(wax_heat(s.temp), light);
     let threshold = bayer(x, y);
 
     if !c.theme.has_color() {
@@ -59,7 +61,7 @@ fn pixel(c: &Canvas, x: usize, y: usize) -> Option<Color> {
     let v = cover * (1.0 + 2.0 * heat);
     let level = (v + threshold).floor() as usize;
     match level {
-        0 if c.theme.blends() => Some(c.theme.color(c.backdrop(x, y))),
+        0 if c.theme.blends() => Some(c.theme.paint(c.backdrop(x, y)).shade(light).color()),
         0 => None,
         n => Some(c.theme.color(Ink::Role(INKS[n.min(3) - 1]))),
     }

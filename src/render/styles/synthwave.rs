@@ -72,12 +72,18 @@ fn pixel(c: &Canvas, x: usize, y: usize, scroll: f32) -> Option<Color> {
 
     let backdrop = backdrop(c, x, y, v, scroll);
     if rim {
-        return Some(backdrop.mix(neon, 1.0).scale(1.35 * c.light(x, y)).color());
+        return Some(
+            backdrop
+                .mix(neon, 1.0)
+                .scale(1.35)
+                .shade(c.light(x, y))
+                .color(),
+        );
     }
     if wax && !stripe(y, v) {
         let body = Ink::Wax(sun(v, heat));
         let cover = coverage(s.density);
-        return Some(backdrop.mix(body, cover).scale(c.light(x, y)).color());
+        return Some(backdrop.mix(body, cover).shade(c.light(x, y)).color());
     }
     // Halo: the soft field around the wax glows in neon (dimly through the
     // stripes).

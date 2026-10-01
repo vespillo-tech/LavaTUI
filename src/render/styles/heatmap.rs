@@ -9,7 +9,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 use crate::render::cell::half_block;
-use crate::render::{Canvas, Grid, Style, bayer, coverage, smoothstep};
+use crate::render::{Canvas, Grid, Style, bayer, coverage, lit, smoothstep};
 use crate::sim::{SURFACE, ambient_temp};
 use crate::theme::{Ink, Role};
 
@@ -17,6 +17,8 @@ pub struct Heatmap;
 
 /// Distinct thermal levels.
 const HEAT_BANDS: f32 = 32.0;
+/// Where [`shade`] reaches the wax colours.
+const WAX_BAND: f32 = 0.36;
 
 impl Style for Heatmap {
     fn name(&self) -> &'static str {
@@ -37,6 +39,13 @@ impl Style for Heatmap {
                     half_block(cell, pixel(c, cx, yt), pixel(c, cx, yb), base);
                 } else {
                     let h = 0.5 * (heat(c, cx, yt) + heat(c, cx, yb));
+                    // Light shades the wax bands only: on the liquid it
+                    // would draw the base glow as hard `░` stripes.
+                    let h = if h >= WAX_BAND {
+                        lit(h, 0.5 * (c.light(cx, yt) + c.light(cx, yb))).max(WAX_BAND)
+                    } else {
+                        h
+                    };
                     let (ch, ink) = shade(h);
                     let fg = if ch == ' ' {
                         Color::Reset
@@ -73,7 +82,7 @@ fn pixel(c: &Canvas, x: usize, y: usize) -> Option<Color> {
         return Some(c.theme.color(c.backdrop(x, y)));
     }
     let paint = c.theme.paint(Ink::Heat(heat(c, x, y)));
-    Some(paint.scale(c.light(x, y)).color())
+    Some(paint.shade(c.light(x, y)).color())
 }
 
 /// Discrete thermal bands: cold liquid blank, warm liquid `░` in `dim`,
@@ -81,7 +90,7 @@ fn pixel(c: &Canvas, x: usize, y: usize) -> Option<Color> {
 fn shade(h: f32) -> (char, Ink) {
     match h {
         h if h < 0.27 => (' ', Ink::Role(Role::Liquid)),
-        h if h < 0.36 => ('░', Ink::Role(Role::Dim)),
+        h if h < WAX_BAND => ('░', Ink::Role(Role::Dim)),
         h if h < 0.52 => ('▒', Ink::Wax(0.0)),
         h if h < 0.72 => ('▓', Ink::Wax(0.5)),
         _ => ('█', Ink::Wax(1.0)),
