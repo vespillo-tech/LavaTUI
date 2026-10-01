@@ -1,7 +1,8 @@
 //! Loading and saving `config.toml`.
 //!
 //! Location: `--config <path>` if given, else `$XDG_CONFIG_HOME/lavatui/
-//! config.toml`, else the platform config dir from `directories`
+//! config.toml` (only an absolute `$XDG_CONFIG_HOME`; the spec says a
+//! relative one is ignored), else the platform config dir from `directories`
 //! (`~/.config/lavatui` on Linux).
 //!
 //! Loading never fails the app. A missing file is the defaults. A bad
@@ -28,7 +29,8 @@
 //! "Never written" is for the whole session, and is toasted once (at load,
 //! or at the first save if it only happened while the lamp ran). A save
 //! that writes keeps comments, key order, formatting and unknown keys
-//! (`toml_edit`; a changed value keeps its trailing comment). Saves go
+//! (`toml_edit`; a changed value keeps its trailing comment, in its
+//! column). Saves go
 //! through symlinks to the real file (dotfile managers) and are atomic: a
 //! temp file unique to this process in the target's directory, fsynced,
 //! then renamed over the target. Two lamps saving at once can't tear the
@@ -327,8 +329,9 @@ fn drops(text: &str, changed: &[Change]) -> bool {
 
 /// Write the `changed` values of `fresh` (the serialized settings) into
 /// `doc`. Everything else in it is left alone. A changed value keeps its
-/// comments; a missing section is added; a section that isn't a table is
-/// replaced.
+/// comments; a missing section is added at the end (below a file's
+/// comments if that's all it holds); a section that isn't a table is
+/// replaced by one at the end.
 fn merge(doc: &mut DocumentMut, fresh: &str, changed: &[Change]) {
     let Ok(fresh) = fresh.parse::<DocumentMut>() else {
         return;
@@ -345,9 +348,21 @@ fn merge(doc: &mut DocumentMut, fresh: &str, changed: &[Change]) {
             continue;
         };
         if doc.get(name).and_then(Item::as_table_like).is_none() {
+            // Not a table (`lamp = 5`, `[[lamp]]`): out, so the new table
+            // goes at the end like any added section.
+            doc.remove(name);
             let mut table = toml_edit::Table::new();
             if !doc.as_table().is_empty() {
                 table.decor_mut().set_prefix("\n");
+            } else if let Some(comments) = doc
+                .trailing()
+                .as_str()
+                .filter(|t| !t.trim().is_empty())
+                .map(str::to_owned)
+            {
+                // A file of only comments: they stay on top.
+                table.decor_mut().set_prefix(format!("{comments}\n"));
+                doc.set_trailing("");
             }
             doc.insert(name, Item::Table(table));
         }
@@ -356,17 +371,36 @@ fn merge(doc: &mut DocumentMut, fresh: &str, changed: &[Change]) {
         };
         match table.get_mut(key) {
             Some(Item::Value(old)) if plain(old) == plain(new) => {}
-            Some(Item::Value(old)) => {
-                let decor = old.decor().clone();
-                *old = new.clone();
-                *old.decor_mut() = decor;
-            }
+            Some(Item::Value(old)) => replace_value(old, new),
             Some(other) => *other = Item::Value(new.clone()),
             None => {
                 table.insert(key, Item::Value(new.clone()));
             }
         }
     }
+}
+
+/// Put `new` in `old`'s place, keeping `old`'s comments. A trailing
+/// comment padded with spaces stays in its column, so a block of aligned
+/// comments stays aligned.
+fn replace_value(old: &mut toml_edit::Value, new: &toml_edit::Value) {
+    let width = |v: &toml_edit::Value| {
+        let mut v = v.clone();
+        v.decor_mut().clear();
+        v.to_string().chars().count()
+    };
+    let mut decor = old.decor().clone();
+    if let Some(suffix) = decor.suffix().and_then(|s| s.as_str()) {
+        let comment = suffix.trim_start_matches(' ');
+        if comment.starts_with('#') {
+            let pad = (suffix.len() - comment.len() + width(old))
+                .saturating_sub(width(new))
+                .max(1);
+            decor.set_suffix(format!("{}{comment}", " ".repeat(pad)));
+        }
+    }
+    *old = new.clone();
+    *old.decor_mut() = decor;
 }
 
 /// A value without its formatting, for comparing `'a'` with `"a"`.
@@ -452,13 +486,20 @@ fn create_temp(dir: &Path, name: &str) -> io::Result<(PathBuf, fs::File)> {
 }
 
 fn default_path() -> Option<PathBuf> {
-    let dir = match std::env::var_os("XDG_CONFIG_HOME") {
-        Some(xdg) if !xdg.is_empty() => PathBuf::from(xdg).join("lavatui"),
-        _ => directories::ProjectDirs::from("", "", "lavatui")?
+    let dir = match xdg_dir(std::env::var_os("XDG_CONFIG_HOME")) {
+        Some(dir) => dir,
+        None => directories::ProjectDirs::from("", "", "lavatui")?
             .config_dir()
             .to_path_buf(),
     };
     Some(dir.join("config.toml"))
+}
+
+/// `$XDG_CONFIG_HOME/lavatui`, if the variable is set to an absolute path.
+/// The XDG spec says a relative one is invalid and must be ignored.
+fn xdg_dir(xdg: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    let xdg = PathBuf::from(xdg?);
+    xdg.is_absolute().then(|| xdg.join("lavatui"))
 }
 
 #[cfg(test)]
@@ -504,6 +545,15 @@ mod tests {
         let mut settings = Settings::default();
         settings.lamp.style = "ascii".into();
         settings
+    }
+
+    #[test]
+    fn xdg_config_home_only_counts_when_absolute() {
+        let abs = std::env::temp_dir().join("xdg");
+        assert_eq!(xdg_dir(Some(abs.clone().into())), Some(abs.join("lavatui")));
+        assert_eq!(xdg_dir(Some("rel/dir".into())), None);
+        assert_eq!(xdg_dir(Some("".into())), None);
+        assert_eq!(xdg_dir(None), None);
     }
 
     #[test]
@@ -792,8 +842,61 @@ mod tests {
         let loaded = store.load();
         assert_eq!(loaded.problem.as_deref(), Some("config: ignored lamp"));
         store.save(&ascii()).unwrap();
-        assert_eq!(Store::new(Some(path)).load().settings, ascii());
+        // The new table goes at the end, with no leading blank line.
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "[clock]\nshow = true\n\n[lamp]\nstyle = \"ascii\"\n"
+        );
+        assert_eq!(Store::new(Some(path.clone())).load().settings, ascii());
         assert!(dir.join("config.toml.bak").exists());
+
+        // Alone in the file, it's replaced in place.
+        fs::write(&path, "lamp = 5\n").unwrap();
+        let mut store = Store::new(Some(path.clone()));
+        store.load();
+        store.save(&ascii()).unwrap();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "[lamp]\nstyle = \"ascii\"\n"
+        );
+    }
+
+    #[test]
+    fn a_comments_only_file_keeps_its_comments_on_top() {
+        let dir = TempDir::new("comments-only");
+        let path = dir.join("config.toml");
+        fs::write(&path, "# my lamp\n# see README\n").unwrap();
+        let mut store = Store::new(Some(path.clone()));
+        store.load();
+        store.save(&ascii()).unwrap();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "# my lamp\n# see README\n\n[lamp]\nstyle = \"ascii\"\n"
+        );
+    }
+
+    #[test]
+    fn aligned_trailing_comments_stay_aligned() {
+        let dir = TempDir::new("aligned");
+        let path = dir.join("config.toml");
+        let text = "[lamp]\nstyle = \"ascii\"      # look\nheat = 3            # warm\n";
+        fs::write(&path, text).unwrap();
+        let mut store = Store::new(Some(path.clone()));
+        let mut settings = store.load().settings;
+        settings.lamp.style = "halftone".into();
+        store.save(&settings).unwrap();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "[lamp]\nstyle = \"halftone\"   # look\nheat = 3            # warm\n"
+        );
+        // Too long for the column: one space, never touching.
+        settings.lamp.style = "chrome-and-more".into();
+        store.save(&settings).unwrap();
+        assert!(
+            fs::read_to_string(&path)
+                .unwrap()
+                .contains("style = \"chrome-and-more\" # look\n")
+        );
     }
 
     #[test]
