@@ -132,14 +132,7 @@ pub fn draw_hud_corner(buf: &mut Buffer, r: Rect, model: &Model) {
 /// `60 fps · 2.1 ms · 412k px`: the samples actually taken, so a reduced
 /// grid (adaptive quality, §7) shows as fewer.
 fn hud_text(model: &Model) -> String {
-    let samples = model.layout.lamp.map_or(0, |l| {
-        let grid = model.style.style().grid();
-        let n = usize::from(l.view.width)
-            * usize::from(grid.x)
-            * usize::from(l.view.height)
-            * usize::from(grid.y);
-        crate::render::samples_taken(n, model.quality.reduced_grid())
-    });
+    let samples = crate::render::samples_taken(model.workload(), model.quality.reduced_grid());
     format!(
         "{:.0} fps · {:.1} ms · {}k px",
         model.stats.fps,

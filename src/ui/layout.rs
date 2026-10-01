@@ -180,49 +180,22 @@ pub fn visual_aspect(cols: u16, rows: u16, cell_aspect: f64) -> f64 {
 pub fn layout(area: Rect, input: &LayoutInput) -> Layout {
     let mut out = Layout {
         area,
-        lamp: None,
-        status: None,
-        panel: None,
-        chip: None,
-        toast: None,
+        ..Layout::default()
     };
     let (cols, rows) = (area.width, area.height);
     if cols < 4 || rows < 2 {
         return out;
     }
     let (vm, hm) = margins(cols, rows);
-
-    let status_on = !input.minimal && input.status_bar && rows >= 14 && cols >= 30;
-    if status_on {
-        let inset = hm.max(1);
-        out.status = Some(Rect::new(
-            area.x + inset,
-            area.bottom() - 1,
-            cols - 2 * inset,
-            1,
-        ));
-    }
+    out.status = status_row(area, hm, input);
     let content = Rect {
-        height: rows - u16::from(status_on),
+        height: rows - u16::from(out.status.is_some()),
         ..area
     };
 
     let k = silhouette::LAMP_WIDTH * 2.0 / input.cell_aspect.clamp(1.0, 4.0);
     let micro = cols < 20 || rows < 8;
-    let glass = match input.frame {
-        _ if micro => false,
-        FrameMode::Bleed => false,
-        FrameMode::Glass => true,
-        FrameMode::Auto => {
-            // Stay glass down to the §2.1 line; re-enter it only well inside.
-            let (min_rows, max_aspect) = match input.prev_frame {
-                Some(LampFrame::Bleed) => (AUTO_GLASS_ENTER.0, AUTO_GLASS_ENTER.1),
-                _ => (AUTO_GLASS.0, AUTO_GLASS.1),
-            };
-            content.height >= min_rows
-                && visual_aspect(content.width, content.height, input.cell_aspect) <= max_aspect
-        }
-    };
+    let glass = !micro && wants_glass(content, input);
     let margin_steps = [(vm, hm), (0, 0)];
 
     // Glass, with the panel if one fits (hide order: date, margins, face).
@@ -258,6 +231,31 @@ pub fn layout(area: Rect, input: &LayoutInput) -> Layout {
         out.toast = Some(toast_row(area, &lamp, out.panel.as_ref()));
     }
     out
+}
+
+/// The status bar's row, if it's on and fits (§4.1).
+fn status_row(area: Rect, hm: u16, input: &LayoutInput) -> Option<Rect> {
+    let (cols, rows) = (area.width, area.height);
+    let on = !input.minimal && input.status_bar && rows >= 14 && cols >= 30;
+    let inset = hm.max(1);
+    on.then(|| Rect::new(area.x + inset, area.bottom() - 1, cols - 2 * inset, 1))
+}
+
+/// Whether the frame mode asks for glass in `content` (outside micro).
+fn wants_glass(content: Rect, input: &LayoutInput) -> bool {
+    match input.frame {
+        FrameMode::Bleed => false,
+        FrameMode::Glass => true,
+        FrameMode::Auto => {
+            // Stay glass down to the §2.1 line; re-enter it only well inside.
+            let (min_rows, max_aspect) = match input.prev_frame {
+                Some(LampFrame::Bleed) => AUTO_GLASS_ENTER,
+                _ => AUTO_GLASS,
+            };
+            content.height >= min_rows
+                && visual_aspect(content.width, content.height, input.cell_aspect) <= max_aspect
+        }
+    }
 }
 
 /// `margins` applied to `r`, or `None` if nothing is left.
@@ -410,6 +408,8 @@ fn is_huge(cols: u16, rows: u16) -> bool {
     cols >= 200 && rows >= 56
 }
 
+/// A glass lamp with the panel beside it, else under it (hide order:
+/// date, margins, face size).
 fn glass_with_panel(
     area: Rect,
     content: Rect,
@@ -417,14 +417,23 @@ fn glass_with_panel(
     k: f64,
     input: &LayoutInput,
 ) -> Option<(Lamp, Panel)> {
+    glass_right_panel(area, content, margin_steps, k, input)
+        .or_else(|| glass_bottom_panel(area, content, margin_steps, k, input))
+}
+
+/// Right panel: lamp + gutter + panel centred as one group.
+fn glass_right_panel(
+    area: Rect,
+    content: Rect,
+    margin_steps: &[(u16, u16)],
+    k: f64,
+    input: &LayoutInput,
+) -> Option<(Lamp, Panel)> {
     let (cols, rows) = (area.width, area.height);
-    let huge = is_huge(cols, rows);
     let gutter = (cols / 16).clamp(4, 12);
     let pw = panel_width(cols);
     let dates = date_options(rows, input.show_clock);
-
-    // 1. Right panel: lamp + gutter + panel centred as one group.
-    for form in panel_faces(input, pw - 2, huge) {
+    for form in panel_faces(input, pw - 2, is_huge(cols, rows)) {
         for &m in margin_steps {
             let Some(c) = shrink(content, m) else {
                 continue;
@@ -451,8 +460,19 @@ fn glass_with_panel(
             }
         }
     }
+    None
+}
 
-    // 2. Bottom panel, centred under the base.
+/// Bottom panel, centred under the base.
+fn glass_bottom_panel(
+    area: Rect,
+    content: Rect,
+    margin_steps: &[(u16, u16)],
+    k: f64,
+    input: &LayoutInput,
+) -> Option<(Lamp, Panel)> {
+    let dates = date_options(area.height, input.show_clock);
+    let huge = is_huge(area.width, area.height);
     for form in panel_faces(input, PANEL_W.1.min(content.width).saturating_sub(2), huge) {
         for &m in margin_steps {
             let Some(c) = shrink(content, m) else {
