@@ -4,6 +4,9 @@ mod app;
 mod cli;
 mod clock;
 mod config;
+// Not wired into the app yet: the now-playing widget (lava-75z.2) will be.
+#[allow(dead_code, unused_imports)]
+mod media;
 mod render;
 mod sim;
 mod theme;
