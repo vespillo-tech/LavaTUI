@@ -316,31 +316,47 @@ numbers); `docs/design.md` is the layout/visual contract.
                 `WidgetForm`s most preferred first, with `Needs` (huge /
                 tall terminal) and `fill`; `draw(model, form, rect, Look)`;
                 `chip(model)` → one-line fallback with a rank) + `WIDGETS`
-                registry (`clock.rs`, `pomodoro.rs`, `music.rs`). `Place` (side /
+                registry (`clock.rs`, `pomodoro.rs`, `music.rs`, `lyrics.rs`). `Place` (side /
                 overlay / off), `Anchor` (per widget:
                 `DockSettings::anchor(w)`; an old single `dock.anchor`
                 loads for all). `rank(model)` (clock 1, pomodoro 3/2/0,
-                music 2/1/0) decides shrink, drop and chip order.
+                music 2/1/0, lyrics 2/1/0 with lines) decides shrink, drop and chip order.
                 Widgets are stateless views of the `Model`. Seconds never
                 on the lava; date forms need tall.
 - `media/`    — now playing (platform-neutral; backends behind `cfg`):
                 `MediaSource` (`snapshot()` a short lock, `send(Command)`
                 queued + applied optimistically, `capabilities()`),
-                `detect()` (macOS: `Polled` over the Spotify AppleScript
-                backend, which never launches Spotify and can't
-                shuffle/repeat; elsewhere `Unavailable(Unsupported)`),
+                `detect()` picks a backend: macOS `spotify.rs` (one
+                long-lived `osascript` fed requests on stdin, never
+                launches Spotify, can't shuffle/repeat), Linux `mpris.rs`
+                (any MPRIS player via zbus, Spotify first), Windows
+                `smtc.rs` (system media controls, Spotify first; no
+                volume/art/URIs); `capabilities()` says what each can do,
                 `FakeSource` for tests, `art.rs`: `ArtLoader` (cover fetch
                 https-only on its thread, disk cache in
                 `$XDG_CACHE_HOME/lavatui/art`, decoded to 64 px `Art`,
                 `scaled(w, h)` box filter). The app holds a source only
-                while the music widget is placed: `app/model/music.rs`
+                while the music or lyrics widget is placed (`media_on`): `app/model/music.rs`
                 (`Music`: source, cover loader, latest snapshot, the `A`
                 player-keys mode; `sync` once a frame and after keys;
                 `connect_with` injects a fake in tests). `spotify_web/`:
                 Web API client for the library UI to come; its Client ID
                 is `Settings::spotify_client_id` (`[spotify] client_id`,
-                else `LAVATUI_SPOTIFY_CLIENT_ID`). `lyrics/`: LRCLIB client
-                + cache for the lyrics widget to come.
+                else `LAVATUI_SPOTIFY_CLIENT_ID`).
+- `lyrics/`   — synced lyrics (pure, no terminal): `lrc.rs` (forgiving
+                LRC parser: multi-stamp lines, `[offset:]`, gaps, word tags
+                stripped), `sync.rs` (`Syncer`: extrapolated `Playback` →
+                `Cursor` line/progress, 150 ms lead, jitter hold, seek
+                flag), `client.rs` (`Lrclib` over an `Http` trait: ureq in
+                the app, `client::tests::Mock` in tests; `/api/get` then
+                `/api/search`), `cache.rs` (JSON per track, negative
+                results too, TTLs, stale used offline), `worker.rs`
+                (`LyricsService`: thread, newest request wins, retries).
+                `app/model/lyrics.rs` (`LyricsState`): the service only
+                while the widget is placed (the opt-in), request on track
+                change, poll + sync each frame (`sync_music` calls it),
+                fade timing, `wake` for frozen frames; `start_with` injects
+                a mock in tests.
 - `ui/`       — the only terminal-facing code. `layout.rs`: the pure
                 `layout(area, &LayoutInput) -> Layout` of design §1 (the lamp
                 rect; `panel` = `Stack` of side widgets in the best of

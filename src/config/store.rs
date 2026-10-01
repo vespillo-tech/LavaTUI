@@ -783,7 +783,7 @@ mod tests {
         let saved = fs::read_to_string(&path).unwrap();
         assert_eq!(
             saved,
-            "[dock]\nclock = \"overlay\"\nanchor = { clock = \"top-right\", music = \"top\", pomodoro = \"top\" } # up there\n"
+            "[dock]\nclock = \"overlay\"\nanchor = { clock = \"top-right\", lyrics = \"top\", music = \"top\", pomodoro = \"top\" } # up there\n"
         );
         assert_eq!(Store::new(Some(path)).load().settings, settings);
     }

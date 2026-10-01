@@ -757,8 +757,7 @@ toasts: no flash, no bell.
 
 ### 4.6 The widget dock
 
-The clock, the pomodoro and music are *widgets* (`src/dock/`); a lyrics
-widget comes next. Each has a place, persisted as `dock.<name>`, cycled
+The clock, the pomodoro, music and lyrics are *widgets* (`src/dock/`). Each has a place, persisted as `dock.<name>`, cycled
 by its key: `t` the clock, `f` the pomodoro (`focus`), `a` music
 (`audio`), each `side → overlay → off → side`. A toast says where it
 went (`clock · on the lava`), adding `· no room` when the layout couldn't
@@ -776,7 +775,7 @@ fit it there (it's in the chip row meanwhile) and `· not in minimal` for
   apart, lined up by it (centred, or flush left / right at the sides);
   different anchors make separate stacks that spread across the lamp.
   Defaults: the clock and the pomodoro centre (so both on the lava stack
-  as in v1.1), music top left, lyrics (to come) bottom centre. Limits,
+  as in v1.1), music top left, lyrics bottom centre. Limits,
   so the lamp stays the hero: the lamp ≥ 28 × 10; each stack ≤ 60 % of
   the lamp's width and ≤ half its height; their backings never touch
   each other and together cover ≤ 35 % of the lamp; inset (≥ 5 cols /
@@ -797,8 +796,8 @@ keys, no new overlay, and every press says which widget moved and where.
 
 **Ranks.** Each widget has a rank, recomputed every frame
 (`DockWidget::rank`): the clock 1; the pomodoro 3 running, 2 paused,
-0 idle; music 2 playing, 1 paused, 0 otherwise (lyrics will follow
-music). Ties go to the earlier widget in the registry. The rank decides
+0 idle; music 2 playing, 1 paused, 0 otherwise; lyrics the same, but only
+with lines to show (a message is 0). Ties go to the earlier widget in the registry. The rank decides
 everything about room: who shrinks first, who leaves for the chip row
 first, which chips stay, and in the panel the score of each arrangement.
 
@@ -932,6 +931,78 @@ registry), `‖ …` rank 1 while paused, none otherwise.
 **Frozen lamp:** while music is placed, the idle loop looks at the player
 at least once a second, so a track change or a pause made in Spotify
 shows within a second.
+
+#### Lyrics
+
+`src/dock/lyrics.rs`, state in `src/app/model/lyrics.rs`, lookups in
+`src/lyrics/` (LRCLIB client, LRC parser, sync, disk cache, worker).
+Key `y`: `off → side → overlay → off`. **Off by default, and placing it
+is the opt-in**: while it's placed, each new track's title, artist,
+album and length go to [lrclib.net](https://lrclib.net) (free, no key,
+`User-Agent: lavatui/<version>`); the toast says so (`lyrics · on the
+lava · via lrclib.net`), as do the help (`y  lyrics · lrclib.net`) and
+the README. It reads the same player snapshot as music (the source is
+held while either is placed) and doesn't need music placed.
+
+**Lookups** never touch the frame: a track change sends a request to
+the lyrics thread, which answers from the disk cache
+(`$XDG_CACHE_HOME/lavatui/lyrics`, else the platform cache dir; synced
+and instrumental answers kept 180 days, plain 7, "not found" 1 day),
+else asks `/api/get` (exact title/artist/album, duration ± 2 s) and then
+`/api/search` (closest version within 3 s, synced first). Network errors,
+`429` and `5xx` are retried after 1 s and 4 s (a newer track cancels
+them) and never cached; offline with a stale entry, the stale entry is
+shown. Each frame polls for the answer (`try_recv`).
+
+**Sync.** The position is the snapshot's, extrapolated to the frame
+(`position + (now − sampled_at)` while playing), plus a 150 ms lead, so
+lines light up as they're sung rather than just after. A new sample a
+little behind the extrapolation (< 400 ms back over a line start) keeps
+the line instead of flicking back; a jump of more than 1.5 s from where
+the position should be is a seek, followed at once without a fade.
+
+Forms (W = the song's widest line, clamped to 20..=56, fixed per song so
+nothing jumps from line to line; on the lava the stack limits of 60 % of
+the lamp's width pick the narrower ones on small lamps):
+
+| form | size | shows |
+|---|---|---|
+| five | W × 5 | two lines back, the current line, two ahead |
+| three | W × 3 | one back, the current line, one ahead |
+| narrower | 36 / 24 × 3 | the same |
+| line | W / 36 / 24 × 1 | the current line alone |
+| side | panel width × 5 / 3 / 1 | the same, filling the panel |
+
+```
+        Cooling at the top it drifts        ← two back (dim)
+                 And falls                  ← one back (dim)
+     Every blob that ever broke away        ← current: bold `text`,
+   comes home again to the warm pool…          wrapped onto 2 rows if wide
+                                            ← (the next line made way)
+```
+
+**Look: no backing needed.** Role colours only, so it reads with or
+without the soft backing (lava-9vj.8 drops it by default): the current
+line bold `text`, the others `dim`, lined up by the anchor (centred at
+the bottom). A line too wide for the form is cut with `…`, except the
+current one, which wraps onto the row below in the 3- and 5-row forms
+(the next line gives way). **Transitions**: a new line brightens from
+`dim` to `text` over 320 ms while the line it replaced dims back (truecolor
+and 256 blend; 16 colours switch at the half-way point); the rows step,
+they don't scroll (a terminal can't move text by less than a row). A
+**gap** (an empty LRC line, or the intro before the first line) is three
+dots `•  •  •` that light up one by one as it passes.
+
+**States**, each one calm dim sentence like music's: `♪ looking for
+lyrics…`, `♪ no lyrics for this track`, `♪ instrumental`, `♪ lyrics
+offline`, and the player's own (`♪ Spotify isn't running`, `♪ nothing
+playing`, `♪ …`). **Plain lyrics** (LRCLIB has no timing) scroll with the
+track's progress, the middle line `text`, the rest `dim`, never bold (it
+isn't a claim about what's being sung).
+
+**Chip:** `♪ current line` (≤ 32 cols) while playing synced lyrics, `♪`
+in a gap; none otherwise. **Frozen lamp:** the idle loop also wakes at the
+next line's start (and during a fade).
 
 ---
 
@@ -1111,6 +1182,7 @@ so they can't drift.
 | `t` | clock: side → on the lava → off | §4.6; toast `clock · on the lava` |
 | `f` | pomodoro: side → on the lava → off | §4.6 |
 | `a` | music: side → on the lava → off | §4.6; off by default |
+| `y` | lyrics: side → on the lava → off | §4.6; off by default (the opt-in to lrclib.net lookups) |
 | `A` | player keys on (§6.2) | toast `music keys · esc when done`; with music off: `music is off · a to show it` |
 | `l` | move a widget on the lava | the last put there (or picked with `L`): centre → top → top right → … → top left; toast `clock · top right` |
 | `L` | pick the widget `l` moves | cycles through those on the lava; toast `l moves music · now top left` |

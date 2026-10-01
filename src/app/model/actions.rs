@@ -174,7 +174,13 @@ impl Model {
             Place::Side if self.minimal() => " · not in minimal",
             _ => " · no room",
         };
-        self.toast(format!("{name} · {}{note}", place.describe()));
+        // Placing the lyrics is the opt-in to lookups: say where they go.
+        let via = if name == "lyrics" && place != Place::Off {
+            " · via lrclib.net"
+        } else {
+            ""
+        };
+        self.toast(format!("{name} · {}{note}{via}", place.describe()));
     }
 
     /// The widgets on the lava, by index.

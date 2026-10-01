@@ -117,10 +117,18 @@ impl Model {
         self.settings.dock.place(&dock::Music) != Place::Off
     }
 
-    /// Connect or let go of the player as the widget's place says, and
-    /// read its latest state (each frame, and after any key).
+    /// Whether anything needs the player: the music or the lyrics widget.
+    pub fn media_on(&self) -> bool {
+        self.music_on() || self.lyrics_on()
+    }
+
+    /// Connect or let go of the player as the widgets' places say, read its
+    /// latest state (each frame, and after any key), and sync the lyrics
+    /// to it.
     pub(super) fn sync_music(&mut self) {
-        self.music.sync(self.music_on(), self.theme.shows_images());
+        let images = self.music_on() && self.theme.shows_images();
+        self.music.sync(self.media_on(), images);
+        self.sync_lyrics();
     }
 
     /// `A`: the player keys on (they last until esc).

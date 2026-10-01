@@ -15,8 +15,13 @@
 //!   adaptive cadence and runs commands as they arrive. Nothing here ever
 //!   blocks the caller. A new backend implements `Backend` and gets the
 //!   threading, optimistic state and smoothing for free.
-//! - `spotify` (macOS): the Spotify desktop app, through `osascript`
-//!   (`runner` runs it with a timeout). It never launches Spotify.
+//! - `spotify` (macOS): the Spotify desktop app, through one long-lived
+//!   `osascript` process (`runner`: requests over stdin, replies with a
+//!   timeout). It never launches Spotify.
+//! - [`mpris`] (Linux): any MPRIS player on the session bus, Spotify
+//!   preferred, over zbus.
+//! - [`smtc`] (Windows): the System Media Transport Controls session,
+//!   Spotify's preferred.
 //! - [`fake`]: [`FakeSource`], an in-memory player for tests and for
 //!   building the UI without a real one.
 //! - [`art`]: [`ArtLoader`](art::ArtLoader), album covers fetched, cached
@@ -26,8 +31,13 @@
 
 pub mod art;
 pub mod fake;
+// The pure parts of the Linux and Windows backends are tested everywhere.
+#[cfg(any(target_os = "linux", test))]
+pub mod mpris;
 #[cfg(target_os = "macos")]
 pub mod runner;
+#[cfg(any(windows, test))]
+pub mod smtc;
 #[cfg(target_os = "macos")]
 pub mod spotify;
 pub mod worker;
@@ -85,19 +95,30 @@ pub trait MediaSource: Send {
     }
 }
 
-/// The media source for this platform: Spotify (AppleScript) on macOS;
-/// elsewhere, until a backend exists (MPRIS on Linux, SMTC on Windows), a
-/// source that is always `Unavailable(Unsupported)`. Starts the backend's
-/// worker thread; cheap to call, never blocks.
+/// The media source for this platform: Spotify (AppleScript) on macOS,
+/// MPRIS on Linux, SMTC on Windows; elsewhere a source that is always
+/// `Unavailable(Unsupported)`. Starts the backend's worker thread; cheap to
+/// call, never blocks.
 pub fn detect() -> Box<dyn MediaSource> {
     #[cfg(target_os = "macos")]
     {
         Box::new(Polled::spawn(
-            spotify::Spotify::new(runner::Osascript),
+            spotify::Spotify::new(runner::Osascript::new(spotify::script())),
             worker::Cadence::default(),
         ))
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        Box::new(Polled::spawn(
+            mpris::Mpris::new(),
+            worker::Cadence::default(),
+        ))
+    }
+    #[cfg(windows)]
+    {
+        Box::new(Polled::spawn(smtc::Smtc::new(), worker::Cadence::default()))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     {
         Box::new(Polled::unavailable(Unavailable::Unsupported))
     }
@@ -110,16 +131,21 @@ pub struct Capabilities {
     pub shuffle: bool,
     /// `SetRepeat` takes effect.
     pub repeat: bool,
+    /// `SetVolume` takes effect (and `Snapshot::volume` means something;
+    /// Windows' media controls have no volume).
+    pub volume: bool,
 }
 
 impl Capabilities {
     pub const ALL: Self = Self {
         shuffle: true,
         repeat: true,
+        volume: true,
     };
     pub const NONE: Self = Self {
         shuffle: false,
         repeat: false,
+        volume: false,
     };
 }
 
