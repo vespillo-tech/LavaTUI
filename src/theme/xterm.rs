@@ -14,6 +14,12 @@
 //! RGB bucket (one fixed colour per bucket is matched, so the answer never
 //! depends on which colour asked first).
 //!
+//! Neither ever shows a colour of another hue: a candidate whose hue is
+//! more than [`HUE_SPREAD`] from the colour's own is never picked, single
+//! or in a pair (greys always may be). Without that guard dark orange
+//! found its match in olive, or in a red and green pair that averages to
+//! brown but shows as green dots.
+//!
 //! Even the best single index can be far off: the cube has no dark tints,
 //! so dark purples and reds band (grey, then one loud row). [`dither`]
 //! picks a *pair* of indices and a mix level instead, which a 4×4 ordered
@@ -33,6 +39,17 @@ const CUBE: [u8; 6] = [0, 95, 135, 175, 215, 255];
 const W_L: f32 = 2.0;
 const W_C: f32 = 1.0;
 const W_H: f32 = 2.0;
+
+/// Candidates with at least this much chroma (OKLab) have a hue to get
+/// wrong; below it they read as grey and may stand in for any colour.
+const NEUTRAL: f32 = 0.02;
+/// The most a chromatic candidate's hue may differ from the colour's
+/// (degrees). Wider lets dark browns go olive or red-on-green; much
+/// narrower leaves mid tones only greys.
+const HUE_SPREAD: f32 = 30.0;
+/// Colours with less chroma than this have no hue to speak of (rounding
+/// noise on a grey): only greys show for them.
+const HUELESS: f32 = 0.005;
 
 /// Bits kept per channel for the cache key.
 const BITS: u32 = 6;
@@ -148,10 +165,12 @@ fn pair(c: Rgb) -> Pair {
 fn search_pair(c: Rgb) -> Pair {
     let cands = candidates();
     let x = Lab::of(c);
+    let hues = Hues::of(c);
     let xl = linear(c);
     let mut ranked: Vec<(f32, usize)> = cands
         .iter()
         .enumerate()
+        .filter(|(_, cand)| hues.allow(cand.lab))
         .map(|(i, cand)| (distance(x, cand.lab), i))
         .collect();
     ranked.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -168,9 +187,10 @@ fn search_pair(c: Rgb) -> Pair {
         return alone;
     }
     let mut found = (single * GAIN, alone);
-    for &(_, a) in &ranked[..NEAR_ENDS] {
+    for &(_, a) in ranked.iter().take(NEAR_ENDS) {
         let ca = &cands[a];
-        for (b, cb) in cands.iter().enumerate() {
+        for &(_, b) in &ranked {
+            let cb = &cands[b];
             let spread = distance(ca.lab, cb.lab);
             if spread < SAME {
                 continue;
@@ -200,6 +220,45 @@ fn search_pair(c: Rgb) -> Pair {
     found.1
 }
 
+/// The colours of one cache bucket, as far as hue goes: its eight
+/// corners. Dark and dull buckets span a wide arc of hue, and every colour
+/// in the bucket gets the same answer, so a candidate has to suit them all.
+struct Hues([Lab; 8]);
+
+impl Hues {
+    /// The bucket `c` (a bucket's representative) stands for.
+    fn of(c: Rgb) -> Hues {
+        let shift = 8 - BITS;
+        let span = |v: u8, hi: bool| {
+            let lo = v >> shift << shift;
+            if hi { lo | ((1 << shift) - 1) } else { lo }
+        };
+        Hues(std::array::from_fn(|k| {
+            Lab::of(Rgb(
+                span(c.0, k & 1 != 0),
+                span(c.1, k & 2 != 0),
+                span(c.2, k & 4 != 0),
+            ))
+        }))
+    }
+
+    /// Whether `y` may show for these colours: it's near grey, or its hue
+    /// is within [`HUE_SPREAD`] of every one of theirs. A near-grey colour
+    /// has no hue to keep, so only greys may show for it.
+    fn allow(&self, y: Lab) -> bool {
+        let cy = y.chroma();
+        if cy < NEUTRAL {
+            return true;
+        }
+        let cos = HUE_SPREAD.to_radians().cos();
+        self.0.iter().all(|x| {
+            // cos of the hue angle between them, against cos HUE_SPREAD.
+            let cx = x.chroma();
+            cx >= HUELESS && x.a * y.a + x.b * y.b >= cx * cy * cos
+        })
+    }
+}
+
 /// The weighted distance between two colours (squared).
 fn distance(x: Lab, y: Lab) -> f32 {
     let dl = x.l - y.l;
@@ -212,8 +271,12 @@ fn distance(x: Lab, y: Lab) -> f32 {
 /// The best candidate for `c` by the weighted OKLab distance.
 fn search(c: Rgb) -> u8 {
     let x = Lab::of(c);
+    let hues = Hues::of(c);
     let mut best = (f32::INFINITY, 16);
     for (i, y) in candidates().iter().enumerate() {
+        if !hues.allow(y.lab) {
+            continue;
+        }
         let d = distance(x, y.lab);
         if d < best.0 {
             best = (d, 16 + i as u8);
@@ -283,6 +346,17 @@ impl Lab {
         self.a.hypot(self.b)
     }
 }
+
+/// `c`'s OKLab chroma and hue (degrees), for tests that check hue.
+#[cfg(test)]
+pub fn chroma_hue(c: Rgb) -> (f32, f32) {
+    let x = Lab::of(c);
+    (x.chroma(), x.b.atan2(x.a).to_degrees())
+}
+
+/// Below this chroma a candidate counts as grey (see [`NEUTRAL`]).
+#[cfg(test)]
+pub const GREY: f32 = NEUTRAL;
 
 /// The colour of xterm index `i` (the 16 system colours as xterm's
 /// defaults; terminals theme those, so treat them as approximate).
