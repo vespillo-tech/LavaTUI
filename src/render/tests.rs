@@ -9,7 +9,7 @@ use ratatui::widgets::StatefulWidget;
 use super::*;
 use crate::light::Lamplight;
 use crate::sim::{Shape, World, ambient_temp};
-use crate::theme::{ColorDepth, Palette};
+use crate::theme::{ColorDepth, Palette, Role};
 
 const DEPTHS: [(ColorDepth, &str); 4] = [
     (ColorDepth::TrueColor, "truecolor"),

@@ -335,6 +335,30 @@ impl Theme {
         .color()
     }
 
+    /// The app background: `bg`, or the terminal's own when `transparent`
+    /// (§9), for everything painted outside the glass.
+    pub fn background(&self, transparent: bool) -> Color {
+        if transparent {
+            TERMINAL_DEFAULT
+        } else {
+            self.role(Role::Bg)
+        }
+    }
+
+    /// `c` faded `t` of the way toward the palette's `bg`, for dimming what
+    /// a sheet covers. Only in truecolor, and only for RGB colours: other
+    /// colours come back as they are.
+    pub fn fade_to_bg(&self, c: Color, t: f32) -> Color {
+        let bg = self.palette.swatch(Role::Bg).rgb;
+        match (c, bg) {
+            (Color::Rgb(r, g, b), Some(bg)) if self.depth == ColorDepth::TrueColor => {
+                let Rgb(r, g, b) = Rgb(r, g, b).lerp(bg, t);
+                Color::Rgb(r, g, b)
+            }
+            _ => c,
+        }
+    }
+
     /// A text style in `role`. In NO_COLOR, `accent` becomes bold (§5.3).
     pub fn text(&self, role: Role) -> Style {
         let style = Style::new().fg(self.role(role));

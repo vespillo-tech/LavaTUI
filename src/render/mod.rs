@@ -31,7 +31,7 @@ use ratatui::widgets::StatefulWidget;
 
 use crate::light::Lighting;
 use crate::sim::{Field, SURFACE, Sample};
-use crate::theme::{Role, Theme};
+use crate::theme::Theme;
 
 /// Most samples a frame may take (docs/design.md §2.4). Above it the field
 /// is sampled coarser and upsampled bilinearly.
@@ -295,12 +295,10 @@ impl StatefulWidget for LampView<'_> {
             time: self.time,
         };
         self.style.draw(&canvas, buf);
-        let outside = if self.options.transparent {
+        if self.options.transparent {
             walls::clear_outside(shape, area, buf);
-            ratatui::style::Color::Reset
-        } else {
-            self.theme.role(Role::Bg)
-        };
+        }
+        let outside = self.theme.background(self.options.transparent);
         if self.theme.blends() {
             walls::smooth(shape, self.theme, outside, area, buf);
         }

@@ -9,11 +9,11 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::widgets::{Block, BorderType, Clear, Widget};
 
 use crate::app::Model;
-use crate::theme::{ColorDepth, Rgb, Role};
+use crate::theme::{ColorDepth, Role, Theme};
 use crate::ui::chrome::fit_words;
 use crate::ui::keymap::{KEYMAP, Section};
 use crate::ui::layout::SizeTier;
@@ -138,7 +138,7 @@ pub fn draw(buf: &mut Buffer, area: Rect, scroll: u16, model: &Model) {
         theme.text(Role::Dim),
         theme.text(Role::Accent),
     );
-    let bg = Style::new().bg(theme.role(Role::Bg));
+    let bg = Style::new().bg(super::background(model));
 
     match mode(area) {
         Mode::Line => {
@@ -165,11 +165,7 @@ pub fn draw(buf: &mut Buffer, area: Rect, scroll: u16, model: &Model) {
             }
         }
         Mode::Sheet(sheet) => {
-            if theme.depth() == ColorDepth::TrueColor
-                && let Some(rgb) = theme.palette().swatch(Role::Bg).rgb
-            {
-                dim_outside(buf, sheet, rgb);
-            }
+            dim_outside(buf, sheet, theme);
             Clear.render(sheet, buf);
             buf.set_style(sheet, bg);
             Block::bordered()
@@ -216,7 +212,10 @@ pub fn draw(buf: &mut Buffer, area: Rect, scroll: u16, model: &Model) {
 }
 
 /// Fade everything outside `keep` toward the background (truecolor only).
-fn dim_outside(buf: &mut Buffer, keep: Rect, bg: Rgb) {
+fn dim_outside(buf: &mut Buffer, keep: Rect, theme: &Theme) {
+    if theme.depth() != ColorDepth::TrueColor {
+        return;
+    }
     let area = buf.area;
     for y in area.top()..area.bottom() {
         for x in area.left()..area.right() {
@@ -224,19 +223,9 @@ fn dim_outside(buf: &mut Buffer, keep: Rect, bg: Rgb) {
                 continue;
             }
             if let Some(cell) = buf.cell_mut((x, y)) {
-                cell.fg = fade(cell.fg, bg);
-                cell.bg = fade(cell.bg, bg);
+                cell.fg = theme.fade_to_bg(cell.fg, DIM);
+                cell.bg = theme.fade_to_bg(cell.bg, DIM);
             }
         }
-    }
-}
-
-fn fade(c: Color, bg: Rgb) -> Color {
-    match c {
-        Color::Rgb(r, g, b) => {
-            let Rgb(r, g, b) = Rgb(r, g, b).lerp(bg, DIM);
-            Color::Rgb(r, g, b)
-        }
-        other => other,
     }
 }

@@ -409,27 +409,28 @@ fn every_state_draws_at_every_size() {
     }
 }
 
-/// lava-ebq.3, §9: `theme.transparent` leaves everything outside the glass
-/// to the terminal, the bottle rect's corners included.
+/// lava-ebq.3, lava-ebq.21, §9: `theme.transparent` leaves everything
+/// outside the glass to the terminal, the bottle rect's corners included,
+/// and no chrome (chip, toast, HUD, help, pickers) paints `bg` either.
 #[test]
 fn transparent_never_paints_bg() {
-    for (cols, rows) in [(80, 24), (120, 36), (34, 56), (50, 16)] {
-        let (mut m, _) = model(cols, rows, 7);
-        let bg = m.theme.role(Role::Bg);
-        assert!(
-            draw(&m, cols, rows).content().iter().any(|c| c.bg == bg),
-            "{cols}x{rows}: bg is painted normally"
-        );
-        m.settings.theme.transparent = true;
-        let buf = draw(&m, cols, rows);
-        // The chip is chrome on the lamp: its pad is meant to be solid.
-        let chip = m.layout.chip.map(|c| c.rect).unwrap_or_default();
-        let painted: Vec<_> = buf
-            .area
-            .positions()
-            .filter(|&p| buf[p].bg == bg && !chip.contains(p))
-            .collect();
-        assert!(painted.is_empty(), "{cols}x{rows}: bg at {painted:?}");
+    for (cols, rows) in [(80, 24), (120, 36), (34, 56), (50, 16), (20, 8)] {
+        for (name, setup) in scenarios() {
+            let (mut m, t0) = model(cols, rows, 7);
+            setup(&mut m, t0);
+            let bg = m.theme.role(Role::Bg);
+            assert!(
+                draw(&m, cols, rows).content().iter().any(|c| c.bg == bg),
+                "{cols}x{rows} {name}: bg is painted normally"
+            );
+            m.settings.theme.transparent = true;
+            let buf = draw(&m, cols, rows);
+            let painted: Vec<_> = buf.area.positions().filter(|&p| buf[p].bg == bg).collect();
+            assert!(
+                painted.is_empty(),
+                "{cols}x{rows} {name}: bg at {painted:?}"
+            );
+        }
     }
 }
 

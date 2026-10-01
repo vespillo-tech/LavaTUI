@@ -125,7 +125,7 @@ pub fn hud_corner_rect(area: Rect, model: &Model) -> Option<Rect> {
 }
 
 pub fn draw_hud_corner(buf: &mut Buffer, r: Rect, model: &Model) {
-    let style = hud_style(model).bg(model.theme.role(Role::Bg));
+    let style = hud_style(model).bg(super::background(model));
     buf.set_string(r.x, r.y, format!(" {} ", hud_text(model)), style);
 }
 
@@ -184,7 +184,7 @@ pub fn draw_toast(buf: &mut Buffer, r: Rect, text: &str, toast: &Toast, model: &
         .paint(Ink::Role(Role::Text))
         .mix(Ink::Role(Role::Bg), fade.min(1.0))
         .color();
-    let style = Style::new().fg(fg).bg(theme.role(Role::Bg));
+    let style = Style::new().fg(fg).bg(super::background(model));
     buf.set_string(r.x, r.y, text, style);
 }
 

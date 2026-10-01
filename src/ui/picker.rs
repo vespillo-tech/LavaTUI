@@ -219,7 +219,7 @@ pub fn draw(buf: &mut Buffer, area: Rect, layout: &Layout, picker: &Picker, mode
     };
     let theme = &model.theme;
     let items = picker.kind.items();
-    let bg = Style::new().bg(theme.role(Role::Bg));
+    let bg = Style::new().bg(super::background(model));
     let (text, dim, accent) = (
         theme.text(Role::Text),
         theme.text(Role::Dim),

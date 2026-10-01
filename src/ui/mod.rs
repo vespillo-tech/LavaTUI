@@ -53,12 +53,12 @@ pub fn draw(frame: &mut Frame, model: &Model, lamp: &mut LampState) {
     };
     let theme = &model.theme;
     let buf = frame.buffer_mut();
-    let bg = if model.settings.theme.transparent {
-        Color::Reset
-    } else {
-        theme.role(Role::Bg)
-    };
-    buf.set_style(area, Style::new().bg(bg).fg(theme.role(Role::Text)));
+    buf.set_style(
+        area,
+        Style::new()
+            .bg(background(model))
+            .fg(theme.role(Role::Text)),
+    );
 
     if let Some(l) = layout.lamp {
         // Phase-change flash (§4.5): the glass flashes its metal; in bleed
@@ -136,6 +136,12 @@ pub fn draw(frame: &mut Frame, model: &Model, lamp: &mut LampState) {
         Overlay::Help { scroll } => help::draw(buf, area, scroll, model),
         Overlay::Picker(p) => picker::draw(buf, area, layout, &p, model),
     }
+}
+
+/// The app background chrome paints on: `bg`, or nothing when the theme
+/// is transparent (§9).
+fn background(model: &Model) -> Color {
+    model.theme.background(model.settings.theme.transparent)
 }
 
 /// The cells the open overlay takes, if any.

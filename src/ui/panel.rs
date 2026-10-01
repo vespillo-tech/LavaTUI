@@ -69,7 +69,7 @@ pub fn draw_chip(buf: &mut Buffer, chip: &Chip, model: &Model) {
         ChipKind::Clock if chip.under => Role::Dim,
         ChipKind::Clock => Role::Text,
     };
-    let bg = Style::new().bg(theme.role(Role::Bg));
+    let bg = Style::new().bg(super::background(model));
     let r = chip.rect;
     let w = text.chars().count() as u16;
     if w > r.width {
