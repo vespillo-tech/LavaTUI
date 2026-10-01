@@ -525,6 +525,68 @@ fn search_clamps_the_limit_and_encodes_the_query() {
     assert_eq!(field(&q2, "limit"), Some("1"));
 }
 
+#[test]
+fn player_state_reads_shuffle_repeat_and_nothing_playing() {
+    let mut r = logged_in();
+    r.mock
+        .reply(
+            200,
+            r#"{"shuffle_state":true,"repeat_state":"context","is_playing":true,
+                "device":{"name":"Mac","type":"Computer"},"item":{"uri":"spotify:track:x"}}"#,
+        )
+        .reply(204, "");
+    let state = r.client.player().unwrap().unwrap();
+    assert!(state.shuffle && state.is_playing);
+    assert_eq!(state.repeat, Repeat::Context);
+    assert_eq!(state.device.as_deref(), Some("Mac"));
+    assert_eq!(state.item_uri.as_deref(), Some("spotify:track:x"));
+    assert_eq!(r.client.player().unwrap(), None, "204: nothing playing");
+    assert_eq!(r.mock.sent()[0].url, "https://api.spotify.com/v1/me/player");
+}
+
+#[test]
+fn player_setters_put_with_the_state_in_the_query() {
+    let mut r = logged_in();
+    r.mock.reply(204, "").reply(204, "").reply(204, "");
+    r.client.set_shuffle(true).unwrap();
+    r.client.set_repeat(Repeat::Track).unwrap();
+    r.client
+        .play("spotify:playlist:p", Some("spotify:track:t"))
+        .unwrap();
+    let sent = r.mock.sent();
+    assert!(sent.iter().all(|s| s.method == Method::Put));
+    assert_eq!(
+        sent[0].url,
+        "https://api.spotify.com/v1/me/player/shuffle?state=true"
+    );
+    assert_eq!(
+        sent[1].url,
+        "https://api.spotify.com/v1/me/player/repeat?state=track"
+    );
+    assert_eq!(sent[2].url, "https://api.spotify.com/v1/me/player/play");
+    let Body::Json(body) = &sent[2].body else {
+        panic!("{:?}", sent[2].body)
+    };
+    let v: serde_json::Value = serde_json::from_str(body).unwrap();
+    assert_eq!(v["context_uri"], "spotify:playlist:p");
+    assert_eq!(v["offset"]["uri"], "spotify:track:t");
+}
+
+#[test]
+fn a_refused_player_call_is_forbidden() {
+    let mut r = logged_in();
+    r.mock.reply(
+        403,
+        r#"{"error":{"status":403,"message":"Player command failed: Premium required","reason":"PREMIUM_REQUIRED"}}"#,
+    );
+    assert_eq!(
+        r.client.set_shuffle(false),
+        Err(Error::Forbidden(
+            "Player command failed: Premium required".into()
+        ))
+    );
+}
+
 // ---- the worker -----------------------------------------------------------
 
 fn handle(saved: Option<Tokens>) -> (SpotifyWeb, Mock, MemoryStore) {

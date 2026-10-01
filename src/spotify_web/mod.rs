@@ -30,6 +30,8 @@ mod store;
 mod types;
 
 #[cfg(test)]
+pub mod fake;
+#[cfg(test)]
 mod tests;
 
 use std::sync::Arc;
@@ -38,7 +40,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Duration;
 
 pub use error::Error;
-pub use types::{Page, Playlist, Track, User};
+pub use types::{Page, PlayerState, Playlist, Repeat, Track, User};
 
 use client::Client;
 use http::Http;
@@ -56,6 +58,9 @@ pub const SCOPES: &[&str] = &[
     "playlist-modify-private",
     "user-library-read",
     "user-library-modify",
+    // Shuffle / repeat / play in a context (the player endpoints, Premium).
+    "user-read-playback-state",
+    "user-modify-playback-state",
 ];
 
 const ACCOUNTS_BASE: &str = "https://accounts.spotify.com";
@@ -104,6 +109,19 @@ pub enum Request {
     /// Up to 10 tracks by the artist, for "more like this" →
     /// [`Reply::TrackList`].
     ArtistTracks { artist: String },
+    /// The active device's state → [`Reply::Player`] (Premium; else
+    /// `Forbidden`).
+    Player,
+    /// Shuffle on the active device → [`Reply::Done`].
+    SetShuffle(bool),
+    /// Repeat on the active device → [`Reply::Done`].
+    SetRepeat(Repeat),
+    /// Play `context_uri` (from `offset_uri`, a track in it) on the active
+    /// device → [`Reply::Done`].
+    Play {
+        context_uri: String,
+        offset_uri: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,6 +134,8 @@ pub enum Reply {
     Contains(Vec<bool>),
     /// The playlist's new snapshot id.
     Snapshot(String),
+    /// `None`: no device is playing anything.
+    Player(Option<PlayerState>),
     Done,
 }
 
@@ -266,6 +286,39 @@ impl SpotifyWeb {
     }
 }
 
+/// What the UI needs of a Web API client: [`SpotifyWeb`], or a fake in
+/// tests (`FakeWeb`). Nothing here may block.
+pub trait Web {
+    fn is_logged_in(&self) -> bool;
+    /// Starts a browser login; returns the consent page's URL.
+    fn login(&mut self) -> Result<String, Error>;
+    fn cancel_login(&mut self);
+    fn logout(&mut self);
+    fn request(&mut self, request: Request) -> RequestId;
+    fn poll(&mut self) -> Option<Event>;
+}
+
+impl Web for SpotifyWeb {
+    fn is_logged_in(&self) -> bool {
+        SpotifyWeb::is_logged_in(self)
+    }
+    fn login(&mut self) -> Result<String, Error> {
+        SpotifyWeb::login(self)
+    }
+    fn cancel_login(&mut self) {
+        SpotifyWeb::cancel_login(self);
+    }
+    fn logout(&mut self) {
+        SpotifyWeb::logout(self);
+    }
+    fn request(&mut self, request: Request) -> RequestId {
+        SpotifyWeb::request(self, request)
+    }
+    fn poll(&mut self) -> Option<Event> {
+        SpotifyWeb::poll(self)
+    }
+}
+
 impl Drop for SpotifyWeb {
     fn drop(&mut self) {
         self.cancel_login();
@@ -360,5 +413,21 @@ fn handle<H: Http>(client: &mut Client<H>, request: Request) -> Result<Reply, Er
             offset,
         } => Reply::Tracks(client.search_tracks(&query, limit, offset)?),
         Request::ArtistTracks { artist } => Reply::TrackList(client.artist_tracks(&artist)?),
+        Request::Player => Reply::Player(client.player()?),
+        Request::SetShuffle(on) => {
+            client.set_shuffle(on)?;
+            Reply::Done
+        }
+        Request::SetRepeat(repeat) => {
+            client.set_repeat(repeat)?;
+            Reply::Done
+        }
+        Request::Play {
+            context_uri,
+            offset_uri,
+        } => {
+            client.play(&context_uri, offset_uri.as_deref())?;
+            Reply::Done
+        }
     })
 }

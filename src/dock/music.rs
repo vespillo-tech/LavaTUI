@@ -25,10 +25,11 @@ use ratatui::style::Style;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::{Anchor, ChipText, DockWidget, Look, Place, WidgetForm, align_x};
-use crate::app::Model;
+use crate::app::{Account, Model};
 use crate::media::art::ArtState;
 use crate::media::{Snapshot, Status};
 use crate::theme::{Ink, Role};
+use crate::ui::keymap::PlayerKey;
 
 pub struct Music;
 
@@ -190,40 +191,22 @@ impl DockWidget for Music {
         let Some(snap) = &model.music.snapshot else {
             return;
         };
-        let size = form.variant & 0xff;
+        let Some(parts) = parts(form, area, look.align) else {
+            return;
+        };
         let mut pen = Pen { model, snap, buf };
-        match form.variant & 0xff00 {
-            V_LINE => {
-                let style = model.theme.text(Role::Text);
-                pen.buf_line(area, 0, &line_text(snap), style, look.align);
-            }
-            V_COMPACT => pen.compact(area),
-            V_CARD => pen.card(area, look.align),
-            V_COVER_SIDE => {
-                if area.width < size + 2 + BESIDE_W || area.height < CARD.1 {
-                    return;
-                }
-                let cover = Rect::new(area.x, area.y, size, size / 2);
-                let card = Rect::new(area.x + size + 2, area.y, area.width - size - 2, CARD.1);
-                pen.cover(cover);
-                pen.card(card, Alignment::Left);
-            }
-            V_COVER_TOP => {
-                let block_w = size.max(CARD.0).min(area.width);
-                if block_w < size || area.height < size / 2 + 1 + CARD.1 {
-                    return;
-                }
-                let block = Rect {
-                    x: area.x + align_x(look.align, area.width, block_w),
-                    width: block_w,
-                    ..area
-                };
-                let cover_x = block.x + align_x(look.align, block_w, size);
-                pen.cover(Rect::new(cover_x, block.y, size, size / 2));
-                let card = Rect::new(block.x, block.y + size / 2 + 1, block_w, CARD.1);
-                pen.card(card, look.align);
-            }
-            _ => {}
+        if parts.line {
+            let style = model.theme.text(Role::Text);
+            pen.buf_line(area, 0, &line_text(snap), style, look.align);
+        }
+        if let Some(r) = parts.compact {
+            pen.compact(r);
+        }
+        if let Some(r) = parts.cover {
+            pen.cover(r);
+        }
+        if let Some((r, align)) = parts.card {
+            pen.card(r, align);
         }
     }
 
@@ -257,6 +240,264 @@ impl DockWidget for Music {
     }
 }
 
+/// Where a form's pieces go in its rect: what [`Music::draw`] draws and
+/// what [`hit`] tests clicks against, so the two can't disagree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct Parts {
+    line: bool,
+    compact: Option<Rect>,
+    cover: Option<Rect>,
+    card: Option<(Rect, Alignment)>,
+}
+
+fn parts(form: WidgetForm, area: Rect, align: Alignment) -> Option<Parts> {
+    let size = form.variant & 0xff;
+    let mut parts = Parts::default();
+    match form.variant & 0xff00 {
+        V_LINE => parts.line = true,
+        V_COMPACT => parts.compact = Some(area),
+        V_CARD => parts.card = Some((area, align)),
+        V_COVER_SIDE => {
+            if area.width < size + 2 + BESIDE_W || area.height < CARD.1 {
+                return None;
+            }
+            parts.cover = Some(Rect::new(area.x, area.y, size, size / 2));
+            let card = Rect::new(area.x + size + 2, area.y, area.width - size - 2, CARD.1);
+            parts.card = Some((card, Alignment::Left));
+        }
+        V_COVER_TOP => {
+            let block_w = size.max(CARD.0).min(area.width);
+            if block_w < size || area.height < size / 2 + 1 + CARD.1 {
+                return None;
+            }
+            let block = Rect {
+                x: area.x + align_x(align, area.width, block_w),
+                width: block_w,
+                ..area
+            };
+            let cover_x = block.x + align_x(align, block_w, size);
+            parts.cover = Some(Rect::new(cover_x, block.y, size, size / 2));
+            let card = Rect::new(block.x, block.y + size / 2 + 1, block_w, CARD.1);
+            parts.card = Some((card, align));
+        }
+        _ => return None,
+    }
+    Some(parts)
+}
+
+/// A clickable control in the widget (each also has a player key).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Button {
+    Previous,
+    PlayPause,
+    Next,
+    Like,
+    Add,
+    Playlists,
+    LogIn,
+}
+
+impl Button {
+    fn key(self) -> PlayerKey {
+        match self {
+            Button::Previous => PlayerKey::Previous,
+            Button::PlayPause => PlayerKey::PlayPause,
+            Button::Next => PlayerKey::Next,
+            Button::Like => PlayerKey::Like,
+            Button::Add => PlayerKey::AddToPlaylist,
+            Button::Playlists => PlayerKey::Playlists,
+            Button::LogIn => PlayerKey::Account,
+        }
+    }
+}
+
+/// A control as drawn: where, what, in which ink.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Control {
+    rect: Rect,
+    button: Button,
+    text: String,
+    ink: Role,
+}
+
+/// The heart: `♥` (accent) when liked, `♡` when not; `None` when there's
+/// no login or the track isn't a Spotify one.
+fn heart(model: &Model) -> Option<(String, Role)> {
+    match model.liked()? {
+        true => Some(("♥".into(), Role::Accent)),
+        false => Some(("♡".into(), Role::Dim)),
+    }
+}
+
+/// The card's controls row: `◂◂  ‖  ▸▸` left, `♡  +  ≡` (or `log in`)
+/// right, all quiet. Without the mouse only the heart shows, and only when
+/// the track is liked. Right-hand controls drop from the end, then the
+/// left ones go, rather than crowd.
+fn card_controls(model: &Model, snap: &Snapshot, r: Rect) -> Vec<Control> {
+    let mouse = model.settings.input.mouse;
+    let y = r.y + 3;
+    let mut left: Vec<(Button, String, Role)> = Vec::new();
+    if mouse {
+        let play = if snap.status == Status::Playing {
+            "‖"
+        } else {
+            "▶"
+        };
+        left = vec![
+            (Button::Previous, "◂◂".into(), Role::Dim),
+            (Button::PlayPause, play.into(), Role::Dim),
+            (Button::Next, "▸▸".into(), Role::Dim),
+        ];
+    }
+    let mut right: Vec<(Button, String, Role)> = Vec::new();
+    let spotify_track = model.liked().is_some();
+    match model.library.account() {
+        Account::LoggedIn => {
+            if let Some((text, ink)) = heart(model).filter(|(_, ink)| mouse || *ink == Role::Accent)
+            {
+                right.push((Button::Like, text, ink));
+            }
+            if mouse {
+                if spotify_track {
+                    right.push((Button::Add, "+".into(), Role::Dim));
+                }
+                right.push((Button::Playlists, "≡".into(), Role::Dim));
+            }
+        }
+        Account::LoggedOut if mouse => right.push((Button::LogIn, "log in".into(), Role::Dim)),
+        Account::LoggingIn if mouse => {
+            right.push((Button::LogIn, "logging in…".into(), Role::Dim));
+        }
+        _ => {}
+    }
+    // Two spaces between controls; one when that's what it takes to keep
+    // them all; then the right-hand ones drop from the end.
+    let group_w = |g: &[(Button, String, Role)], sep: u16| -> u16 {
+        g.iter().map(|(_, t, _)| width(t)).sum::<u16>() + sep * (g.len() as u16).saturating_sub(1)
+    };
+    type Group = [(Button, String, Role)];
+    let fits = |l: &Group, rt: &Group, sep| group_w(l, sep) + 3 + group_w(rt, sep) <= r.width;
+    let mut sep = 2;
+    if !fits(&left, &right, sep) {
+        sep = 1;
+    }
+    while !right.is_empty() && !fits(&left, &right, sep) {
+        right.pop();
+    }
+    if group_w(&left, sep) > r.width {
+        left.clear();
+    }
+    let mut out = Vec::new();
+    let mut x = r.x;
+    for (button, text, ink) in left {
+        let w = width(&text);
+        out.push(Control {
+            rect: Rect::new(x, y, w, 1),
+            button,
+            text,
+            ink,
+        });
+        x += w + sep;
+    }
+    let mut x = r.right().saturating_sub(group_w(&right, sep));
+    for (button, text, ink) in right {
+        let w = width(&text);
+        out.push(Control {
+            rect: Rect::new(x, y, w, 1),
+            button,
+            text,
+            ink,
+        });
+        x += w + sep;
+    }
+    out
+}
+
+/// The compact form's controls: the play glyph and the heart (at the end
+/// of the title row).
+fn compact_controls(model: &Model, r: Rect) -> Vec<Control> {
+    let mut out = Vec::new();
+    if model.settings.input.mouse && r.height >= 3 {
+        out.push(Control {
+            rect: Rect::new(r.x, r.y + 2, 1, 1),
+            button: Button::PlayPause,
+            text: String::new(),
+            ink: Role::Text,
+        });
+    }
+    if let Some((text, ink)) =
+        heart(model).filter(|(_, ink)| model.settings.input.mouse || *ink == Role::Accent)
+        && r.width >= CARD.0
+    {
+        out.push(Control {
+            rect: Rect::new(r.right() - 1, r.y, 1, 1),
+            button: Button::Like,
+            text,
+            ink,
+        });
+    }
+    out
+}
+
+/// The compact form's progress bar, when the row has room for one (else
+/// it shows the status line).
+fn compact_bar(snap: &Snapshot, now: std::time::Instant, row: Rect) -> Option<Rect> {
+    let left = format!("{} {}", glyph(snap), clock(snap.position_at(now)));
+    let total = total_text(snap);
+    let (lw, tw) = (width(&left), width(&total));
+    if lw + tw + 6 > row.width {
+        return None;
+    }
+    let bar_x = row.x + lw + 1;
+    let bar_w = row.width - lw - 1 - if tw > 0 { tw + 1 } else { 0 };
+    Some(Rect::new(bar_x, row.y, bar_w, 1))
+}
+
+/// What a click at (`col`, `row`) in this placed form does, if anything:
+/// a control's player key, or a seek on the progress bar. The same
+/// geometry the widget draws with.
+pub fn hit(
+    model: &Model,
+    form: WidgetForm,
+    area: Rect,
+    align: Alignment,
+    col: u16,
+    row: u16,
+) -> Option<PlayerKey> {
+    let snap = model.music.snapshot.as_ref()?;
+    snap.track.as_ref()?;
+    if !matches!(snap.status, Status::Playing | Status::Paused) {
+        return None;
+    }
+    let parts = parts(form, area, align)?;
+    let at = (col, row).into();
+    let seek = |bar: Rect| {
+        let f = (f64::from(col - bar.x) + 0.5) / f64::from(bar.width.max(1));
+        PlayerKey::SeekTo((f * 1000.0).round().clamp(0.0, 1000.0) as u16)
+    };
+    if let Some((r, _)) = parts.card {
+        let controls = card_controls(model, snap, r);
+        if let Some(c) = controls.iter().find(|c| c.rect.contains(at)) {
+            return Some(c.button.key());
+        }
+        let bar = Rect::new(r.x, r.y + 4, r.width, 1);
+        if bar.contains(at) {
+            return Some(seek(bar));
+        }
+    }
+    if let Some(r) = parts.compact {
+        let controls = compact_controls(model, r);
+        if let Some(c) = controls.iter().find(|c| c.rect.contains(at)) {
+            return Some(c.button.key());
+        }
+        let bar = compact_bar(snap, model.now, Rect::new(r.x, r.y + 2, r.width, 1));
+        if let Some(bar) = bar.filter(|b| b.contains(at)) {
+            return Some(seek(bar));
+        }
+    }
+    None
+}
+
 /// Draws the parts of the widget.
 struct Pen<'a, 'b> {
     model: &'a Model,
@@ -283,32 +524,55 @@ impl Pen<'_, '_> {
         self.buf_line(r, 0, &track.name, text, align);
         self.buf_line(r, 1, &track.artist, dim, align);
         self.buf_line(r, 2, &track.album, dim, align);
+        for c in card_controls(self.model, self.snap, r) {
+            let style = theme.text(c.ink);
+            self.buf.set_string(c.rect.x, c.rect.y, &c.text, style);
+        }
         self.bar(Rect::new(r.x, r.y + 4, r.width, 1));
         self.status(Rect::new(r.x, r.y + 5, r.width, 1));
     }
 
-    /// Title, artist, and `▶ 1:23 ━━━─── 3:45`.
+    /// Title (and the heart), artist, and `▶ 1:23 ━━━─── 3:45`.
     fn compact(&mut self, r: Rect) {
         let Some(track) = &self.snap.track else {
             return;
         };
         let theme = &self.model.theme;
-        self.buf_line(r, 0, &track.name, theme.text(Role::Text), Alignment::Left);
+        let controls = compact_controls(self.model, r);
+        let heart = controls.iter().find(|c| c.button == Button::Like);
+        let title_w = if heart.is_some() {
+            r.width - 2
+        } else {
+            r.width
+        };
+        let title = Rect {
+            width: title_w,
+            ..r
+        };
+        self.buf_line(
+            title,
+            0,
+            &track.name,
+            theme.text(Role::Text),
+            Alignment::Left,
+        );
+        if let Some(c) = heart {
+            self.buf
+                .set_string(c.rect.x, c.rect.y, &c.text, theme.text(c.ink));
+        }
         self.buf_line(r, 1, &track.artist, theme.text(Role::Dim), Alignment::Left);
         let now = self.model.now;
         let left = format!("{} {}", glyph(self.snap), clock(self.snap.position_at(now)));
         let total = self.total();
         let row = Rect::new(r.x, r.y + 2, r.width, 1);
-        let (lw, tw) = (width(&left), width(&total));
-        if lw + tw + 6 > row.width {
+        let Some(bar) = compact_bar(self.snap, now, row) else {
             self.status(row);
             return;
-        }
+        };
         self.left(row, &left);
-        let bar_x = row.x + lw + 1;
-        let bar_w = row.width - lw - 1 - if tw > 0 { tw + 1 } else { 0 };
-        self.bar(Rect::new(bar_x, row.y, bar_w, 1));
+        self.bar(bar);
         let buf = &mut *self.buf;
+        let tw = width(&total);
         buf.set_string(row.right() - tw, row.y, &total, theme.text(Role::Dim));
     }
 
@@ -395,12 +659,7 @@ impl Pen<'_, '_> {
     }
 
     fn total(&self) -> String {
-        self.snap
-            .track
-            .as_ref()
-            .map(|t| t.duration)
-            .filter(|d| !d.is_zero())
-            .map_or_else(String::new, clock)
+        total_text(self.snap)
     }
 
     /// The cover in `r`, as half-block pixels (`r.width` × `2·r.height`),
@@ -441,6 +700,15 @@ impl Pen<'_, '_> {
                 .set_bg(tile);
         }
     }
+}
+
+/// The track's length, `3:45` (empty when unknown).
+fn total_text(snap: &Snapshot) -> String {
+    snap.track
+        .as_ref()
+        .map(|t| t.duration)
+        .filter(|d| !d.is_zero())
+        .map_or_else(String::new, clock)
 }
 
 /// `1:23`, `1:02:03`.

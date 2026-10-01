@@ -261,3 +261,73 @@ pub(super) struct RawSearch {
 pub(super) struct RawSnapshot {
     pub snapshot_id: String,
 }
+
+/// Repeat as the Web API has it (`off`, `context`, `track`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Repeat {
+    #[default]
+    Off,
+    /// The playlist or album.
+    Context,
+    Track,
+}
+
+impl Repeat {
+    /// The `state` query value.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Repeat::Off => "off",
+            Repeat::Context => "context",
+            Repeat::Track => "track",
+        }
+    }
+
+    fn parse(s: &str) -> Self {
+        match s {
+            "context" => Repeat::Context,
+            "track" => Repeat::Track,
+            _ => Repeat::Off,
+        }
+    }
+}
+
+/// What the user's active Spotify device is doing (`GET /me/player`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlayerState {
+    pub shuffle: bool,
+    pub repeat: Repeat,
+    pub is_playing: bool,
+    /// The device's name ("MacBook Pro"), if it says.
+    pub device: Option<String>,
+    /// URI of what's playing, if anything.
+    pub item_uri: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct RawPlayer {
+    #[serde(default)]
+    shuffle_state: bool,
+    #[serde(default)]
+    repeat_state: String,
+    #[serde(default)]
+    is_playing: bool,
+    device: Option<Named>,
+    item: Option<RawUri>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawUri {
+    uri: Option<String>,
+}
+
+impl From<RawPlayer> for PlayerState {
+    fn from(p: RawPlayer) -> Self {
+        PlayerState {
+            shuffle: p.shuffle_state,
+            repeat: Repeat::parse(&p.repeat_state),
+            is_playing: p.is_playing,
+            device: p.device.map(|d| d.name).filter(|n| !n.is_empty()),
+            item_uri: p.item.and_then(|i| i.uri),
+        }
+    }
+}

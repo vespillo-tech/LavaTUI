@@ -5,7 +5,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 
-use crate::app::{Model, Overlay, TOAST_FADE, TOAST_TIME, Toast};
+use crate::app::{ListKind, Model, Overlay, TOAST_FADE, TOAST_TIME, Toast};
 use crate::theme::{ColorDepth, Ink, Role};
 
 /// The status bar's key hints in display order, with their drop rank
@@ -25,8 +25,35 @@ pub const PLAYER_HINTS: &[(&str, &str, u8)] = &[
     ("n p", "skip", 3),
     ("←→", "seek", 2),
     ("↑↓", "volume", 1),
+    ("b", "playlists", 0),
     ("esc", "done", 4),
 ];
+
+/// Hints while the playlist browser or add-to-playlist picker is open
+/// (also the sheet's own hint row, without `↑↓`).
+pub const PLAYLISTS_HINTS: &[(&str, &str, u8)] = &[
+    ("↑↓", "move", 0),
+    ("⏎", "open", 3),
+    ("p", "play", 2),
+    ("esc", "close", 4),
+];
+pub const TRACKS_HINTS: &[(&str, &str, u8)] = &[
+    ("↑↓", "move", 0),
+    ("⏎", "play", 3),
+    ("p", "play all", 2),
+    ("esc", "back", 4),
+];
+pub const ADD_HINTS: &[(&str, &str, u8)] =
+    &[("↑↓", "move", 0), ("⏎", "add", 3), ("esc", "close", 4)];
+
+/// The library hints for `kind`.
+pub fn library_hints(kind: ListKind) -> &'static [(&'static str, &'static str, u8)] {
+    match kind {
+        ListKind::Playlists => PLAYLISTS_HINTS,
+        ListKind::Tracks => TRACKS_HINTS,
+        ListKind::AddTo => ADD_HINTS,
+    }
+}
 
 /// Hints shown while a picker is open (also the sheet's own hint row).
 pub const PICKER_HINTS: &[(&str, &str, u8)] =
@@ -94,6 +121,8 @@ pub fn draw_status(buf: &mut Buffer, r: Rect, model: &Model) {
     // Right: hints.
     let all = if matches!(model.overlay, Overlay::Picker(_)) {
         PICKER_HINTS
+    } else if let Overlay::Library(view) = model.overlay {
+        library_hints(view.kind)
     } else if model.music.keys {
         PLAYER_HINTS
     } else {

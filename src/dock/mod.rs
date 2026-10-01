@@ -30,7 +30,7 @@ use crate::theme::Role;
 pub use clock::Clock;
 #[cfg(test)]
 pub use clock::{clock_forms, clock_parts};
-pub use music::Music;
+pub use music::{Music, fit, hit as music_hit};
 #[cfg(test)]
 pub use music::{Show, music_forms};
 pub use pomodoro::Pomodoro;

@@ -25,6 +25,7 @@ impl Model {
         let handled = match self.overlay {
             Overlay::Picker(picker) => self.picker_action(picker, action),
             Overlay::Help { scroll } => self.help_action(scroll, action),
+            Overlay::Library(view) => self.library_action(view, action),
             Overlay::None if self.music.keys => self.player_action(action, now),
             Overlay::None => false,
         };
@@ -39,6 +40,7 @@ impl Model {
             self.global_action(action, now);
         }
         self.sync_music();
+        self.sync_library();
         self.relayout(self.layout.area);
     }
 
@@ -65,6 +67,7 @@ impl Model {
     fn player_action(&mut self, action: Action, now: Instant) -> bool {
         match action {
             Action::Player(key) => self.player_key(key, now),
+            Action::Press { col, row } => self.press(col, row, now),
             Action::Close | Action::PlayerKeys => self.music.keys = false,
             Action::Help => {
                 self.music.keys = false;
@@ -86,6 +89,10 @@ impl Model {
             | Action::Down
             | Action::Keep
             | Action::Jump(_)
+            | Action::Page(_)
+            | Action::Edge(_)
+            | Action::Back
+            | Action::PlayAll
             | Action::Click { .. } => {}
             Action::ToggleMinimal => self.toggle_minimal(now),
             Action::ToggleStatusBar if !self.minimal() => {
@@ -136,6 +143,7 @@ impl Model {
             Action::Resize => {}
             Action::Focus(focused) => self.focused = focused,
             Action::Poke { col, row } => self.poke(col, row),
+            Action::Press { col, row } => self.press(col, row, now),
         }
     }
 
@@ -310,6 +318,14 @@ impl Model {
                 self.reset_armed = Some(now);
                 self.toast("press r again to reset");
             }
+        }
+    }
+
+    /// A mouse press: a music widget's button or bar, else the wax.
+    fn press(&mut self, col: u16, row: u16, now: Instant) {
+        match self.music_hit(col, row) {
+            Some(key) => self.player_key(key, now),
+            None => self.poke(col, row),
         }
     }
 

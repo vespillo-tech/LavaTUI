@@ -100,11 +100,19 @@ pub struct Minimal {
     pub clock: MinimalClock,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Input {
-    /// Mouse capture (off by default: it breaks native text selection).
+    /// Mouse capture: clicks on the music widget, the pickers and the wax.
+    /// On by default since v1.3; the terminal's own text selection then
+    /// needs shift (option on macOS Terminal / iTerm2) held while dragging.
     pub mouse: bool,
+}
+
+impl Default for Input {
+    fn default() -> Self {
+        Self { mouse: true }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
