@@ -63,13 +63,23 @@ fn synthetic(width: usize, height: usize, aspect: f32) -> Vec<Sample> {
 
 /// Draw `style` from the synthetic field into a fresh buffer of `area`.
 fn draw_synthetic(style: &dyn Style, theme: &Theme, area: Rect) -> Buffer {
-    draw_synthetic_lit(style, theme, area, None)
+    draw_synthetic_at(style, theme, area, 0.0, None)
 }
 
 fn draw_synthetic_lit(
     style: &dyn Style,
     theme: &Theme,
     area: Rect,
+    lighting: &dyn Lighting,
+) -> Buffer {
+    draw_synthetic_at(style, theme, area, 0.0, Some(lighting))
+}
+
+fn draw_synthetic_at(
+    style: &dyn Style,
+    theme: &Theme,
+    area: Rect,
+    time: f64,
     lighting: Option<&dyn Lighting>,
 ) -> Buffer {
     let grid = style.grid();
@@ -90,7 +100,7 @@ fn draw_synthetic_lit(
         width,
         height,
         theme,
-        time: 0.0,
+        time,
     };
     let mut buf = Buffer::empty(area);
     style.draw(&canvas, area, &mut buf);
@@ -187,6 +197,46 @@ fn every_style_shows_the_wax_at_every_depth() {
                 // The liquid is painted, never left to the terminal.
                 assert!(buf.content().iter().all(|c| c.bg != Color::Reset), "{name}");
             }
+        }
+    }
+}
+
+/// Styles may animate on `Canvas::time`, but only as a pure function of
+/// it: the same time always draws the same frame.
+#[test]
+fn animation_is_a_pure_function_of_time() {
+    let area = Rect::new(0, 0, 36, 14);
+    let theme = theme(ColorDepth::TrueColor);
+    let draw_at = |style: &dyn Style, time: f64| draw_synthetic_at(style, &theme, area, time, None);
+    for id in StyleId::all() {
+        let style = id.style();
+        assert_eq!(
+            draw_at(style, 7.25),
+            draw_at(style, 7.25),
+            "{}",
+            style.name()
+        );
+    }
+    for name in ["crt", "synthwave", "matrix"] {
+        let style = StyleId::by_name(name).unwrap().style();
+        assert_ne!(
+            draw_at(style, 0.0),
+            draw_at(style, 2.5),
+            "{name} should animate"
+        );
+    }
+}
+
+/// Matrix rain is only visible through the wax: liquid cells stay blank.
+#[test]
+fn matrix_rain_stays_inside_the_wax() {
+    let area = Rect::new(0, 0, 36, 14);
+    let matrix = StyleId::by_name("matrix").unwrap().style();
+    let samples = synthetic(36, 14, 36.0 / 28.0);
+    for time in [0.0, 1.0, 4.5] {
+        let buf = draw_synthetic_at(matrix, &theme(ColorDepth::TrueColor), area, time, None);
+        for (cell, s) in buf.content().iter().zip(&samples) {
+            assert_eq!(cell.symbol() != " ", s.density >= SURFACE);
         }
     }
 }
@@ -391,7 +441,7 @@ fn every_style_responds_to_lighting() {
         for (depth, depth_name) in DEPTHS {
             let theme = theme(depth);
             let plain = draw_synthetic(id.style(), &theme, area);
-            let lit = draw_synthetic_lit(id.style(), &theme, area, Some(&Lamplight));
+            let lit = draw_synthetic_lit(id.style(), &theme, area, &Lamplight);
             let changed = plain
                 .content()
                 .iter()
@@ -399,13 +449,14 @@ fn every_style_responds_to_lighting() {
                 .filter(|(a, b)| a != b)
                 .count();
             let glyphs_only = matches!(depth, ColorDepth::Ansi16 | ColorDepth::None);
-            // Silhouette-only styles can't show light without colour.
-            let can = !glyphs_only || matches!(name, "heatmap" | "ascii" | "dither");
-            if can {
+            // Without colour only glyph-density styles can show light;
+            // the rest are silhouettes there.
+            let density = matches!(
+                name,
+                "heatmap" | "ascii" | "dither" | "braille" | "halftone"
+            );
+            if !glyphs_only || density {
                 assert!(changed > 5, "{name} @ {depth_name}: {changed} cells lit");
-            }
-            if glyphs_only && !can {
-                assert_eq!(glyphs(&plain), glyphs(&lit), "{name} @ {depth_name}");
             }
         }
     }
@@ -414,7 +465,23 @@ fn every_style_responds_to_lighting() {
 #[test]
 fn registry_cycles_and_names_are_unique() {
     let names: Vec<_> = StyleId::all().map(|id| id.style().name()).collect();
-    assert_eq!(names, ["solid", "outline", "heatmap", "ascii", "dither"]);
+    assert_eq!(
+        names,
+        [
+            "solid",
+            "outline",
+            "heatmap",
+            "ascii",
+            "dither",
+            "braille",
+            "halftone",
+            "crt",
+            "synthwave",
+            "matrix",
+            "topo",
+            "glass",
+        ]
+    );
     let n = names.len();
     let first = StyleId::default();
     assert_eq!(first.style().name(), "solid");
@@ -508,4 +575,35 @@ fn bench_lamp() {
             println!("{report}");
         }
     }
+}
+
+#[test]
+fn lighting_stays_inside_the_glass() {
+    let mut world = World::new(9, 0.6, Shape::Bottle);
+    world.prewarm(300, 1.0 / 120.0);
+    let mut field = Field::default();
+    field.prepare(&world, 0.0);
+    let theme = theme(ColorDepth::TrueColor);
+    let mut state = LampState::default();
+    let area = Rect::new(0, 0, 24, 20);
+    let solid = StyleId::by_name("solid").unwrap().style();
+    let mut render = |lighting: Option<&dyn Lighting>| {
+        let mut buf = Buffer::empty(area);
+        let time = 0.0;
+        LampView {
+            field: &field,
+            style: solid,
+            theme: &theme,
+            time,
+            lighting,
+        }
+        .render(area, &mut buf, &mut state);
+        buf
+    };
+    let (plain, lit) = (render(None), render(Some(&Bright)));
+    // The bottle's top corners are outside the glass: untouched by light.
+    for x in [0, 1, area.width - 2, area.width - 1] {
+        assert_eq!(plain[(x, 0)], lit[(x, 0)], "column {x}");
+    }
+    assert_ne!(plain, lit);
 }

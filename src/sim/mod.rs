@@ -40,10 +40,6 @@ use std::f64::consts::PI;
 
 pub use blob::{Blob, Phase};
 pub use controls::SimSpeed;
-#[cfg_attr(
-    not(test),
-    expect(unused_imports, reason = "bound to keys by lava-xxx")
-)]
 pub use controls::{DEFAULT_HEAT, HEAT_LEVELS};
 use controls::{Pulse, Reseed};
 pub use field::{Field, SURFACE, Sample};
@@ -148,10 +144,6 @@ pub enum Shape {
     Tank,
     /// The glass lamp's bottle profile (docs/design.md §2.1): the world is
     /// the bottle's bounding box and the walls follow its curve.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "glass frame lands with lava-xxx")
-    )]
     Bottle,
 }
 

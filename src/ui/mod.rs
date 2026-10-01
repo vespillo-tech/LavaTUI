@@ -1,78 +1,77 @@
-//! Everything that touches the terminal: layout, modes (full / minimal),
-//! keymap and overlays.
+//! Everything that touches the terminal: layout, the keymap, and drawing
+//! the [`Model`] — lamp, glass, panel, chip, status bar, toasts, help and
+//! pickers. Colours only ever come from the model's `Theme`.
+//!
+//! Draw order, back to front: background → lamp (+ glass) → panel / chip →
+//! status bar → toast → overlay.
 
-mod input;
+mod chrome;
+mod glass;
+pub mod help;
+pub mod keymap;
+pub mod layout;
+mod panel;
+mod picker;
+#[cfg(test)]
+mod tests;
 
 use ratatui::Frame;
-use ratatui::layout::Rect;
-use ratatui::style::Style;
-use ratatui::text::Line;
+use ratatui::style::{Color, Style};
 
-pub use input::{Action, action_for};
-
+use crate::app::{Model, Overlay};
 use crate::light::{Lamplight, Lighting};
-use crate::render::{LampState, LampView, StyleId};
-use crate::sim::Field;
-use crate::theme::{Role, Theme};
+use crate::render::{LampState, LampView};
+use crate::theme::Role;
 
-/// Terminal cells are about twice as tall as wide (docs/design.md §2.3).
-const CELL_ASPECT: f64 = 2.0;
-
-/// What one frame needs to know. Built by the app loop each frame.
-#[derive(Debug, Clone, Copy)]
-pub struct Scene<'a> {
-    /// The wax, interpolated to the moment of drawing.
-    pub field: &'a Field,
-    pub style: StyleId,
-    pub theme: &'a Theme,
-    /// Seconds since launch.
-    pub time: f64,
-    /// Measured render fps.
-    pub fps: f64,
-    pub minimal: bool,
-    /// Lighting pass on (the `l` key, `lamp.lighting`).
-    pub lighting: bool,
-}
-
-/// Visual aspect (on-screen width ÷ height) of a `cols × rows` lamp.
-pub fn lamp_aspect(cols: u16, rows: u16) -> f64 {
-    if cols == 0 || rows == 0 {
-        return 1.0;
-    }
-    f64::from(cols) / (f64::from(rows) * CELL_ASPECT)
-}
-
-/// `lamp` is the lamp's scratch state, kept by the caller across frames.
-pub fn draw(frame: &mut Frame, scene: &Scene, lamp: &mut LampState) {
+/// Draw one frame. `lamp` is the lamp's scratch state, kept by the caller.
+pub fn draw(frame: &mut Frame, model: &Model, lamp: &mut LampState) {
     let area = frame.area();
-    let view = LampView {
-        field: scene.field,
-        style: scene.style.style(),
-        theme: scene.theme,
-        time: scene.time,
-        lighting: scene.lighting.then_some(&Lamplight as &dyn Lighting),
+    let layout = &model.layout;
+    let theme = &model.theme;
+    let buf = frame.buffer_mut();
+    let bg = if model.settings.theme.transparent {
+        Color::Reset
+    } else {
+        theme.role(Role::Bg)
     };
-    frame.render_stateful_widget(view, area, lamp);
-    if !scene.minimal {
-        draw_status(frame, area, scene);
-    }
-}
+    buf.set_style(area, Style::new().bg(bg).fg(theme.role(Role::Text)));
 
-/// One-line hint in the bottom-right corner; dropped when it would not fit.
-fn draw_status(frame: &mut Frame, area: Rect, scene: &Scene) {
-    let text = format!(
-        " {} · {}  {:>3.0} fps · s style · p palette · q quit ",
-        scene.style.style().name(),
-        scene.theme.palette().name,
-        scene.fps
-    );
-    let width = text.chars().count() as u16;
-    if area.width < width || area.height < 2 {
-        return;
+    if let Some(l) = layout.lamp {
+        let view = LampView {
+            field: &model.field,
+            style: model.style.style(),
+            theme,
+            time: model.time(),
+            lighting: model
+                .settings
+                .lamp
+                .lighting
+                .then_some(&Lamplight as &dyn Lighting),
+        };
+        frame.render_stateful_widget(view, l.view, lamp);
+        if let Some(g) = l.glass {
+            glass::draw(frame.buffer_mut(), &l, g, model);
+        }
     }
-    let row = Rect::new(area.right() - width, area.bottom() - 1, width, 1);
-    let style = Style::new()
-        .fg(scene.theme.role(Role::Dim))
-        .bg(scene.theme.role(Role::Liquid));
-    frame.render_widget(Line::styled(text, style), row);
+
+    let buf = frame.buffer_mut();
+    if let Some(p) = &layout.panel {
+        panel::draw_panel(buf, p, model);
+    }
+    if let Some(c) = &layout.chip {
+        panel::draw_chip(buf, c, model);
+    }
+    if let Some(s) = layout.status {
+        chrome::draw_status(buf, s, model);
+    } else if model.hud {
+        chrome::draw_hud_corner(buf, area, model);
+    }
+    if let (Some(t), Some(toast)) = (layout.toast, &model.toast) {
+        chrome::draw_toast(buf, t, toast, model);
+    }
+    match model.overlay {
+        Overlay::None => {}
+        Overlay::Help { scroll } => help::draw(buf, area, scroll, model),
+        Overlay::Picker(p) => picker::draw(buf, area, &p, model),
+    }
 }

@@ -38,7 +38,6 @@ pub struct Grid {
 }
 
 impl Grid {
-    #[cfg_attr(not(test), expect(dead_code, reason = "glyph styles: lava-y7g"))]
     pub const CELL: Grid = Grid { x: 1, y: 1 };
     pub const HALF_BLOCK: Grid = Grid { x: 1, y: 2 };
     pub const BRAILLE: Grid = Grid { x: 2, y: 4 };
@@ -68,10 +67,6 @@ impl StyleId {
         (0..styles::ALL.len()).map(StyleId)
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "config / --style land with lava-xxx")
-    )]
     pub fn by_name(name: &str) -> Option<StyleId> {
         Self::all().find(|id| id.style().name() == name)
     }
@@ -81,7 +76,6 @@ impl StyleId {
     }
 
     /// Position in the cycle (0-based), for `name  i/n` toasts.
-    #[cfg_attr(not(test), expect(dead_code, reason = "toasts land with lava-xxx"))]
     pub fn index(self) -> usize {
         self.0
     }
@@ -90,7 +84,7 @@ impl StyleId {
         StyleId((self.0 + 1) % styles::ALL.len())
     }
 
-    #[cfg_attr(not(test), expect(dead_code, reason = "picker lands with lava-xxx"))]
+    #[cfg_attr(not(test), expect(dead_code, reason = "pickers move by index"))]
     pub fn prev(self) -> StyleId {
         StyleId((self.0 + styles::ALL.len() - 1) % styles::ALL.len())
     }
@@ -107,7 +101,6 @@ pub struct Canvas<'a> {
     pub height: usize,
     pub theme: &'a Theme,
     /// Seconds since launch, for styles that animate on their own.
-    #[expect(dead_code, reason = "animated styles: lava-y7g")]
     pub time: f64,
 }
 
@@ -262,6 +255,12 @@ impl StatefulWidget for LampView<'_> {
                 state.light.clear();
                 state.light.resize(n, 1.0);
                 lighting.shade(&state.samples, width, height, &mut state.light);
+                // Light lives inside the container: outside the glass is
+                // the app background, which stays unlit.
+                for (row, &(lo, hi)) in state.light.chunks_exact_mut(width).zip(&state.mask) {
+                    row[..lo].fill(1.0);
+                    row[hi..].fill(1.0);
+                }
                 Some(state.light.as_slice())
             }
             None => None,

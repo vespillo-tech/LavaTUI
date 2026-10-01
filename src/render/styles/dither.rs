@@ -61,7 +61,7 @@ fn pixel(c: &Canvas, x: usize, y: usize) -> Option<Color> {
     let v = cover * (1.0 + 2.0 * heat);
     let level = (v + threshold).floor() as usize;
     match level {
-        0 if c.theme.blends() => Some(c.theme.paint(c.backdrop(x, y)).scale(light).color()),
+        0 if c.theme.blends() => Some(c.theme.paint(c.backdrop(x, y)).shade(light).color()),
         0 => None,
         n => Some(c.theme.color(Ink::Role(INKS[n.min(3) - 1]))),
     }

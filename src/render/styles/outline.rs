@@ -6,9 +6,9 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
+use super::is_edge;
 use crate::render::cell::{braille, braille_bit};
 use crate::render::{Canvas, Grid, Style, wax_heat};
-use crate::sim::SURFACE;
 use crate::theme::Ink;
 
 pub struct Outline;
@@ -44,21 +44,10 @@ impl Style for Outline {
                 } else {
                     // Lifted toward hot so a thin line holds its own against the liquid.
                     let wax = Ink::Wax(0.3 + 0.7 * heat / dots);
-                    let fg = c.theme.paint(wax).scale(light / dots).color();
+                    let fg = c.theme.paint(wax).shade(light / dots).color();
                     cell.set_char(braille(bits)).set_fg(fg).set_bg(base);
                 }
             }
         }
     }
-}
-
-/// A wax pixel with liquid on at least one side. Off-canvas counts as wax,
-/// so wax touching the walls or floor (the pool) isn't outlined there.
-fn is_edge(c: &Canvas, x: usize, y: usize) -> bool {
-    let wax = |x: usize, y: usize| x >= c.width || y >= c.height || c.at(x, y).density >= SURFACE;
-    wax(x, y)
-        && !(wax(x.wrapping_sub(1), y)
-            && wax(x + 1, y)
-            && wax(x, y.wrapping_sub(1))
-            && wax(x, y + 1))
 }

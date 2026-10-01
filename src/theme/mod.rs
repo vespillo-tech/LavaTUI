@@ -34,9 +34,7 @@ pub enum Role {
     WaxMid,
     WaxHot,
     /// Cap, base, overlay borders.
-    #[cfg_attr(not(test), expect(dead_code, reason = "glass frame: lava-xxx"))]
     Metal,
-    #[cfg_attr(not(test), expect(dead_code, reason = "chrome: lava-xxx"))]
     Text,
     Dim,
     /// The one accent.
@@ -44,7 +42,7 @@ pub enum Role {
 }
 
 impl Role {
-    #[cfg_attr(not(test), expect(dead_code, reason = "palette picker: lava-xxx"))]
+    #[cfg_attr(not(test), expect(dead_code, reason = "palette tests iterate roles"))]
     pub const ALL: [Role; 9] = [
         Role::Bg,
         Role::Liquid,
@@ -78,22 +76,25 @@ impl Rgb {
         )
     }
 
-    /// Lighting: multiply brightness by `k`. Brightening (`k > 1`) is
-    /// eased by the colour's own lightness, so dark liquid glows nearly the
-    /// full amount while light colours barely move: highlights keep their
-    /// hue and the light palette doesn't blow out into white halos.
+    /// Multiply brightness by `k`; saturates at white.
     pub fn scale(self, k: f32) -> Rgb {
-        let k = if k > 1.0 {
-            let luma = (0.2126 * f32::from(self.0)
-                + 0.7152 * f32::from(self.1)
-                + 0.0722 * f32::from(self.2))
-                / 255.0;
-            1.0 + (k - 1.0) * (1.0 - luma)
-        } else {
-            k
-        };
         let s = |c: u8| (f32::from(c) * k).round().clamp(0.0, 255.0) as u8;
         Rgb(s(self.0), s(self.1), s(self.2))
+    }
+
+    /// Apply a lighting factor (`Canvas::light`). Darkening multiplies;
+    /// brightening (`k > 1`) is eased by the colour's own lightness, so
+    /// dark liquid glows nearly the full amount while light colours barely
+    /// move: highlights keep their hue and the light palette doesn't blow
+    /// out into white halos.
+    pub fn shade(self, k: f32) -> Rgb {
+        if k <= 1.0 {
+            return self.scale(k);
+        }
+        let luma =
+            (0.2126 * f32::from(self.0) + 0.7152 * f32::from(self.1) + 0.0722 * f32::from(self.2))
+                / 255.0;
+        self.scale(1.0 + (k - 1.0) * (1.0 - luma))
     }
 }
 
@@ -121,10 +122,6 @@ impl Palette {
         &palettes::PALETTES
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "config / --palette land with lava-xxx")
-    )]
     pub fn by_name(name: &str) -> Option<&'static Palette> {
         Self::all().iter().find(|p| p.name == name)
     }
@@ -236,7 +233,6 @@ impl Theme {
         self.palette
     }
 
-    #[cfg_attr(not(test), expect(dead_code, reason = "toast fades: lava-xxx"))]
     pub fn depth(&self) -> ColorDepth {
         self.depth
     }
@@ -277,10 +273,6 @@ impl Theme {
     }
 
     /// A text style in `role`. In NO_COLOR, `accent` becomes bold (§5.3).
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "chrome styling lands with lava-xxx")
-    )]
     pub fn text(&self, role: Role) -> Style {
         let style = Style::new().fg(self.role(role));
         if self.depth == ColorDepth::None && role == Role::Accent {
@@ -380,6 +372,16 @@ impl Paint<'_> {
     pub fn scale(self, k: f32) -> Self {
         Paint {
             rgb: self.rgb.scale(k),
+            index: if k == 1.0 { self.index } else { None },
+            ..self
+        }
+    }
+
+    /// Apply a lighting factor (`Canvas::light`, see [`Rgb::shade`]).
+    /// Like [`scale`](Self::scale), only visible when blending.
+    pub fn shade(self, k: f32) -> Self {
+        Paint {
+            rgb: self.rgb.shade(k),
             index: if k == 1.0 { self.index } else { None },
             ..self
         }

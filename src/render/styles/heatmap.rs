@@ -82,7 +82,7 @@ fn pixel(c: &Canvas, x: usize, y: usize) -> Option<Color> {
         return Some(c.theme.color(c.backdrop(x, y)));
     }
     let paint = c.theme.paint(Ink::Heat(heat(c, x, y)));
-    Some(paint.scale(c.light(x, y)).color())
+    Some(paint.shade(c.light(x, y)).color())
 }
 
 /// Discrete thermal bands: cold liquid blank, warm liquid `░` in `dim`,

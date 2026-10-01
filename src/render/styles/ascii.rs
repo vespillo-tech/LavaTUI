@@ -47,7 +47,7 @@ impl Style for Ascii {
                     // Rim glyphs fade from the liquid into the wax colour.
                     let paint = c.theme.paint(backdrop);
                     let paint = paint.mix(wax, 0.35 + 0.65 * coverage(density));
-                    paint.scale(light).color()
+                    paint.shade(light).color()
                 } else if density < SURFACE {
                     c.theme.role(Role::Dim)
                 } else {
