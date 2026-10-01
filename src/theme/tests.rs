@@ -207,3 +207,19 @@ fn every_palette_resolves_every_role_at_every_depth() {
         }
     }
 }
+
+#[test]
+fn lighting_scale_darkens_and_eases_brightening() {
+    let dark = Rgb(40, 20, 10);
+    assert_eq!(dark.scale(1.0), dark);
+    assert_eq!(dark.scale(0.5), Rgb(20, 10, 5));
+    // Dark colours brighten almost fully; near-white barely moves.
+    let Rgb(r, ..) = dark.scale(2.0);
+    assert!((72..=80).contains(&r), "{r}");
+    let paper = Rgb(231, 222, 203);
+    let Rgb(r, g, b) = paper.scale(1.5);
+    assert!(r <= 247 && g <= 238 && b <= 220, "{:?}", (r, g, b));
+    // Saturated wax keeps its hue: red stays the dominant channel.
+    let Rgb(r, g, b) = Rgb(226, 71, 27).scale(1.3);
+    assert!(r > g && g > b && g < 100, "{:?}", (r, g, b));
+}

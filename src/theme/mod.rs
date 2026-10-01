@@ -78,8 +78,20 @@ impl Rgb {
         )
     }
 
-    /// Multiply brightness by `k` (lighting); saturates at white.
+    /// Lighting: multiply brightness by `k`. Brightening (`k > 1`) is
+    /// eased by the colour's own lightness, so dark liquid glows nearly the
+    /// full amount while light colours barely move: highlights keep their
+    /// hue and the light palette doesn't blow out into white halos.
     pub fn scale(self, k: f32) -> Rgb {
+        let k = if k > 1.0 {
+            let luma = (0.2126 * f32::from(self.0)
+                + 0.7152 * f32::from(self.1)
+                + 0.0722 * f32::from(self.2))
+                / 255.0;
+            1.0 + (k - 1.0) * (1.0 - luma)
+        } else {
+            k
+        };
         let s = |c: u8| (f32::from(c) * k).round().clamp(0.0, 255.0) as u8;
         Rgb(s(self.0), s(self.1), s(self.2))
     }

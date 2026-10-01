@@ -11,6 +11,8 @@ pub struct Config {
     pub max_frames: Option<u64>,
     /// Simulation seed (`None` = a new one every launch, from the clock).
     pub seed: Option<u64>,
+    /// Lighting pass on (docs/design.md §9 `lamp.lighting`).
+    pub lighting: bool,
 }
 
 impl Default for Config {
@@ -20,6 +22,7 @@ impl Default for Config {
             fps: 60,
             max_frames: None,
             seed: None,
+            lighting: false,
         }
     }
 }

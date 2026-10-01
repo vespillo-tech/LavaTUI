@@ -10,6 +10,7 @@ use ratatui::text::Line;
 
 pub use input::{Action, action_for};
 
+use crate::light::{Lamplight, Lighting};
 use crate::render::{LampState, LampView, StyleId};
 use crate::sim::Field;
 use crate::theme::{Role, Theme};
@@ -29,6 +30,8 @@ pub struct Scene<'a> {
     /// Measured render fps.
     pub fps: f64,
     pub minimal: bool,
+    /// Lighting pass on (the `l` key, `lamp.lighting`).
+    pub lighting: bool,
 }
 
 /// Visual aspect (on-screen width ÷ height) of a `cols × rows` lamp.
@@ -47,7 +50,7 @@ pub fn draw(frame: &mut Frame, scene: &Scene, lamp: &mut LampState) {
         style: scene.style.style(),
         theme: scene.theme,
         time: scene.time,
-        lighting: None,
+        lighting: scene.lighting.then_some(&Lamplight as &dyn Lighting),
     };
     frame.render_stateful_widget(view, area, lamp);
     if !scene.minimal {

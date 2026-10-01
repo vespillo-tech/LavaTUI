@@ -84,11 +84,13 @@ cargo run --release                  # run the lamp (release: the sim wants the 
 cargo run --release -- --minimal     # just the lamp, no chrome
 cargo run --release -- --fps 30      # target render fps (1..=240, default 60)
 cargo run --release -- --frames 300  # hidden: exit after N frames (smoke test / timing)
+cargo run --release -- --light       # hidden: start with lighting on (until the `l` key lands)
 cargo test                           # unit tests (timing, keymap, CLI)
 cargo fmt --check                    # formatting gate
 cargo clippy --all-targets -- -D warnings   # lint gate
 cargo test --release -- --ignored --nocapture bench_fill   # field sampler + step timing
-cargo test --release -- --ignored --nocapture bench_lamp   # per-style frame time + bytes/frame
+cargo test --release -- --ignored --nocapture bench_lamp   # per-style frame time + bytes/frame (lit / unlit)
+cargo test --release -- --ignored --nocapture bench_light  # lighting pass alone
 UPDATE_SNAPSHOTS=1 cargo test        # rewrite render snapshots (review the diff!)
 ```
 
@@ -135,8 +137,16 @@ headlessly, run it under a pty with a window size set (e.g. Python `pty.fork`
                 `coverage` (quantised AA edge), `wax_heat`, `bayer`,
                 `cell::{half_block, braille}`. Snapshots: `render/snapshots/`
                 (`UPDATE_SNAPSHOTS=1 cargo test` to rewrite, then review).
-- `light/`    — `Lighting` trait: the seam for the glow pass (lava-5ak). Fills a
-                per-sample brightness buffer that styles read via `Canvas::light`.
+- `light/`    — `Lighting` trait + `Lamplight`, the lighting pass (lava-5ak).
+                Fills a per-sample brightness buffer (1.0 = unlit) that styles
+                read via `Canvas::light`: dome normals from depth + density
+                gradient → half-Lambert key light (up-left) + small specular,
+                flattened on hot wax; glow from the kernel tail of hot wax;
+                warm base light in the bottom third. One branch-free,
+                vectorised sweep, no scratch; output quantised (bandwidth).
+                Blending styles `paint.scale(light)` (`Rgb::scale` eases
+                brightening by lightness); glyph depths use `render::lit` to
+                shift density instead (§5.3). Tuning at the top of the file.
 - `clock/`    — stub. Clock faces (`Face` trait) + pomodoro state machine.
 - `ui/`       — the only terminal-facing code. `draw(frame, &Scene, &mut LampState)`
                 renders `LampView` full-screen plus a one-line status hint;

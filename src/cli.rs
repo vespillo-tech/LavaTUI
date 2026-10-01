@@ -21,6 +21,10 @@ pub struct Cli {
     #[arg(long, value_name = "U64")]
     pub seed: Option<u64>,
 
+    /// Start with the lighting pass on (the `l` key toggles it).
+    #[arg(long, hide = true)]
+    pub light: bool,
+
     /// Exit after rendering N frames (smoke tests / benchmarking).
     #[arg(long, value_name = "N", hide = true)]
     pub frames: Option<u64>,
@@ -34,6 +38,7 @@ impl Cli {
             fps: self.fps.unwrap_or(defaults.fps),
             max_frames: self.frames,
             seed: self.seed,
+            lighting: self.light,
         }
     }
 }

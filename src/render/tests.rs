@@ -7,6 +7,7 @@ use ratatui::style::Color;
 use ratatui::widgets::StatefulWidget;
 
 use super::*;
+use crate::light::Lamplight;
 use crate::sim::{Shape, World, ambient_temp};
 use crate::theme::{ColorDepth, Palette};
 
@@ -62,15 +63,29 @@ fn synthetic(width: usize, height: usize, aspect: f32) -> Vec<Sample> {
 
 /// Draw `style` from the synthetic field into a fresh buffer of `area`.
 fn draw_synthetic(style: &dyn Style, theme: &Theme, area: Rect) -> Buffer {
+    draw_synthetic_lit(style, theme, area, None)
+}
+
+fn draw_synthetic_lit(
+    style: &dyn Style,
+    theme: &Theme,
+    area: Rect,
+    lighting: Option<&dyn Lighting>,
+) -> Buffer {
     let grid = style.grid();
     let width = usize::from(area.width * grid.x);
     let height = usize::from(area.height * grid.y);
     let aspect = f32::from(area.width) / (2.0 * f32::from(area.height));
     let samples = synthetic(width, height, aspect);
     let mask = vec![(0, width); height];
+    let light = lighting.map(|lighting| {
+        let mut light = vec![1.0; samples.len()];
+        lighting.shade(&samples, width, height, &mut light);
+        light
+    });
     let canvas = Canvas {
         samples: &samples,
-        light: None,
+        light: light.as_deref(),
         mask: &mask,
         width,
         height,
@@ -348,6 +363,55 @@ fn lighting_seam_reaches_styles() {
 }
 
 #[test]
+fn unlit_canvas_is_exactly_one() {
+    let samples = synthetic(8, 8, 1.0);
+    let mask = vec![(0, 8); 8];
+    let theme = theme(ColorDepth::TrueColor);
+    let canvas = Canvas {
+        samples: &samples,
+        light: None,
+        mask: &mask,
+        width: 8,
+        height: 8,
+        theme: &theme,
+        time: 0.0,
+    };
+    assert!((0..8).all(|y| (0..8).all(|x| canvas.light(x, y) == 1.0)));
+    assert_eq!(lit(0.3, 1.0), 0.3);
+    assert!(lit(0.3, 1.4) > 0.3 && lit(0.3, 0.7) < 0.3);
+}
+
+/// Every style responds to the real lighting pass: in colour by shading,
+/// in 16 colours / NO_COLOR (where it can) through glyph density (§5.3).
+#[test]
+fn every_style_responds_to_lighting() {
+    let area = Rect::new(0, 0, 36, 14);
+    for id in StyleId::all() {
+        let name = id.style().name();
+        for (depth, depth_name) in DEPTHS {
+            let theme = theme(depth);
+            let plain = draw_synthetic(id.style(), &theme, area);
+            let lit = draw_synthetic_lit(id.style(), &theme, area, Some(&Lamplight));
+            let changed = plain
+                .content()
+                .iter()
+                .zip(lit.content())
+                .filter(|(a, b)| a != b)
+                .count();
+            let glyphs_only = matches!(depth, ColorDepth::Ansi16 | ColorDepth::None);
+            // Silhouette-only styles can't show light without colour.
+            let can = !glyphs_only || matches!(name, "heatmap" | "ascii" | "dither");
+            if can {
+                assert!(changed > 5, "{name} @ {depth_name}: {changed} cells lit");
+            }
+            if glyphs_only && !can {
+                assert_eq!(glyphs(&plain), glyphs(&lit), "{name} @ {depth_name}");
+            }
+        }
+    }
+}
+
+#[test]
 fn registry_cycles_and_names_are_unique() {
     let names: Vec<_> = StyleId::all().map(|id| id.style().name()).collect();
     assert_eq!(names, ["solid", "outline", "heatmap", "ascii", "dither"]);
@@ -390,7 +454,9 @@ fn bench_lamp() {
         ] {
             let theme = theme(depth);
             let mut report = format!("{cols}x{rows} {depth_name}:");
-            for id in StyleId::all() {
+            for (id, lighting) in StyleId::all()
+                .flat_map(|id| [None, Some(&Lamplight as &dyn Lighting)].map(|l| (id, l)))
+            {
                 let aspect = f64::from(cols) / (2.0 * f64::from(rows));
                 let mut world = World::new(7, aspect, Shape::Tank);
                 world.prewarm(1200, 1.0 / 120.0);
@@ -411,7 +477,7 @@ fn bench_lamp() {
                         style: id.style(),
                         theme: &theme,
                         time: f64::from(frame) / 60.0,
-                        lighting: None,
+                        lighting,
                     }
                     .render(area, &mut next, &mut state);
                     render_time += t0.elapsed();
@@ -430,8 +496,9 @@ fn bench_lamp() {
                 let n = (FRAMES - 1) as usize;
                 let _ = write!(
                     report,
-                    "\n  {:8} {:>7.2?}/frame  {:>5} cells  {:>6} B/frame  {:>4} KB/s@60",
+                    "\n  {:8} {:5} {:>7.2?}/frame  {:>5} cells  {:>6} B/frame  {:>4} KB/s@60",
                     id.style().name(),
+                    if lighting.is_some() { "lit" } else { "" },
                     render_time / FRAMES,
                     changed / n,
                     bytes / n,

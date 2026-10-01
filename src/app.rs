@@ -72,6 +72,7 @@ pub fn run(terminal: &mut DefaultTerminal, config: &Config) -> io::Result<()> {
             time: (now - start).as_secs_f64(),
             fps: fps.fps(),
             minimal: config.minimal,
+            lighting: config.lighting,
         };
         terminal.draw(|frame| ui::draw(frame, &scene, &mut lamp))?;
 
