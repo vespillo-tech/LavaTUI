@@ -922,7 +922,7 @@ Detection order, overridable with `--color=auto|truecolor|256|16|none` /
 | Depth | Gradient | Background | Notes |
 |---|---|---|---|
 | truecolor | lerp across the 3 wax stops (a 64-step ramp LUT at every depth); blended colours are rounded to multiples of 4 per channel, so sub-visible drift doesn't repaint cells | `bg` painted (unless `theme.transparent = true`) | fades, dimming, glow all on |
-| 256 | blend in RGB, then match to the nearest xterm index by a hue- and lightness-weighted OKLab distance over the 6×6×6 cube and grey ramp only (the 16 system colours are themed by the terminal, so never picked); cached per 6-bit RGB bucket. Unmixed roles use the §5.2 index | `bg` painted (index above) | toast fade → instant; help dim → cleared rect |
+| 256 | blend in RGB, then match to the nearest xterm index by a hue- and lightness-weighted OKLab distance over the 6×6×6 cube and grey ramp only (the 16 system colours are themed by the terminal, so never picked); cached per 6-bit RGB bucket. Dark tints the cube lacks (colours that lose their hue when snapped to one index) are ordered-dithered between the two best indices with the 8×8 Bayer matrix, fixed to the lamp in screen space (`render/dither256.rs`, `Theme::dithering`). Unmixed roles use the §5.2 index | `bg` painted (index above) | toast fade → instant; help dim → cleared rect |
 | 16 | 3 discrete steps; styles add glyph density (`░▒▓█`) to show temperature | always `default` | glass gets a thin `▕ │ ▏` edge in `metal` (§2.1); lighting adds density, not colour |
 | none | no colour at all; temperature shown only through glyph density and shape | `default` | `accent` → bold; `dim` → plain |
 

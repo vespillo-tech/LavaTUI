@@ -266,6 +266,9 @@ numbers); `docs/design.md` is the layout/visual contract.
                 (half-block 1×2, braille 2×4, …; >400k samples → coarse fill +
                 bilinear upsample), builds the glass mask, runs the optional
                 lighting pass, then calls the style's `draw(&Canvas, buf)`.
+                In 256-colour mode a final pass (`render/dither256.rs`) turns
+                blended RGB into xterm indices, Bayer-dithering dark tints the
+                cube lacks (`Theme::dithering`/`Theme::dither`).
                 A style is a unit struct implementing `LampStyle` (`NAME`,
                 `GRID` consts + `draw`), one per file in `render/styles/`,
                 listed in `styles::ALL` as `StyleEntry::of::<S>()` (cycle
