@@ -23,6 +23,8 @@ mod palettes;
 mod tests;
 mod xterm;
 
+use std::sync::LazyLock;
+
 use ratatui::style::{Color, Modifier, Style};
 
 /// The terminal's own default colour, as a foreground or a background:
@@ -365,6 +367,45 @@ impl Theme {
         }
     }
 
+    /// The two inks for glyphs drawn straight onto the lava (widgets with
+    /// no backing, §4.6), `(light, dark)`: the palette's `text` and `bg`,
+    /// lighter first (paper's text is the dark one), white and black
+    /// where they're the terminal's defaults.
+    pub fn floating_inks(&self) -> (Color, Color) {
+        let pick = |role, named| match self.role(role) {
+            TERMINAL_DEFAULT => named,
+            c => c,
+        };
+        let (text, bg) = (pick(Role::Text, Color::White), pick(Role::Bg, Color::Black));
+        let lum = |c| seen(c).map_or(0.0, luminance);
+        if lum(text) >= lum(bg) {
+            (text, bg)
+        } else {
+            (bg, text)
+        }
+    }
+
+    /// A drawn colour's WCAG relative luminance (0..=1), for
+    /// [`contrast`], or `None` when it can't be told (the terminal's
+    /// defaults).
+    pub fn luminance(&self, c: Color) -> Option<f32> {
+        seen(c).map(luminance)
+    }
+
+    /// What a cell split into `a` and `b` halves looks like from afar:
+    /// their mean in truecolor, else `b`.
+    pub fn mean(&self, a: Color, b: Color) -> Color {
+        match (a, b) {
+            (Color::Rgb(r, g, bl), Color::Rgb(r2, g2, b2))
+                if self.depth == ColorDepth::TrueColor =>
+            {
+                let Rgb(r, g, b) = Rgb(r, g, bl).lerp(Rgb(r2, g2, b2), 0.5);
+                Color::Rgb(r, g, b)
+            }
+            _ => b,
+        }
+    }
+
     /// A picture's pixel (album art): exact in truecolor, the nearest xterm
     /// index in 256 colours, and `None` below that, where a picture can't
     /// be shown at all (the widget then drops it). Palette-independent.
@@ -430,6 +471,71 @@ impl Theme {
             _ => swatch.ansi,
         }
     }
+}
+
+/// A drawn colour as RGB, as near as can be told: xterm indices from the
+/// standard table, named colours as xterm's defaults; `None` for the
+/// terminal's own default.
+fn seen(c: Color) -> Option<Rgb> {
+    const SYSTEM: [u32; 16] = [
+        0x000000, 0xCD0000, 0x00CD00, 0xCDCD00, 0x0000EE, 0xCD00CD, 0x00CDCD, 0xE5E5E5, 0x7F7F7F,
+        0xFF0000, 0x00FF00, 0xFFFF00, 0x5C5CFF, 0xFF00FF, 0x00FFFF, 0xFFFFFF,
+    ];
+    let index = match c {
+        Color::Reset => return None,
+        Color::Rgb(r, g, b) => return Some(Rgb(r, g, b)),
+        Color::Indexed(i) => i,
+        Color::Black => 0,
+        Color::Red => 1,
+        Color::Green => 2,
+        Color::Yellow => 3,
+        Color::Blue => 4,
+        Color::Magenta => 5,
+        Color::Cyan => 6,
+        Color::Gray => 7,
+        Color::DarkGray => 8,
+        Color::LightRed => 9,
+        Color::LightGreen => 10,
+        Color::LightYellow => 11,
+        Color::LightBlue => 12,
+        Color::LightMagenta => 13,
+        Color::LightCyan => 14,
+        Color::White => 15,
+    };
+    Some(match index {
+        0..16 => Rgb::hex(SYSTEM[usize::from(index)]),
+        16..232 => {
+            let level = |v: u8| if v == 0 { 0 } else { 55 + 40 * v };
+            let i = index - 16;
+            Rgb(level(i / 36), level(i / 6 % 6), level(i % 6))
+        }
+        _ => {
+            let v = 8 + 10 * (index - 232);
+            Rgb(v, v, v)
+        }
+    })
+}
+
+/// The WCAG contrast ratio (1..=21) of two relative luminances.
+pub fn contrast(a: f32, b: f32) -> f32 {
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+
+/// WCAG relative luminance (0..=1).
+fn luminance(c: Rgb) -> f32 {
+    /// sRGB channel → linear light, per 8-bit value.
+    static LINEAR: LazyLock<[f32; 256]> = LazyLock::new(|| {
+        std::array::from_fn(|v| {
+            let v = v as f32 / 255.0;
+            if v <= 0.04045 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        })
+    });
+    let lin = |v: u8| LINEAR[usize::from(v)];
+    0.2126 * lin(c.0) + 0.7152 * lin(c.1) + 0.0722 * lin(c.2)
 }
 
 /// The three discrete wax steps, for depths that can't blend.

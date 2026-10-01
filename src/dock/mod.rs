@@ -147,8 +147,21 @@ impl Anchor {
 #[serde(default)]
 pub struct DockSettings {
     pub anchor: Anchors,
+    /// What the widgets on the lava sit on.
+    pub backing: Backing,
     #[serde(flatten)]
     pub places: BTreeMap<String, Place>,
+}
+
+/// `dock.backing`: what the widgets on the lava sit on (§4.6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Backing {
+    /// Nothing: the text floats on the lamp, each cell keeping its colour.
+    #[default]
+    None,
+    /// A soft pool of veiled liquid behind them (the v1.2 look).
+    Soft,
 }
 
 /// `dock.anchor`: one per widget. Files from before v1.2 have a single
@@ -176,6 +189,7 @@ impl Default for DockSettings {
     fn default() -> Self {
         Self {
             anchor: Anchors::default(),
+            backing: Backing::default(),
             places: WIDGETS
                 .iter()
                 .map(|w| (w.name().to_owned(), w.default_place()))
@@ -283,9 +297,8 @@ impl WidgetForm {
 pub enum Backdrop {
     /// The app background, beside the lamp.
     Panel,
-    /// The lava. The ui clears a soft patch of liquid behind whatever
-    /// the widget draws, so it reads over any style; spaces stay
-    /// see-through.
+    /// The lava. Spaces stay see-through; the ui composites the rest onto
+    /// the lamp (and the soft backing, if `dock.backing` asks for one).
     Lava,
 }
 
@@ -366,6 +379,7 @@ mod tests {
             assert_eq!(w.name(), w.name().to_lowercase());
             assert!(WIDGETS[i + 1..].iter().all(|o| o.name() != w.name()));
             assert_ne!(w.name(), "anchor", "dock.anchor is taken");
+            assert_ne!(w.name(), "backing", "dock.backing is taken");
         }
     }
 

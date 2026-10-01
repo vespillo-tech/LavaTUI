@@ -62,8 +62,11 @@ in minimal mode:
   (`f`) and music (`a`) each sit in the side panel, on the lava, or off.
   On the lava each has its own spot (centre, top, the corners, bottom):
   `l` moves the one you last put there, `L` picks another. They float
-  on a soft pool of liquid that the wax melts into at the edges,
-  readable over every style, and spread out without touching. What
+  right on the lamp with no background: the wax runs up to every stroke,
+  and each word turns dark over bright wax and light over the liquid, so
+  it stays readable over every style (`dock.backing = "soft"` brings
+  back a soft pool of liquid behind them). They spread out without
+  touching. What
   matters most right now keeps its size longest (a running pomodoro,
   then playing music, then the clock); when space runs out the rest
   shrink, then fold into one row of chips in the corner
@@ -249,6 +252,7 @@ music = "off"            # side | overlay | off
 # each widget's spot on the lava:
 # center | top | top-right | bottom-right | bottom | bottom-left | top-left
 anchor = { clock = "center", pomodoro = "center", music = "top-left" }
+backing = "none"         # none (text floats on the lamp) | soft (a veiled pool behind)
 
 [spotify]
 client_id = ""           # for the Web API library features, see docs/spotify.md

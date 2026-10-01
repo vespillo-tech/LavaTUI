@@ -24,7 +24,7 @@ truncate mid-word, wrap, overlap or overflow.
 | **lamp region** | The part of the content area that belongs to the lamp. The fluid fills it edge to edge: there is no frame or silhouette. |
 | **widget** | A dock widget (§4.6): the clock, the pomodoro or music (now playing). Each is placed `side`, `overlay` (on the lava) or `off`. |
 | **panel** | The widgets placed `side` (clock + pomodoro by default), stacked beside the lamp (right panel) or below it (bottom panel). |
-| **on the lava** | The widgets placed `overlay`, stacked over the lamp at the dock's anchor on a soft backing (§4.6). |
+| **on the lava** | The widgets placed `overlay`, stacked over the lamp at their anchors, floating with no background (or on a soft backing, `dock.backing`; §4.6). |
 | **chip** | The single-line fallback for a widget with no room where it was put: ` 14:32 ` or ` ▸ 18:24 `, drawn over a corner of the lamp. |
 | **toast** | A transient one-line message, e.g. the style name after pressing `s`. |
 
@@ -811,19 +811,51 @@ When they don't all fit the lamp's width the lowest-ranked go first; a
 chip too wide for the lamp on its own is never shown. With only the
 clock homeless it is the v1 corner chip, cell for cell.
 
-**The backing.** Over the lava the widgets sit on a soft pool of liquid,
-not a box: under the stack and half a row around it the lamp is veiled
-82 % of the way to `liquid` (its glyphs cleared, so text never sits on
-wax glyphs), and the veil fades to nothing over the next 1½ rows (a
-column counts half a row), within 4 cols / 2 rows of the stack. Wax
-drifting behind shows as a faint ghost and melts out at the edges. This
-was picked from pty captures of all nine styles and eight palettes
-against three alternatives: no backing (unreadable over ascii, matrix,
-braille), a halo following the glyphs (busy around the pomodoro's short
-lines) and per-row spans (ragged edges). In 256 colours the veil would
-snap to cube greys (a grey box), so below truecolor the backing is plain
-`liquid` wherever it's at least half strength: a crisp, slightly rounded
-cutout, exact to the liquid's index.
+**The backing** (`dock.backing`). By default there is none: the widgets
+**float** on the lamp, their text part of it. Only the cells a glyph
+takes change, and each keeps the lamp's colours: a letter over a half
+block sits on what the cell showed (in truecolor both halves' mean), and
+the faces' own half blocks are composited pixel by pixel, so wax runs
+right up to every stroke. Spaces inside a widget leave the lamp showing,
+glyph styles included, except a one-cell gap between two words of a
+text line, whose lamp glyph is cleared (its colours stay) so `thu 1 oct`
+never reads `thu#1#oct` over ascii, matrix, braille or halftone. Text is
+bold; `dim` lines aren't. Nothing is drawn around the text: no veil, box
+or halo.
+
+*Adaptive contrast.* Legibility comes from the ink alone, chosen per
+**word**: glyphs joined along a line, and block glyphs up and down too,
+so a clock digit is one word and is never two-tone. A word keeps its own
+role ink (`text`, `accent`, `dim`) while that reads at least 3 : 1
+(WCAG contrast) against everything behind it, measured on what the eye
+sees there (a glyph style's own glyph counts half). Otherwise it takes
+whichever of the palette's light and dark inks (`text` and `bg`, the
+lighter first; white and black where they are the terminal's defaults)
+has the better *worst* contrast over the word: dark over bright wax,
+light over the liquid. A text word straddling pale wax and dark liquid
+can't suit both, so a letter of it that would still read below 1.8 : 1
+takes the better ink on its own (big digits never split: they read at
+any contrast). Hysteresis keeps it calm: an ink the word (or letter) had
+last frame counts 1.25× better, so it flips once as wax drifts under it,
+never back and forth frame to frame. In 256 colours the same rule runs
+on the indices' standard RGB; with no colour, or colours that are the
+terminal's defaults (16 colours, the `ansi` palette), contrast can't be
+measured and words keep their own ink, bold. Album-art pixels are drawn
+as they are. Cost: ≈ 50 ns a glyph cell (a clock and pomodoro: tens of
+µs a frame).
+
+Picked from pty captures of all nine styles and eight palettes at
+80 × 24 and 160 × 40. Earlier rejected alternatives still hold: a halo
+following the glyphs was busy around short lines, per-row spans ragged.
+
+`dock.backing = "soft"` keeps the v1.2 look: a soft pool of liquid. Under
+the stack and half a row around it the lamp is veiled 82 % of the way to
+`liquid` (its glyphs cleared), and the veil fades to nothing over the
+next 1½ rows (a column counts half a row), within 4 cols / 2 rows of the
+stack. In 256 colours the veil would snap to cube greys (a grey box), so
+below truecolor it is plain `liquid` wherever it's at least half
+strength. The layout reserves the soft backing's reach (`HALO`) either
+way, so switching never moves a widget.
 
 Chrome rules still hold: an overlay sheet (help, picker) touching the
 stack's backing hides the whole stack (§8.2); the face picker sits on

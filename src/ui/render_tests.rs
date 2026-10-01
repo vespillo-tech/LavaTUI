@@ -21,11 +21,13 @@ use ratatui::layout::Rect;
 
 use super::chrome::{HINTS, PICKER_HINTS, PLAYER_HINTS};
 use super::keymap::{Action, InputMode, KEYMAP, PlayerKey, action_for};
+use super::layout::{Stack, halo};
 use super::picker::{self, Placement, grow};
 use crate::app::{LocalTime, Model, Overlay};
 use crate::clock::ClockTime;
 use crate::config::store::Store;
 use crate::config::{ColorChoice, Session};
+use crate::dock::{Backdrop, Look, WIDGETS};
 use crate::media::art::{Art, ArtLoader};
 use crate::media::{FakeSource, Snapshot, Status, Track, Unavailable};
 use crate::render::LampState;
@@ -88,18 +90,39 @@ fn draw(m: &Model, cols: u16, rows: u16) -> Buffer {
 fn picture(m: &Model, buf: &Buffer) -> String {
     let bg = m.theme.role(Role::Bg);
     let view = m.layout.lamp;
-    // The widgets on the lava sit on a cleared backing: print them.
-    let lava: Vec<Rect> = m.layout.on_lava.iter().map(|s| s.rect).collect();
+    // The widgets on the lava float on the lamp: print what they draw
+    // (spaces show the lamp, `~`), not the wax around their strokes.
+    let mut lava = Buffer::empty(buf.area);
+    // Left out whole under an overlay, as `ui::draw` does.
+    let covered = super::overlay_footprint(buf.area, &m.layout, m);
+    let shown = |s: &&Stack| covered.is_none_or(|c| !grow(c, 1).intersects(halo(s.rect)));
+    let shown: Vec<&Stack> = m.layout.on_lava.iter().filter(shown).collect();
+    for s in &shown {
+        let look = Look {
+            backdrop: Backdrop::Lava,
+            align: s.align,
+        };
+        for p in &s.items {
+            WIDGETS[p.widget].draw(m, p.form, p.rect, look, &mut lava);
+        }
+    }
+    let stacks: Vec<Rect> = shown.iter().map(|s| s.rect).collect();
     let mut out = String::new();
     for y in 0..buf.area.height {
         let mut line = String::new();
         for x in 0..buf.area.width {
             let cell = &buf[(x, y)];
             let pos = (x, y).into();
-            let lamp = view.is_some_and(|v| v.contains(pos))
-                && lava.iter().all(|l| !l.contains(pos))
-                && cell.bg != bg;
-            line.push_str(if lamp { "~" } else { cell.symbol() });
+            let on_lava = stacks.iter().any(|l| l.contains(pos));
+            let lamp = view.is_some_and(|v| v.contains(pos)) && cell.bg != bg;
+            let symbol = if on_lava && lava[pos].symbol() != " " {
+                lava[pos].symbol()
+            } else if lamp {
+                "~"
+            } else {
+                cell.symbol()
+            };
+            line.push_str(symbol);
         }
         out.push_str(line.trim_end());
         out.push('\n');
