@@ -62,6 +62,10 @@ fn synthetic(width: usize, height: usize, aspect: f32) -> Vec<Sample> {
 
 /// Draw `style` from the synthetic field into a fresh buffer of `area`.
 fn draw_synthetic(style: &dyn Style, theme: &Theme, area: Rect) -> Buffer {
+    draw_synthetic_at(style, theme, area, 0.0)
+}
+
+fn draw_synthetic_at(style: &dyn Style, theme: &Theme, area: Rect, time: f64) -> Buffer {
     let grid = style.grid();
     let width = usize::from(area.width * grid.x);
     let height = usize::from(area.height * grid.y);
@@ -75,7 +79,7 @@ fn draw_synthetic(style: &dyn Style, theme: &Theme, area: Rect) -> Buffer {
         width,
         height,
         theme,
-        time: 0.0,
+        time,
     };
     let mut buf = Buffer::empty(area);
     style.draw(&canvas, area, &mut buf);
@@ -172,6 +176,46 @@ fn every_style_shows_the_wax_at_every_depth() {
                 // The liquid is painted, never left to the terminal.
                 assert!(buf.content().iter().all(|c| c.bg != Color::Reset), "{name}");
             }
+        }
+    }
+}
+
+/// Styles may animate on `Canvas::time`, but only as a pure function of
+/// it: the same time always draws the same frame.
+#[test]
+fn animation_is_a_pure_function_of_time() {
+    let area = Rect::new(0, 0, 36, 14);
+    let theme = theme(ColorDepth::TrueColor);
+    let draw_at = |style: &dyn Style, time: f64| draw_synthetic_at(style, &theme, area, time);
+    for id in StyleId::all() {
+        let style = id.style();
+        assert_eq!(
+            draw_at(style, 7.25),
+            draw_at(style, 7.25),
+            "{}",
+            style.name()
+        );
+    }
+    for name in ["crt", "synthwave", "matrix"] {
+        let style = StyleId::by_name(name).unwrap().style();
+        assert_ne!(
+            draw_at(style, 0.0),
+            draw_at(style, 2.5),
+            "{name} should animate"
+        );
+    }
+}
+
+/// Matrix rain is only visible through the wax: liquid cells stay blank.
+#[test]
+fn matrix_rain_stays_inside_the_wax() {
+    let area = Rect::new(0, 0, 36, 14);
+    let matrix = StyleId::by_name("matrix").unwrap().style();
+    let samples = synthetic(36, 14, 36.0 / 28.0);
+    for time in [0.0, 1.0, 4.5] {
+        let buf = draw_synthetic_at(matrix, &theme(ColorDepth::TrueColor), area, time);
+        for (cell, s) in buf.content().iter().zip(&samples) {
+            assert_eq!(cell.symbol() != " ", s.density >= SURFACE);
         }
     }
 }
@@ -350,7 +394,23 @@ fn lighting_seam_reaches_styles() {
 #[test]
 fn registry_cycles_and_names_are_unique() {
     let names: Vec<_> = StyleId::all().map(|id| id.style().name()).collect();
-    assert_eq!(names, ["solid", "outline", "heatmap", "ascii", "dither"]);
+    assert_eq!(
+        names,
+        [
+            "solid",
+            "outline",
+            "heatmap",
+            "ascii",
+            "dither",
+            "braille",
+            "halftone",
+            "crt",
+            "synthwave",
+            "matrix",
+            "topo",
+            "glass",
+        ]
+    );
     let n = names.len();
     let first = StyleId::default();
     assert_eq!(first.style().name(), "solid");
