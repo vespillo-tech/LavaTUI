@@ -15,6 +15,7 @@
 //! Colours come from the model's theme, as everywhere else.
 
 mod clock;
+mod lyrics;
 mod music;
 mod pomodoro;
 
@@ -30,6 +31,9 @@ use crate::theme::Role;
 pub use clock::Clock;
 #[cfg(test)]
 pub use clock::{clock_forms, clock_parts};
+pub use lyrics::Lyrics;
+#[cfg(test)]
+pub use lyrics::{Show as LyricsShow, lyrics_forms};
 pub use music::Music;
 #[cfg(test)]
 pub use music::{Show, music_forms};
@@ -39,7 +43,7 @@ pub use pomodoro::pomodoro_forms;
 
 /// Every widget, in stacking order: the first sits on top of the panel
 /// (and of the stack on the lava) and is the last to shrink.
-pub static WIDGETS: &[&dyn DockWidget] = &[&Clock, &Pomodoro, &Music];
+pub static WIDGETS: &[&dyn DockWidget] = &[&Clock, &Pomodoro, &Music, &Lyrics];
 
 /// Where a widget sits (`dock.<name>` in the config).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,7 +76,8 @@ impl Place {
     }
 }
 
-/// Where the widgets on the lava gather (`dock.anchor`).
+/// Where on the lava a widget sits (`dock.anchor.<name>`). Widgets that
+/// share an anchor stack there; different anchors spread across the lamp.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Anchor {
@@ -88,7 +93,7 @@ pub enum Anchor {
 
 impl Anchor {
     /// Cycle order: the centre, then once round the edge, clockwise.
-    const ALL: [Anchor; 7] = [
+    pub const ALL: [Anchor; 7] = [
         Anchor::Center,
         Anchor::Top,
         Anchor::TopRight,
@@ -139,20 +144,42 @@ impl Anchor {
     }
 }
 
-/// The `[dock]` config section: the anchor, and each widget's place by
-/// name. Widgets add their own key just by being in [`WIDGETS`].
+/// The `[dock]` config section: each widget's place by name, and its
+/// anchor on the lava (`anchor = { clock = "top", … }`). Widgets add their
+/// own keys just by being in [`WIDGETS`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DockSettings {
-    pub anchor: Anchor,
+    pub anchor: Anchors,
     #[serde(flatten)]
     pub places: BTreeMap<String, Place>,
+}
+
+/// `dock.anchor`: one per widget. Files from before v1.2 have a single
+/// anchor for all of them (`anchor = "top-left"`), which still loads (and
+/// is written back per widget at the next save).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Anchors {
+    All(Anchor),
+    Each(BTreeMap<String, Anchor>),
+}
+
+impl Default for Anchors {
+    fn default() -> Self {
+        Self::Each(
+            WIDGETS
+                .iter()
+                .map(|w| (w.name().to_owned(), w.default_anchor()))
+                .collect(),
+        )
+    }
 }
 
 impl Default for DockSettings {
     fn default() -> Self {
         Self {
-            anchor: Anchor::default(),
+            anchor: Anchors::default(),
             places: WIDGETS
                 .iter()
                 .map(|w| (w.name().to_owned(), w.default_place()))
@@ -171,6 +198,31 @@ impl DockSettings {
 
     pub fn set(&mut self, widget: &dyn DockWidget, place: Place) {
         self.places.insert(widget.name().to_owned(), place);
+    }
+
+    pub fn anchor(&self, widget: &dyn DockWidget) -> Anchor {
+        match &self.anchor {
+            Anchors::All(anchor) => *anchor,
+            Anchors::Each(each) => each
+                .get(widget.name())
+                .copied()
+                .unwrap_or_else(|| widget.default_anchor()),
+        }
+    }
+
+    pub fn set_anchor(&mut self, widget: &dyn DockWidget, anchor: Anchor) {
+        self.split_anchors();
+        if let Anchors::Each(each) = &mut self.anchor {
+            each.insert(widget.name().to_owned(), anchor);
+        }
+    }
+
+    /// An old single anchor becomes one per widget (each gets it).
+    pub fn split_anchors(&mut self) {
+        if let Anchors::All(all) = self.anchor {
+            self.anchor =
+                Anchors::Each(WIDGETS.iter().map(|w| (w.name().to_owned(), all)).collect());
+        }
     }
 }
 
@@ -254,9 +306,6 @@ pub struct Look {
 pub struct ChipText {
     pub text: String,
     pub ink: Role,
-    /// Which homeless widget gets the chip: the highest rank wins (a
-    /// running pomodoro 2 outranks the clock 1).
-    pub rank: u8,
 }
 
 pub trait DockWidget: Sync {
@@ -265,6 +314,19 @@ pub trait DockWidget: Sync {
 
     fn default_place(&self) -> Place {
         Place::Side
+    }
+
+    /// Where it sits on the lava until moved (`l`).
+    fn default_anchor(&self) -> Anchor {
+        Anchor::Center
+    }
+
+    /// How much it matters right now: the higher, the longer it keeps its
+    /// size, and the later it's dropped to the chip row (ties: earlier in
+    /// [`WIDGETS`] wins). Clock 1; a running pomodoro 3; music 2 while
+    /// playing.
+    fn rank(&self, _model: &Model) -> u8 {
+        1
     }
 
     /// The forms this widget offers in `place` (side or overlay), most
@@ -330,15 +392,25 @@ mod tests {
 
     #[test]
     fn settings_round_trip_through_toml() {
-        let mut d = DockSettings {
-            anchor: Anchor::TopLeft,
-            ..DockSettings::default()
-        };
+        let mut d = DockSettings::default();
         d.set(&Clock, Place::Overlay);
+        d.set_anchor(&Clock, Anchor::TopLeft);
         let text = toml::to_string(&d).unwrap();
-        assert!(text.contains("anchor = \"top-left\""), "{text}");
+        assert!(text.contains("clock = \"top-left\""), "{text}");
         assert!(text.contains("clock = \"overlay\""), "{text}");
         assert_eq!(toml::from_str::<DockSettings>(&text).unwrap(), d);
         assert_eq!(d.place(&Pomodoro), Place::Side);
+        assert_eq!(d.anchor(&Pomodoro), Anchor::Center);
+        assert_eq!(d.anchor(&Music), Anchor::TopLeft);
+        // A file from before per-widget anchors: one for all.
+        let old: DockSettings = toml::from_str("anchor = \"bottom\"").unwrap();
+        assert_eq!(old.anchor(&Clock), Anchor::Bottom);
+        assert_eq!(old.anchor(&Music), Anchor::Bottom);
+        let mut split = old.clone();
+        split.set_anchor(&Clock, Anchor::Top);
+        assert_eq!(
+            (split.anchor(&Clock), split.anchor(&Pomodoro)),
+            (Anchor::Top, Anchor::Bottom)
+        );
     }
 }

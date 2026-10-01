@@ -28,7 +28,9 @@ use ratatui::crossterm::{execute, queue, terminal};
 use ratatui::layout::Rect;
 use std::path::Path;
 
-pub use model::{LocalTime, Model, Overlay, Picker, PickerKind, TOAST_FADE, TOAST_TIME, Toast};
+pub use model::{
+    Fetch, LocalTime, Model, Overlay, Picker, PickerKind, TOAST_FADE, TOAST_TIME, Toast,
+};
 
 use crate::clock::ClockTime;
 use crate::config::Session;

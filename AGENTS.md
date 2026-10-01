@@ -318,37 +318,61 @@ numbers); `docs/design.md` is the layout/visual contract.
                 `WidgetForm`s most preferred first, with `Needs` (huge /
                 tall terminal) and `fill`; `draw(model, form, rect, Look)`;
                 `chip(model)` → one-line fallback with a rank) + `WIDGETS`
-                registry (`clock.rs`, `pomodoro.rs`, `music.rs`). `Place` (side /
-                overlay / off), `Anchor`. Widgets are stateless views of the
-                `Model`. Seconds never on the lava; date forms need tall.
+                registry (`clock.rs`, `pomodoro.rs`, `music.rs`, `lyrics.rs`). `Place` (side /
+                overlay / off), `Anchor` (per widget:
+                `DockSettings::anchor(w)`; an old single `dock.anchor`
+                loads for all). `rank(model)` (clock 1, pomodoro 3/2/0,
+                music 2/1/0, lyrics 2/1/0 with lines) decides shrink, drop and chip order.
+                Widgets are stateless views of the `Model`. Seconds never
+                on the lava; date forms need tall.
 - `media/`    — now playing (platform-neutral; backends behind `cfg`):
                 `MediaSource` (`snapshot()` a short lock, `send(Command)`
                 queued + applied optimistically, `capabilities()`),
-                `detect()` (macOS: `Polled` over the Spotify AppleScript
-                backend, which never launches Spotify and can't
-                shuffle/repeat; elsewhere `Unavailable(Unsupported)`),
+                `detect()` picks a backend: macOS `spotify.rs` (one
+                long-lived `osascript` fed requests on stdin, never
+                launches Spotify, can't shuffle/repeat), Linux `mpris.rs`
+                (any MPRIS player via zbus, Spotify first), Windows
+                `smtc.rs` (system media controls, Spotify first; no
+                volume/art/URIs); `capabilities()` says what each can do,
                 `FakeSource` for tests, `art.rs`: `ArtLoader` (cover fetch
                 https-only on its thread, disk cache in
                 `$XDG_CACHE_HOME/lavatui/art`, decoded to 64 px `Art`,
                 `scaled(w, h)` box filter). The app holds a source only
-                while the music widget is placed: `app/model/music.rs`
+                while the music or lyrics widget is placed (`media_on`): `app/model/music.rs`
                 (`Music`: source, cover loader, latest snapshot, the `A`
                 player-keys mode; `sync` once a frame and after keys;
                 `connect_with` injects a fake in tests). `spotify_web/`:
                 Web API client for the library UI to come; its Client ID
                 is `Settings::spotify_client_id` (`[spotify] client_id`,
-                else `LAVATUI_SPOTIFY_CLIENT_ID`). `lyrics/`: LRCLIB client
-                + cache for the lyrics widget to come.
+                else `LAVATUI_SPOTIFY_CLIENT_ID`).
+- `lyrics/`   — synced lyrics (pure, no terminal): `lrc.rs` (forgiving
+                LRC parser: multi-stamp lines, `[offset:]`, gaps, word tags
+                stripped), `sync.rs` (`Syncer`: extrapolated `Playback` →
+                `Cursor` line/progress, 150 ms lead, jitter hold, seek
+                flag), `client.rs` (`Lrclib` over an `Http` trait: ureq in
+                the app, `client::tests::Mock` in tests; `/api/get` then
+                `/api/search`), `cache.rs` (JSON per track, negative
+                results too, TTLs, stale used offline), `worker.rs`
+                (`LyricsService`: thread, newest request wins, retries).
+                `app/model/lyrics.rs` (`LyricsState`): the service only
+                while the widget is placed (the opt-in), request on track
+                change, poll + sync each frame (`sync_music` calls it),
+                fade timing, `wake` for frozen frames; `start_with` injects
+                a mock in tests.
 - `ui/`       — the only terminal-facing code. `layout.rs`: the pure
                 `layout(area, &LayoutInput) -> Layout` of design §1 (the lamp
-                rect, right/bottom panel = `Stack` of side widgets, `on_lava`
-                = `Stack` of overlay widgets at the anchor (≤ 60 % × 50 % of
-                the lamp, backing ≤ 35 % of its area, lamp ≥ 28×10, clear of
-                toast/chip rows), chip for the top-ranked widget with no
-                room, status row, toast row). `LayoutInput.dock` is one
-                `DockItem` (place, forms, chip width/rank) per widget;
-                `first_fit` tries form combinations in hide order (last
-                widget shrinks first; date → face size → stack → chip). `keymap.rs`: the single `KEYMAP` table (its
+                rect; `panel` = `Stack` of side widgets in the best of
+                column / strip (A ≥ 3) / two columns (≥ 200 cols) / wrap
+                (portrait), scored by (dropped, forms by rank), ties to the
+                column; `on_lava` = one `Stack` per anchor (each ≤ 60 % ×
+                50 % of the lamp, backings apart and ≤ 35 % of it together,
+                lamp ≥ 28×10, clear of toast/chip rows); `chips` =
+                `ChipRow` of homeless widgets' chips, lowest rank dropped
+                first; status row, toast row). `LayoutInput.dock` is one
+                `DockItem` (place, anchor, forms, chip width, rank) per
+                widget; `fit_dropping` tries form combinations with the
+                least important widget changing fastest, then drops it
+                when nothing fits. `bench_layout` (ignored) times it. `keymap.rs`: the single `KEYMAP` table (its
                 `Section::Music` rows are the player keys, a mode of their
                 own: `InputMode::Player`) that drives
                 both dispatch (`action_for(event, InputMode)`) and the help
@@ -393,7 +417,9 @@ never drift apart; there is no direct crossterm dependency.
 - **A dock widget** (e.g. now-playing): one module implementing
   `dock::DockWidget` — `name` (also its config key `dock.<name>`),
   `default_place` (new widgets: `Place::Off`, so the default screen
-  doesn't change), `forms(model, place)` (fixed sizes, most preferred
+  doesn't change), `default_anchor` (where on the lava; lyrics: bottom
+  centre), `rank(model)` (how much it matters right now: 2 while it has
+  something live to show puts it above the clock), `forms(model, place)` (fixed sizes, most preferred
   first; `WidgetForm::fixed` / `::fill`, `variant` is yours to tell them
   apart in `draw`), `draw` (inside the rect only; colours via
   `model.theme`; `look.align` for forms narrower than the rect; spaces

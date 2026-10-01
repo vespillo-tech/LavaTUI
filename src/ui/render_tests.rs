@@ -89,7 +89,7 @@ fn picture(m: &Model, buf: &Buffer) -> String {
     let bg = m.theme.role(Role::Bg);
     let view = m.layout.lamp;
     // The widgets on the lava sit on a cleared backing: print them.
-    let lava = m.layout.on_lava.as_ref().map(|s| s.rect);
+    let lava: Vec<Rect> = m.layout.on_lava.iter().map(|s| s.rect).collect();
     let mut out = String::new();
     for y in 0..buf.area.height {
         let mut line = String::new();
@@ -97,7 +97,7 @@ fn picture(m: &Model, buf: &Buffer) -> String {
             let cell = &buf[(x, y)];
             let pos = (x, y).into();
             let lamp = view.is_some_and(|v| v.contains(pos))
-                && lava.is_none_or(|l| !l.contains(pos))
+                && lava.iter().all(|l| !l.contains(pos))
                 && cell.bg != bg;
             line.push_str(if lamp { "~" } else { cell.symbol() });
         }
@@ -150,7 +150,7 @@ fn scenarios() -> Vec<(&'static str, Setup)> {
             m.update(Action::Place("clock"), t);
             m.toast = None;
         }),
-        ("both on the lava, top left, running", |m, t| {
+        ("both on the lava, pomodoro top left, running", |m, t| {
             m.update(Action::Place("clock"), t);
             m.update(Action::Place("pomodoro"), t);
             for _ in 0..6 {
@@ -181,7 +181,66 @@ fn scenarios() -> Vec<(&'static str, Setup)> {
             m.update(Action::ToggleMinimal, t);
             m.toast = None;
         }),
+        ("lyrics beside, a long line wrapped", |m, t| {
+            lyrics(m, t, 1, 23)
+        }),
+        ("lyrics on the lava, bottom", |m, t| lyrics(m, t, 2, 15)),
+        ("lyrics on the lava in a gap", |m, t| lyrics(m, t, 2, 34)),
     ]
+}
+
+const LRC: &str = "[00:05.00]Wax rises slowly through the amber light\\n\
+    [00:10.00]Cooling at the top it drifts\\n[00:14.00]And falls\\n\
+    [00:20.00]Every blob that ever broke away comes home again to the warm pool below\\n\
+    [00:30.00]\\n[00:40.00]Slow rise";
+
+/// The lyrics widget on a fake player `secs` into the song, its lines
+/// already fetched (from a mock LRCLIB), placed by `presses` of `y`.
+fn lyrics(m: &mut Model, t: Instant, presses: usize, secs: u64) {
+    use crate::lyrics::LyricsService;
+    use crate::lyrics::client::Lrclib;
+    use crate::lyrics::client::tests::{Mock, ok};
+    let track = Track {
+        id: "fake:1".into(),
+        name: "Slow Rise".into(),
+        artist: "The Paraffins".into(),
+        album: "Heat Rises".into(),
+        duration: std::time::Duration::from_secs(214),
+        artwork_url: String::new(),
+    };
+    let fake = FakeSource::new(
+        Snapshot {
+            player: Some("Spotify".into()),
+            track: Some(std::sync::Arc::new(track)),
+            position: std::time::Duration::from_secs(secs),
+            ..Snapshot::new(Status::Playing, t)
+        },
+        Vec::new(),
+    );
+    m.music.connect_with(
+        move || Box::new(fake.clone()),
+        || ArtLoader::preloaded(COVER, Art::solid(Rgb(200, 120, 40))),
+    );
+    let body = format!(
+        r#"{{"trackName":"Slow Rise","artistName":"The Paraffins","duration":214.0,"instrumental":false,"syncedLyrics":"{LRC}"}}"#
+    );
+    m.lyrics.start_with(move || {
+        let mock = Mock::new([ok(&body)]);
+        LyricsService::spawn(Lrclib::with_http(mock, "http://test"), None, Vec::new()).ok()
+    });
+    for _ in 0..presses {
+        m.update(Action::Place("lyrics"), t);
+    }
+    let area = m.layout.area;
+    for _ in 0..1000 {
+        m.tick(t, area, local());
+        if m.lyrics.cursor.is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert!(m.lyrics.cursor.is_some(), "lyrics never arrived");
+    m.toast = None;
 }
 
 const COVER: &str = "https://i.example/cover";
@@ -496,8 +555,8 @@ fn minimal_chip_tells_focus_from_break() {
         for rows in (5..=90).step_by(5) {
             let (mf, bf) = scene(cols, rows, 7, focus);
             let (mb, bb) = scene(cols, rows, 7, rest);
-            assert_eq!(mf.layout.chip.is_some(), mb.layout.chip.is_some());
-            if mf.layout.chip.is_none() {
+            assert_eq!(mf.layout.chips.is_some(), mb.layout.chips.is_some());
+            if mf.layout.chips.is_none() {
                 continue;
             }
             seen += 1;

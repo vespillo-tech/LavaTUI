@@ -1,9 +1,9 @@
 //! **synthwave**: a 1986 sunset. The liquid is a dusk sky glowing toward a
 //! horizon, over a perspective grid floor in the accent colour. Wax blobs
-//! are retro suns: gold at the top shading to pink below, banded by the
-//! classic widening stripes, with a bright neon rim and a soft halo.
-//! The wax is opaque: the stripes are a deeper shade of the sun, not cut
-//! out, and the backdrop and halo only ever paint the liquid around it.
+//! are retro suns: one smooth gradient, gold at the top shading to pink
+//! below, with a bright neon rim and a soft halo. The wax is opaque and
+//! unbanded: no stripes (dark ones read as the sky showing through), and
+//! the backdrop and halo only ever paint the liquid around it.
 //! Without blending the grid and rims keep the look in flat colours, and
 //! NO_COLOR keeps solid wax over the grid.
 
@@ -46,7 +46,7 @@ fn pixel(c: &Canvas, x: usize, y: usize, scroll: f32) -> Option<Color> {
     let neon = Ink::Wax(0.1 + 0.9 * heat);
 
     if wax {
-        return Some(sun_pixel(c, y, v, heat, rim, neon));
+        return Some(sun_pixel(c, v, heat, rim, neon));
     }
     if !c.theme.blends() {
         return (floor_line(c, x, y, scroll) >= 0.5)
@@ -61,21 +61,14 @@ fn pixel(c: &Canvas, x: usize, y: usize, scroll: f32) -> Option<Color> {
     )
 }
 
-/// A wax pixel: neon on the rim, else the sun's gradient, a deeper shade
-/// on the stripes. Only wax inks, so nothing behind the wax shows through.
-fn sun_pixel(c: &Canvas, y: usize, v: f32, heat: f32, rim: bool, neon: Ink) -> Color {
+/// A wax pixel: neon on the rim, else the sun's gradient. Only wax inks,
+/// so nothing behind the wax shows through.
+fn sun_pixel(c: &Canvas, v: f32, heat: f32, rim: bool, neon: Ink) -> Color {
     let theme = c.theme;
-    let body = sun(v, heat);
-    match (rim, stripe(y, v)) {
-        (true, _) if theme.blends() => theme.paint(neon).scale(1.35).color(),
-        (true, _) => theme.color(neon),
-        (false, true) if theme.blends() => theme
-            .paint(Ink::Wax(body))
-            .mix(Ink::Wax(0.0), 0.5)
-            .scale(0.6)
-            .color(),
-        (false, true) => theme.color(Ink::Wax((body - 0.45).max(0.0))),
-        (false, false) => theme.color(Ink::Wax(body)),
+    match rim {
+        true if theme.blends() => theme.paint(neon).scale(1.35).color(),
+        true => theme.color(neon),
+        false => theme.color(Ink::Wax(sun(v, heat))),
     }
 }
 
@@ -102,17 +95,9 @@ fn backdrop<'t>(c: &'t Canvas, x: usize, y: usize, v: f32, scroll: f32) -> crate
 }
 
 /// Retro-sun gradient: gold at the top of the lamp, pink toward the floor,
-/// nudged by temperature.
+/// nudged by temperature. Fine steps, so a big blob shows no flat bands.
 fn sun(v: f32, heat: f32) -> f32 {
-    quantise(0.65 * (1.0 - v) + 0.35 * heat, 24.0)
-}
-
-/// The sun's stripes, widening toward the bottom of the lamp but
-/// stopping short of the pool.
-fn stripe(y: usize, v: f32) -> bool {
-    const PERIOD: usize = 6;
-    let gap = ((v - 0.35) / 0.55 * 4.0).floor();
-    v < 0.88 && gap >= 1.0 && (y % PERIOD) < gap as usize
+    quantise(0.65 * (1.0 - v) + 0.35 * heat, 64.0)
 }
 
 /// How strongly pixel (`x`, `y`) lies on a floor grid line, 0..1. Lines
@@ -149,7 +134,7 @@ mod tests {
 
     use super::*;
     use crate::render::dither256;
-    use crate::sim::Sample;
+    use crate::sim::{Field, Sample, World};
     use crate::theme::{ColorDepth, Palette, Theme};
 
     const DEPTHS: [ColorDepth; 4] = [
@@ -159,8 +144,8 @@ mod tests {
         ColorDepth::None,
     ];
 
-    /// Discs of wax over every backdrop band (sky, horizon, floor, the
-    /// stripes) and a pool along the bottom, with soft edges.
+    /// Discs of wax over every backdrop band (sky, horizon, floor) and a
+    /// pool along the bottom, with soft edges.
     fn field(width: usize, height: usize) -> Vec<Sample> {
         let blobs = [(0.3, 0.25, 0.2), (0.7, 0.55, 0.25), (0.45, 0.8, 0.18)];
         let mut out = Vec::with_capacity(width * height);
@@ -203,20 +188,90 @@ mod tests {
         buf
     }
 
+    /// Largest step, per RGB channel, between vertically adjacent body
+    /// pixels: the gradient takes ≤ 8 a pixel, the sim's temperature ≤ 16
+    /// more; a stripe or a backdrop pixel is a jump of 60+.
+    const SMOOTH: i32 = 20;
+
+    /// Wax bodies (inside the rim) in truecolour are one smooth gradient:
+    /// down each column, neighbouring pixels differ by at most [`SMOOTH`]
+    /// per channel (a stripe, a band or a backdrop pixel is a jump), and
+    /// with `monotone` (temperature constant down a column) a colour, once
+    /// left, never comes back. Returns how many pixel pairs it compared.
+    fn assert_smooth(c: &Canvas, monotone: bool, what: &str) -> usize {
+        let rgb = |x, y| match pixel(c, x, y, 0.0) {
+            Some(Color::Rgb(r, g, b)) => [r, g, b].map(i32::from),
+            other => panic!("{x},{y}: {other:?} ({what})"),
+        };
+        let body = |x, y| c.at(x, y).density >= SURFACE && !is_edge(c, x, y);
+        let mut pairs = 0;
+        for x in 0..c.width {
+            let mut seen: Vec<[i32; 3]> = Vec::new();
+            for y in 0..c.height {
+                if !body(x, y) {
+                    seen.clear();
+                    continue;
+                }
+                let here = rgb(x, y);
+                if let Some(&above) = seen.last() {
+                    let step = (0..3).map(|i| (here[i] - above[i]).abs()).max().unwrap();
+                    assert!(
+                        step <= SMOOTH,
+                        "band at {x},{y}: {above:?} -> {here:?} ({what})"
+                    );
+                    pairs += 1;
+                    if monotone && here != above {
+                        assert!(
+                            !seen.contains(&here),
+                            "stripe at {x},{y}: {here:?} ({what})"
+                        );
+                    }
+                }
+                seen.push(here);
+            }
+        }
+        pairs
+    }
+
     /// Wax is opaque: repainting everything the backdrop is made of (the
     /// liquid, bg and the accent grid) and scrolling the grid changes no
     /// wax pixel, at every depth and palette, and no wax pixel is a hole.
+    /// In truecolour every body is a smooth unbanded gradient, here and in
+    /// big real frames.
     #[test]
     fn backdrop_never_shows_inside_the_wax() {
         let area = Rect::new(0, 0, 48, 20);
         let (width, height) = (48, 40);
         let samples = field(width, height);
         let wax = |x: usize, y: usize| samples[y * width + x].density >= SURFACE;
-        assert!(
-            (0..height)
-                .any(|y| (0..width)
-                    .any(|x| wax(x, y) && stripe(y, (y as f32 + 0.5) / height as f32)))
-        );
+        // Big frames, where bands are widest: the synthetic discs and the
+        // real sim at 250×70 cells.
+        let (big_w, big_h) = (250, 140);
+        let discs = field(big_w, big_h);
+        let mut world = World::new(2, big_w as f64 / big_h as f64);
+        world.prewarm(1200, 1.0 / 120.0);
+        let mut sim = Field::default();
+        sim.prepare(&world, 1.0);
+        let mut real = vec![Sample::default(); big_w * big_h];
+        sim.fill(&mut real, big_w, big_h);
+        for palette in Palette::all() {
+            let theme = Theme::new(palette, ColorDepth::TrueColor);
+            if !theme.blends() {
+                continue; // `ansi`: the terminal's own 16 colours, no gradient
+            }
+            for (samples, monotone, what) in [(&discs, true, "discs"), (&real, false, "sim")] {
+                let canvas = Canvas {
+                    area: Rect::new(0, 0, big_w as u16, (big_h / 2) as u16),
+                    samples,
+                    width: big_w,
+                    height: big_h,
+                    theme: &theme,
+                    time: 0.0,
+                };
+                let what = format!("{what} {}", palette.name);
+                assert!(assert_smooth(&canvas, monotone, &what) > 1000, "{what}");
+            }
+        }
         for palette in Palette::all() {
             for depth in DEPTHS {
                 let plain = Theme::new(palette, depth);

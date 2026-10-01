@@ -31,8 +31,10 @@ pub enum Action {
     PalettePicker,
     /// Move the dock widget of this name on: side → lava → off → side.
     Place(&'static str),
-    /// Move the widgets on the lava to the next spot.
+    /// Move the focused widget on the lava to the next spot.
     NextAnchor,
+    /// Focus the next widget on the lava (for `l`).
+    NextLavaWidget,
     /// `A`: the player keys on (in them: off again).
     PlayerKeys,
     /// One of the player keys (only while they're on).
@@ -218,9 +220,15 @@ pub static KEYMAP: &[Row] = &[
     row(Widgets, "A", "music keys", &[(K('A'), A::PlayerKeys)]),
     row(
         Widgets,
-        "l",
-        "move lava widgets",
-        &[(K('l'), A::NextAnchor)],
+        "y",
+        "lyrics · lrclib.net",
+        &[(K('y'), A::Place("lyrics"))],
+    ),
+    row(
+        Widgets,
+        "l L",
+        "move, pick lava widget",
+        &[(K('l'), A::NextAnchor), (K('L'), A::NextLavaWidget)],
     ),
     // m ? q first: the small full-screen help leads with them (§4.3).
     row(App, "m", "minimal", &[(K('m'), A::ToggleMinimal)]),

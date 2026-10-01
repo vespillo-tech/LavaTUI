@@ -76,9 +76,9 @@ the lamp (§1.4).
 |---|---|---|
 | **Lamp** | always (if `cols < 4` or `rows < 2`, the screen is painted `bg`, nothing else) | fills what the status bar and panel leave (§2.1) |
 | **Status bar** | `rows ≥ 14 && cols ≥ 30 && status_bar_on` and not minimal mode | segments drop per §4.1 |
-| **Panel** | some widget is placed `side` and the placement algorithm (§1.4) finds a slot | face variant = largest that fits the panel's inner rect |
-| **Widgets on the lava** | some widget is placed `overlay`, not Micro, the lamp is ≥ 28 × 10, and their smallest forms fit (§4.6) | largest forms that fit in 60 % of the lamp's width and half its height, backing included ≤ 35 % of its area |
-| **Chip** | a widget with no room where it was put (`side` with no panel, `overlay` that didn't fit), `cols ≥ 20 && rows ≥ 8` | the highest-ranked such widget: the pomodoro while one is running (`▸`) or paused (`‖`), `break` before a break's time, else the clock |
+| **Panel** | some widget is placed `side` and an arrangement (§1.4) fits at least the most important one | column, strip, wrap or two columns (§1.4); forms by rank |
+| **Widgets on the lava** | some widget is placed `overlay`, not Micro, the lamp is ≥ 28 × 10, and the most important one's smallest form fits (§4.6) | one stack per anchor; each ≤ 60 % of the lamp's width and half its height, all backings together ≤ 35 % of its area, never touching |
+| **Chip row** | widgets with no room where they were put (`side` with no panel, dropped from the panel or the lava), `cols ≥ 20 && rows ≥ 8` | their chips in registry order, ` · ` apart, the lowest-ranked left out until the row fits the lamp's width (§4.6) |
 | **Date line** | in panel, `rows ≥ 36`, and the panel still fits | `thu 1 oct`, dim, lowercase |
 | **Pomodoro label** `focus` / `break` | panel inner width ≥ 18 | — |
 | **Cycle dots** `●●○○` | panel inner width ≥ 22 | right-aligned on the label line |
@@ -91,15 +91,16 @@ go at the top). The lamp is never hidden.
 1. Extended key hints (dropped in the §4.1 order until only `? help` is left, then that too)
 2. Date line
 3. Cycle dots, then the pomodoro phase label
-4. Clock face size (XL → L → M → S → `text`). With several widgets in
-   one place, the last one shrinks first (on the lava: the pomodoro's
-   3 → 2 → 1 rows before the face shrinks).
-5. Panel, and the widgets on the lava (→ collapse into the chip;
-   nothing is lost but size)
+4. Widget size (clock face XL → L → M → S → `text`, the pomodoro's
+   3 → 2 → 1 rows, music's cover → card → line). With several widgets in
+   one place, the lowest-ranked shrinks first (§4.6: an idle pomodoro
+   0 < the clock 1 < playing music 2 < a running pomodoro 3; ties: the
+   later in the registry).
+5. Widgets, one at a time, lowest rank first, from the panel and the
+   lava into the chip row (nothing is lost but size)
 6. Status bar
-7. Clock chip (a running pomodoro chip outranks it)
-8. Pomodoro chip
-9. ~~Lamp~~ — never
+7. Chips, lowest rank first
+8. ~~Lamp~~ — never
 
 ### 1.4 Panel placement algorithm
 
@@ -110,12 +111,38 @@ panel_h   = face_h + (date? 2) + 2 + 3             // face, gap, label/time/bar
                                                    // (each side widget's height,
                                                    // 2 rows between; pomodoro alone: 3)
 
-1. A ≥ 1.0 → right panel, flush with the right edge and vertically
-   centred, if the lamp keeps ≥ 60 % of cols and ≥ 24 cols.
-2. A < 1.0 → bottom panel (min(36, content_cols) wide, centred, one blank
-   row below the lamp) if the lamp keeps ≥ 60 % of rows and ≥ 10 rows.
-3. Otherwise no panel → chip.
+1. A ≥ 1.0 → column: right panel, flush with the right edge and
+   vertically centred, if the lamp keeps ≥ 60 % of cols and ≥ 24 cols.
+2. A < 1.0 → column: bottom panel (min(36, content_cols) wide, centred,
+   one blank row below the lamp) if the lamp keeps ≥ 60 % of rows and
+   ≥ 10 rows.
+3. Otherwise no panel → chip row.
 ```
+
+**Flow (Dock v2).** The column is not the only arrangement any more.
+Each candidate is fitted the same way (the odometer of §1.3: forms by
+rank, dropping the least important widget only when not even the
+smallest forms fit) and scored by (widgets dropped, then each widget's
+form by rank: larger is better). The best wins; **ties go to the
+column**, so wherever the column already shows everything at its best
+nothing changes (the default 80 × 24, 120 × 36, 34 × 56 … are cell for
+cell as before).
+
+| arrangement | when it's a candidate | shape |
+|---|---|---|
+| column | always (right if A ≥ 1, below if A < 1) | as above |
+| strip | wide-short: A ≥ 3 | the widgets side by side under the lamp (registry order, 3 cols apart, centred in their row's height), wrapping into rows 1 apart if needed, the block centred, one blank row above; the lamp keeps ≥ 60 % of rows and ≥ 10 |
+| two columns | `cols ≥ 200`, A ≥ 1 | right of the lamp, split in registry order where the taller column is shortest, 3 cols apart; wins ties too when the single column would be taller than half the screen |
+| wrap | portrait (A < 1) | rows across the whole width under the lamp, rows 2 apart; a fill form alone in its row takes up to 34 cols |
+
+So 160 × 22 (A ≈ 3.8) now puts the clock (blocks L with seconds, which
+the 36-col column couldn't hold) and the pomodoro side by side in a
+strip under a full-width lamp; 250 × 70 with music on goes to two
+columns (clock + pomodoro | music), a single column being taller than
+half the screen; a cramped portrait (70 × 40 with music) wraps the
+pomodoro and music into one row instead of shrinking music to its
+compact form. Cost: ~1 µs a frame by default, ≤ 60 µs with four widgets
+anywhere (`bench_layout`).
 
 Below 200 cols the panel's inner width is at most 36 − 2 = 34. From 200
 cols up the panel grows only as far as the face it holds needs, up to
@@ -730,30 +757,58 @@ toasts: no flash, no bell.
 
 ### 4.6 The widget dock
 
-The clock, the pomodoro and music are *widgets* (`src/dock/`). Each has
-a place, persisted as `dock.<name>`, cycled by its key: `t` the clock,
-`f` the pomodoro (`focus`), `a` music (`audio`), each `side → overlay →
-off → side`. A toast says
-where it went (`clock · on the lava`), adding `· no room` when the
-layout couldn't fit it there (it's in the chip meanwhile) and `· not in
-minimal` for `side` in minimal mode.
+The clock, the pomodoro, music and lyrics are *widgets* (`src/dock/`). Each has a place, persisted as `dock.<name>`, cycled
+by its key: `t` the clock, `f` the pomodoro (`focus`), `a` music
+(`audio`), each `side → overlay → off → side`. A toast says where it
+went (`clock · on the lava`), adding `· no room` when the layout couldn't
+fit it there (it's in the chip row meanwhile) and `· not in minimal` for
+`side` in minimal mode.
 
-* **side**: stacked in the panel (§1.4, §4.5), 2 rows apart, in
-  registry order (clock, pomodoro, music). The default for the clock and
-  the pomodoro, so the default screen is the v1 panel, cell for cell;
-  music is `off` by default.
-* **overlay**: stacked on the lava, 1 row apart, at the anchor
-  (`dock.anchor`; `l` moves it: centre → top → top right → bottom
-  right → bottom → bottom left → top left). Widgets line up by the
-  anchor: centred, or flush left / right at the sides. Limits, so the
-  lamp stays the hero: the lamp must be ≥ 28 × 10; the stack ≤ 60 % of
-  the lamp's width and ≤ half its height; with its backing ≤ 35 % of the
-  lamp's area; inset (≥ 5 cols / 3 rows, more on big lamps) so the
-  backing never reaches the toast row or the chip's row. Forms shrink in
-  the hide order first; when not even the smallest fit, the widgets go to
-  the chip. Seconds are never shown on the lava (they'd be the one thing
-  ticking over the wax); the date line comes along in tall terminals.
+* **side**: in the panel (§1.4, §4.5), in registry order (clock,
+  pomodoro, music): a column 2 rows apart, or a strip / wrap / two
+  columns where that suits them better (§1.4). The default for the
+  clock and the pomodoro, so the default screen is the v1 panel, cell
+  for cell; music is `off` by default.
+* **overlay**: on the lava at the widget's own **anchor**
+  (`dock.anchor.<name>`): centre, top, top right, bottom right, bottom,
+  bottom left, top left. Widgets sharing an anchor stack there, 1 row
+  apart, lined up by it (centred, or flush left / right at the sides);
+  different anchors make separate stacks that spread across the lamp.
+  Defaults: the clock and the pomodoro centre (so both on the lava stack
+  as in v1.1), music top left, lyrics bottom centre. Limits,
+  so the lamp stays the hero: the lamp ≥ 28 × 10; each stack ≤ 60 % of
+  the lamp's width and ≤ half its height; their backings never touch
+  each other and together cover ≤ 35 % of the lamp; inset (≥ 5 cols /
+  3 rows, more on big lamps) so no backing reaches the toast row or the
+  chip row. Forms shrink by rank first; when not even the smallest fit,
+  the lowest-ranked widget goes to the chip row and the rest are tried
+  again. Seconds are never shown on the lava; the date line comes along
+  in tall terminals.
 * **off**: not drawn (a running pomodoro still toasts and flashes).
+
+**Moving them.** `l` moves one widget on the lava to its next anchor
+(centre → top → top right → bottom right → bottom → bottom left → top
+left): the one last put on the lava (with `t`/`f`/`a`) or picked with
+`L`, else the first there. Toasts: `pomodoro · top right` (`· no room`
+if it didn't fit there), `l moves clock · now centre`, `nothing on the
+lava · t f a put widgets there`. Chosen over a dock picker sheet: two
+keys, no new overlay, and every press says which widget moved and where.
+
+**Ranks.** Each widget has a rank, recomputed every frame
+(`DockWidget::rank`): the clock 1; the pomodoro 3 running, 2 paused,
+0 idle; music 2 playing, 1 paused, 0 otherwise; lyrics the same, but only
+with lines to show (a message is 0). Ties go to the earlier widget in the registry. The rank decides
+everything about room: who shrinks first, who leaves for the chip row
+first, which chips stay, and in the panel the score of each arrangement.
+
+**The chip row.** Widgets with no room where they were put (side ones
+with no panel, so always in minimal mode, or dropped from the panel or
+the lava) show their one-line chips in a single row over the lamp's
+bottom-right corner, on `bg` with a 1-cell pad, in registry order, a dim
+` · ` between them: ` 14:32 · ▸ 18:24 · ▶ Deliver Me – Sarah Brightman `.
+When they don't all fit the lamp's width the lowest-ranked go first; a
+chip too wide for the lamp on its own is never shown. With only the
+clock homeless it is the v1 corner chip, cell for cell.
 
 **The backing.** Over the lava the widgets sit on a soft pool of liquid,
 not a box: under the stack and half a row around it the lamp is veiled
@@ -772,10 +827,6 @@ cutout, exact to the liquid's index.
 Chrome rules still hold: an overlay sheet (help, picker) touching the
 stack's backing hides the whole stack (§8.2); the face picker sits on
 whichever side keeps the panel and the stack clear when it can.
-
-A chip is only offered when it fits the lamp's width (with its pads); a
-wider one (a long track name in a tiny terminal) passes to the next
-widget in rank.
 
 #### Music (now playing)
 
@@ -848,6 +899,78 @@ registry), `‖ …` rank 1 while paused, none otherwise.
 **Frozen lamp:** while music is placed, the idle loop looks at the player
 at least once a second, so a track change or a pause made in Spotify
 shows within a second.
+
+#### Lyrics
+
+`src/dock/lyrics.rs`, state in `src/app/model/lyrics.rs`, lookups in
+`src/lyrics/` (LRCLIB client, LRC parser, sync, disk cache, worker).
+Key `y`: `off → side → overlay → off`. **Off by default, and placing it
+is the opt-in**: while it's placed, each new track's title, artist,
+album and length go to [lrclib.net](https://lrclib.net) (free, no key,
+`User-Agent: lavatui/<version>`); the toast says so (`lyrics · on the
+lava · via lrclib.net`), as do the help (`y  lyrics · lrclib.net`) and
+the README. It reads the same player snapshot as music (the source is
+held while either is placed) and doesn't need music placed.
+
+**Lookups** never touch the frame: a track change sends a request to
+the lyrics thread, which answers from the disk cache
+(`$XDG_CACHE_HOME/lavatui/lyrics`, else the platform cache dir; synced
+and instrumental answers kept 180 days, plain 7, "not found" 1 day),
+else asks `/api/get` (exact title/artist/album, duration ± 2 s) and then
+`/api/search` (closest version within 3 s, synced first). Network errors,
+`429` and `5xx` are retried after 1 s and 4 s (a newer track cancels
+them) and never cached; offline with a stale entry, the stale entry is
+shown. Each frame polls for the answer (`try_recv`).
+
+**Sync.** The position is the snapshot's, extrapolated to the frame
+(`position + (now − sampled_at)` while playing), plus a 150 ms lead, so
+lines light up as they're sung rather than just after. A new sample a
+little behind the extrapolation (< 400 ms back over a line start) keeps
+the line instead of flicking back; a jump of more than 1.5 s from where
+the position should be is a seek, followed at once without a fade.
+
+Forms (W = the song's widest line, clamped to 20..=56, fixed per song so
+nothing jumps from line to line; on the lava the stack limits of 60 % of
+the lamp's width pick the narrower ones on small lamps):
+
+| form | size | shows |
+|---|---|---|
+| five | W × 5 | two lines back, the current line, two ahead |
+| three | W × 3 | one back, the current line, one ahead |
+| narrower | 36 / 24 × 3 | the same |
+| line | W / 36 / 24 × 1 | the current line alone |
+| side | panel width × 5 / 3 / 1 | the same, filling the panel |
+
+```
+        Cooling at the top it drifts        ← two back (dim)
+                 And falls                  ← one back (dim)
+     Every blob that ever broke away        ← current: bold `text`,
+   comes home again to the warm pool…          wrapped onto 2 rows if wide
+                                            ← (the next line made way)
+```
+
+**Look: no backing needed.** Role colours only, so it reads with or
+without the soft backing (lava-9vj.8 drops it by default): the current
+line bold `text`, the others `dim`, lined up by the anchor (centred at
+the bottom). A line too wide for the form is cut with `…`, except the
+current one, which wraps onto the row below in the 3- and 5-row forms
+(the next line gives way). **Transitions**: a new line brightens from
+`dim` to `text` over 320 ms while the line it replaced dims back (truecolor
+and 256 blend; 16 colours switch at the half-way point); the rows step,
+they don't scroll (a terminal can't move text by less than a row). A
+**gap** (an empty LRC line, or the intro before the first line) is three
+dots `•  •  •` that light up one by one as it passes.
+
+**States**, each one calm dim sentence like music's: `♪ looking for
+lyrics…`, `♪ no lyrics for this track`, `♪ instrumental`, `♪ lyrics
+offline`, and the player's own (`♪ Spotify isn't running`, `♪ nothing
+playing`, `♪ …`). **Plain lyrics** (LRCLIB has no timing) scroll with the
+track's progress, the middle line `text`, the rest `dim`, never bold (it
+isn't a claim about what's being sung).
+
+**Chip:** `♪ current line` (≤ 32 cols) while playing synced lyrics, `♪`
+in a gap; none otherwise. **Frozen lamp:** the idle loop also wakes at the
+next line's start (and during a fade).
 
 ---
 
@@ -1027,8 +1150,10 @@ so they can't drift.
 | `t` | clock: side → on the lava → off | §4.6; toast `clock · on the lava` |
 | `f` | pomodoro: side → on the lava → off | §4.6 |
 | `a` | music: side → on the lava → off | §4.6; off by default |
+| `y` | lyrics: side → on the lava → off | §4.6; off by default (the opt-in to lrclib.net lookups) |
 | `A` | player keys on (§6.2) | toast `music keys · esc when done`; with music off: `music is off · a to show it` |
-| `l` | move the widgets on the lava | centre → top → top right → … → top left |
+| `l` | move a widget on the lava | the last put there (or picked with `L`): centre → top → top right → … → top left; toast `clock · top right` |
+| `L` | pick the widget `l` moves | cycles through those on the lava; toast `l moves music · now top left` |
 | `T` | 12h / 24h | |
 | `space` | pomodoro start / pause / resume | starts a focus phase if idle |
 | `n` | pomodoro: skip to next phase | idle: toasts `pomodoro idle · ␣ to start` |
@@ -1212,10 +1337,11 @@ clock = "corner"         # corner | off
 mouse = false
 
 [dock]
-anchor = "center"        # center | top | top-right | bottom-right | bottom | bottom-left | top-left
 clock = "side"           # side | overlay | off
 pomodoro = "side"        # one key per widget in the registry
 music = "off"
+# where each sits on the lava: center | top | top-right | bottom-right | bottom | bottom-left | top-left
+anchor = { clock = "center", pomodoro = "center", music = "top-left" }
 
 [spotify]
 client_id = ""           # Web API library features (docs/spotify.md); "" = off
@@ -1226,6 +1352,10 @@ Out-of-range values are clamped rather than rejected: `fps` 1–240,
 nearest step (≤ 0 or non-finite → 1), pomodoro minutes 1–1440, `cycles`
 1–12, `spotify.client_id` trimmed (anything but letters and digits → `""`).
 An empty `client_id` falls back to `LAVATUI_SPOTIFY_CLIENT_ID`. The old style name `glass` is accepted as `chrome`.
+
+A single `dock.anchor = "top-left"` (before per-widget anchors) loads as
+that anchor for every widget, and the next save writes it back per
+widget, inline, keeping its comment.
 
 Retired in v1.1, and quietly ignored in an old file (no toast; the next
 save takes them out): `lamp.frame`, `lamp.lighting`, `clock.show`

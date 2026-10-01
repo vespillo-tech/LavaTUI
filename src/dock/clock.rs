@@ -135,7 +135,6 @@ impl DockWidget for Clock {
         Some(ChipText {
             text: clock::readout(model.local.time, hour24, false, !hour24),
             ink: Role::Text,
-            rank: 1,
         })
     }
 }

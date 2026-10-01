@@ -76,6 +76,15 @@ impl DockWidget for Pomodoro {
             .render(rect, buf);
     }
 
+    /// Running 3 (above everything), paused 2, idle 0 (below the clock).
+    fn rank(&self, model: &Model) -> u8 {
+        match model.pomodoro.status() {
+            Status::Running => 3,
+            Status::Paused => 2,
+            Status::Idle => 0,
+        }
+    }
+
     /// `▸ 24:58` (focus), `▸ break 4:58`, `‖` when paused; nothing idle.
     fn chip(&self, model: &Model) -> Option<ChipText> {
         let p = &model.pomodoro;
@@ -92,7 +101,6 @@ impl DockWidget for Pomodoro {
         Some(ChipText {
             text: format!("{glyph} {phase}{remaining}"),
             ink,
-            rank: 2,
         })
     }
 }

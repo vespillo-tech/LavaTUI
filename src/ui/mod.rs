@@ -70,14 +70,14 @@ pub fn draw(frame: &mut Frame, model: &Model, lamp: &mut LampState) {
     let buf = frame.buffer_mut();
     let covered = overlay_footprint(area, layout, model);
     let free = |r: Rect, gap: u16| covered.is_none_or(|c| !picker::grow(c, gap).intersects(r));
-    if let Some(s) = layout.on_lava.as_ref().filter(|s| free(halo(s.rect), 1)) {
+    for s in layout.on_lava.iter().filter(|s| free(halo(s.rect), 1)) {
         dock::draw_on_lava(buf, s, model, lamp_theme);
     }
     if let Some(p) = layout.panel.as_ref().filter(|p| free(p.rect, 1)) {
         dock::draw_panel(buf, p, model);
     }
-    if let Some(c) = layout.chip.as_ref().filter(|c| free(c.rect, 1)) {
-        dock::draw_chip(buf, c, model);
+    if let Some(c) = layout.chips.as_ref().filter(|c| free(c.rect, 1)) {
+        dock::draw_chips(buf, c, model);
     }
     if let Some(s) = layout.status.filter(|&s| free(s, 0)) {
         chrome::draw_status(buf, s, model);
