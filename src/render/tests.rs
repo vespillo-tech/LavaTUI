@@ -519,6 +519,7 @@ fn bench_lamp() {
     for (cols, rows) in [(80u16, 24u16), (200, 60)] {
         for (depth, depth_name) in [
             (ColorDepth::TrueColor, "truecolor"),
+            (ColorDepth::Ansi256, "256"),
             (ColorDepth::Ansi16, "16"),
         ] {
             let theme = theme(depth);
@@ -797,5 +798,28 @@ fn topo_left_wall_has_no_wrapped_contours() {
         assert_eq!(buf[(0, y)].symbol(), " ", "row {y}: column 0 has dots");
         // The real surface crossing (x = 2) is still traced.
         assert_ne!(buf[(1, y)].symbol(), " ", "row {y}: surface missing");
+    }
+}
+
+/// In 256 colours every blend is resolved to an index (no RGB escapes
+/// reach the terminal), the dither is a pure function of the frame (a still
+/// picture stays still).
+#[test]
+fn ansi256_lamp_is_all_indexed_and_still() {
+    let area = Rect::new(0, 0, 36, 14);
+    for palette in Palette::all() {
+        let theme = Theme::new(palette, ColorDepth::Ansi256);
+        for id in StyleId::all() {
+            let buf = draw_synthetic(id.style(), &theme, area);
+            for cell in buf.content() {
+                assert!(
+                    !matches!(cell.fg, Color::Rgb(..)) && !matches!(cell.bg, Color::Rgb(..)),
+                    "{} {}",
+                    palette.name,
+                    id.style().name()
+                );
+            }
+            assert_eq!(buf, draw_synthetic(id.style(), &theme, area));
+        }
     }
 }

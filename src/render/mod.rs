@@ -11,12 +11,15 @@
 //!    the buffer, cell by cell, inside its `Rect` only.
 //! 5. Cells the container's walls cut through are reshaped to half / quarter
 //!    cells (`walls`), so the bottle's silhouette is smooth.
+//! 6. In 256 colours, blended colours are ordered-dithered between two
+//!    xterm indices, pixel by pixel (`dither256`, [`Theme::dithering`]).
 //!
 //! Adding a style: one file in `styles/` implementing [`LampStyle`], plus
 //! one line in the `styles::ALL` registry.
 
 mod canvas;
 mod cell;
+mod dither256;
 mod styles;
 #[cfg(test)]
 mod tests;
@@ -243,6 +246,9 @@ impl StatefulWidget for LampView<'_> {
         if area.is_empty() {
             return;
         }
+        // In 256 colours styles draw blends as RGB, dithered at the end.
+        let dithering = self.theme.dithering();
+        let theme = dithering.as_ref().unwrap_or(self.theme);
         let grid = self.style.grid();
         let width = usize::from(area.width) * usize::from(grid.x);
         let height = usize::from(area.height) * usize::from(grid.y);
@@ -287,16 +293,19 @@ impl StatefulWidget for LampView<'_> {
             mask: &state.mask,
             width,
             height,
-            theme: self.theme,
+            theme,
             time: self.time,
         };
         self.style.draw(&canvas, buf);
         if self.options.transparent {
             walls::clear_outside(shape, area, buf);
         }
-        let outside = self.theme.background(self.options.transparent);
-        if self.theme.blends() {
-            walls::smooth(shape, self.theme, outside, area, buf);
+        let outside = theme.background(self.options.transparent);
+        if theme.blends() {
+            walls::smooth(shape, theme, outside, area, buf);
+        }
+        if let Some(theme) = &dithering {
+            dither256::resolve(theme, area, buf);
         }
     }
 }

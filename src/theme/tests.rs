@@ -172,6 +172,99 @@ fn ansi256_match_is_perceptual() {
 }
 
 #[test]
+fn only_blending_256_dithers() {
+    for palette in Palette::all() {
+        for depth in [
+            ColorDepth::TrueColor,
+            ColorDepth::Ansi256,
+            ColorDepth::Ansi16,
+            ColorDepth::None,
+        ] {
+            let theme = Theme::new(palette, depth);
+            assert_eq!(
+                theme.dithering().is_some(),
+                depth == ColorDepth::Ansi256 && theme.blends(),
+                "{} {depth:?}",
+                palette.name
+            );
+        }
+    }
+    let theme = Theme::new(lava(), ColorDepth::Ansi256).dithering().unwrap();
+    // Unmixed roles keep their hand-picked index; blends wait for `dither`.
+    assert_eq!(theme.role(Role::Liquid), Color::Indexed(233));
+    let blend = theme.color(Ink::Heat(0.2));
+    assert!(matches!(blend, Color::Rgb(..)));
+    assert!(matches!(theme.dither(blend, 0.5), Color::Indexed(_)));
+    assert_eq!(theme.dither(Color::Indexed(9), 0.5), Color::Indexed(9));
+    assert_eq!(theme.dither(Color::Reset, 0.5), Color::Reset);
+}
+
+/// The indices `c` dithers to over all 64 thresholds of an 8×8 pattern.
+fn dither_counts(c: Rgb) -> std::collections::BTreeMap<u8, usize> {
+    let mut counts = std::collections::BTreeMap::new();
+    for v in 0..64 {
+        *counts
+            .entry(xterm::dither(c, (v as f32 + 0.5) / 64.0))
+            .or_default() += 1;
+    }
+    counts
+}
+
+#[test]
+fn dark_tints_dither_to_keep_their_hue() {
+    // Dark purples and blues the cube can only show as grey get a
+    // coloured second index mixed in; mixed in linear light they land
+    // near the colour's own lightness.
+    for c in [
+        Rgb(0x1B, 0x0B, 0x2B),
+        Rgb(0x17, 0x0F, 0x2C),
+        Rgb(0x3C, 0x18, 0x0F),
+        Rgb(0x0B, 0x4F, 0x6C),
+    ] {
+        let counts = dither_counts(c);
+        assert_eq!(counts.len(), 2, "{c:?}: {counts:?}");
+        let tinted = counts.keys().any(|&i| {
+            let Rgb(r, g, b) = xterm::rgb(i);
+            r.max(g).max(b) - r.min(g).min(b) > 40
+        });
+        assert!(tinted, "{c:?}: {counts:?}");
+        let luma = |Rgb(r, g, b): Rgb| {
+            let lin = |v: u8| (f32::from(v) / 255.0).powf(2.2);
+            0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+        };
+        let mixed: f32 = counts
+            .iter()
+            .map(|(&i, &n)| luma(xterm::rgb(i)) * n as f32 / 64.0)
+            .sum();
+        let want = luma(c);
+        assert!(
+            (mixed - want).abs() < want.max(0.01) * 0.6,
+            "{c:?}: {mixed} vs {want}"
+        );
+    }
+}
+
+#[test]
+fn colours_one_index_shows_well_never_dither() {
+    // Exact cube / grey colours, mid tones and neutrals stay flat: a
+    // pattern there costs more than it shows.
+    let mut flat: Vec<Rgb> = (16..=255).map(xterm::rgb).collect();
+    flat.extend([
+        Rgb(0xB5, 0x17, 0x9E),
+        Rgb(0x1A, 0x9B, 0xA8),
+        Rgb(0xE2, 0x47, 0x1B),
+        Rgb(0x4B, 0x1D, 0x8F),
+        Rgb(0x16, 0x16, 0x16),
+        Rgb(0x80, 0x80, 0x80),
+    ]);
+    for c in flat {
+        let counts = dither_counts(c);
+        assert_eq!(counts.len(), 1, "{c:?}: {counts:?}");
+        assert_eq!(counts.keys().next(), Some(&xterm::nearest(c)), "{c:?}");
+    }
+}
+
+#[test]
 fn ansi16_steps_and_never_blends() {
     let theme = Theme::new(lava(), ColorDepth::Ansi16);
     assert!(!theme.blends());
