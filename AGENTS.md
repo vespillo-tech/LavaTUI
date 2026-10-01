@@ -125,3 +125,57 @@ bd prime                # Refresh Beads context
 
 **Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/core-concepts/sync-concepts.md for details and anti-patterns.
 <!-- END BEADS CODEX SETUP -->
+
+## Project: LavaTUI
+
+A terminal lava lamp. Fluid, physically-plausible wax blobs (heat rises,
+cools, sinks, merges, splits) drawn in many swappable render styles
+(outline, heatmap, ASCII, dither, braille, halftone, …), with an optional
+very basic lighting/glow pass. Ships with a selectable-style clock and a
+pomodoro timer, a full TUI (panels, status bar, help, keybinds) and a
+minimalist "just the lamp" mode. It's a "vibe app": looks and design matter
+as much as the code.
+
+### Stack
+
+- **Rust** (stable, edition 2024) — single binary crate `lavatui`
+- **ratatui** + **crossterm** for terminal UI / input
+- **serde** + **toml** for config (XDG config dir via `directories`)
+- Tests: built-in `cargo test`; pure logic (sim, clock, pomodoro) kept
+  terminal-free so it is unit-testable
+
+## Build & Test
+
+```bash
+cargo build                      # debug build
+cargo run --release              # run the lamp (release: the sim wants the speed)
+cargo run --release -- --minimal # TODO: confirm flag name once CLI exists
+cargo test                       # unit + integration tests
+cargo fmt --check                # formatting gate
+cargo clippy --all-targets -- -D warnings   # lint gate
+```
+
+TODO: add benchmark command (e.g. `cargo bench`) once the sim has a bench.
+
+## Architecture Overview
+
+Planned module layout (TODO: update once scaffolded):
+
+- `sim/`     — wax simulation: blobs, temperature field, buoyancy, metaball
+               field sampling. No terminal code. Deterministic with a seed.
+- `render/`  — `Style` trait: turns a sampled field into a cell buffer.
+               One file per style; adding a style = one file + registry entry.
+- `light/`   — optional lighting/glow pass applied to sampled field.
+- `clock/`   — clock faces (`Face` trait) and the pomodoro state machine.
+- `ui/`      — ratatui app: layout, modes (full / minimal), keymap, overlays.
+- `config/`  — settings load/save, defaults.
+- `app.rs`   — fixed-timestep loop wiring sim → light → render → ui.
+
+## Conventions & Patterns
+
+- Simulation, clock and pomodoro logic are pure and testable; only `ui/`
+  touches the terminal.
+- New render styles / clock faces plug in via a trait + registry; no
+  match-arms sprinkled across the codebase.
+- Fixed simulation timestep, decoupled from render frame rate.
+- Gate before handing off: `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`.

@@ -5,3 +5,24 @@
 .beads-credential-key
 .beads/proxieddb/
 *.gate.lock*
+
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# Profiling
+flamegraph.svg
+perf.data*
+*.profraw
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Local env
+.env
+.env.*
