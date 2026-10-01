@@ -86,7 +86,10 @@ impl<R: Runner> Backend for Spotify<R> {
     /// Spotify 1.2's `set shuffling` / `set repeating` are no-ops (they
     /// read back unchanged, lava-75z.9), so the UI doesn't offer them.
     fn capabilities(&self) -> Capabilities {
-        Capabilities::NONE
+        Capabilities {
+            volume: true,
+            ..Capabilities::NONE
+        }
     }
 }
 

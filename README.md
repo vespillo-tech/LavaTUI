@@ -76,8 +76,9 @@ in minimal mode:
   keys: `space` play/pause, `n`/`p` next/previous, `←`/`→` seek, `↑`/`↓`
   volume, `esc` when done. It never blocks a frame: the player is polled on
   its own thread, only while the widget is shown, and covers are fetched
-  and cached (`$XDG_CACHE_HOME/lavatui/art`) in the background. macOS for
-  now (AppleScript; Linux MPRIS and Windows to come).
+  and cached (`$XDG_CACHE_HOME/lavatui/art`) in the background. On Linux
+  and Windows it shows any player (Spotify first); see
+  [Platform support](#platform-support).
 - **Clock faces**: blocks, segment, analog, binary, words and text. Each
   face comes in several sizes, and the largest one that fits is used; on
   a very large terminal the panel widens for the biggest ones.
@@ -193,6 +194,29 @@ open, `q` closes it instead of quitting.
 This table matches the single `KEYMAP` table in `src/ui/keymap.rs`. That
 table also drives the in-app help, so the help can't drift from the
 actual bindings.
+
+## Platform support
+
+The lamp, clock, pomodoro and config work the same everywhere; config,
+cache and data go where each OS expects them (`directories`). Only now
+playing differs:
+
+| | macOS | Linux | Windows |
+|---|---|---|---|
+| Builds (`cargo check --all-targets`) | ✓ (aarch64) | ✓ (x86_64-unknown-linux-gnu) | ✓ (x86_64-pc-windows-msvc) |
+| Tested on real hardware | ✓ | not yet | not yet |
+| Now playing via | AppleScript, one long-lived `osascript` | MPRIS on the D-Bus session bus (zbus) | System Media Transport Controls |
+| Players | the Spotify desktop app | any MPRIS player, Spotify first | any app in the media flyout, Spotify first |
+| Play/pause, next/previous, seek | ✓ | ✓ | ✓ |
+| Volume | ✓ | ✓ if the player has it | – (SMTC has no volume) |
+| Shuffle / repeat | – (no-ops in Spotify 1.2) | ✓ if the player honours them | ✓ if the app honours them |
+| Cover art | ✓ | ✓ (`https` art URLs, so Spotify) | – (SMTC gives a stream, not a URL) |
+| Launches the player? | never | never | never |
+| Permission | macOS asks once (Automation) | none | none |
+
+Linux players vary: Spotify has long reported its position as 0 over
+MPRIS (the bar then counts from where it was first seen) and ignored
+shuffle and repeat. Anything a player leaves out falls back quietly.
 
 ## Configuration
 
