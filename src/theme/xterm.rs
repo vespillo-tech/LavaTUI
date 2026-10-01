@@ -13,9 +13,14 @@
 //! The search runs over 240 candidates, so results are cached per 6-bit
 //! RGB bucket (one fixed colour per bucket is matched, so the answer never
 //! depends on which colour asked first).
+//!
+//! Even the best single index can be far off: the cube has no dark tints,
+//! so dark purples and reds band (grey, then one loud row). [`dither`]
+//! picks a *pair* of indices and a mix level instead, which a 4×4 ordered
+//! dither, fixed in screen space, spreads over neighbouring cells.
 
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
 use super::Rgb;
 
@@ -36,19 +41,10 @@ const BITS: u32 = 6;
 static CACHE: [AtomicU8; 1 << (3 * BITS)] = [const { AtomicU8::new(0) }; 1 << (3 * BITS)];
 
 pub fn nearest(c: Rgb) -> u8 {
-    let shift = 8 - BITS;
-    let key = (usize::from(c.0 >> shift) << (2 * BITS))
-        | (usize::from(c.1 >> shift) << BITS)
-        | usize::from(c.2 >> shift);
+    let (key, rep) = bucket(c);
     match CACHE[key].load(Ordering::Relaxed) {
         0 => {
-            // The bucket's representative: its top bits, replicated down,
-            // so black and white stay exact.
-            let rep = |v: u8| {
-                let q = v >> shift;
-                (q << shift) | (q >> (BITS - shift))
-            };
-            let i = search(Rgb(rep(c.0), rep(c.1), rep(c.2)));
+            let i = search(rep);
             CACHE[key].store(i, Ordering::Relaxed);
             i
         }
@@ -56,18 +52,169 @@ pub fn nearest(c: Rgb) -> u8 {
     }
 }
 
+/// `c`'s cache key, and the bucket's representative colour: its top bits,
+/// replicated down, so black and white stay exact.
+fn bucket(c: Rgb) -> (usize, Rgb) {
+    let shift = 8 - BITS;
+    let key = (usize::from(c.0 >> shift) << (2 * BITS))
+        | (usize::from(c.1 >> shift) << BITS)
+        | usize::from(c.2 >> shift);
+    let rep = |v: u8| {
+        let q = v >> shift;
+        (q << shift) | (q >> (BITS - shift))
+    };
+    (key, Rgb(rep(c.0), rep(c.1), rep(c.2)))
+}
+
+/// Mix levels a [`Pair`] is quantised to: one per threshold of the 8×8
+/// ordered dither that resolves it.
+const LEVELS: u32 = 64;
+/// How many of the closest single matches [`pair`] tries as one end.
+const NEAR_ENDS: usize = 6;
+/// Pairs are only for dark (OKLab lightness below this), tinted (chroma
+/// above this) colours whose single match keeps less than this share of
+/// their chroma: the gap in the cube. Elsewhere a flat colour that's a
+/// little off beats a pattern.
+const DARK: f32 = 0.5;
+const TINT: f32 = 0.025;
+const HUE_KEPT: f32 = 0.6;
+/// Cost of the pattern's visibility, per unit of squared distance between
+/// the pair: higher keeps to pairs of nearer colours.
+const PATTERN_COST: f32 = 0.02;
+/// A pair has to beat the single match by this factor to be worth its
+/// pattern (and the bytes when it moves).
+const GAIN: f32 = 0.6;
+/// Pairs closer than this (squared, weighted OKLab) look the same: no
+/// pattern, the single match is shown.
+const SAME: f32 = 0.02 * 0.02;
+
+/// Two indices and how much of the second to mix in: `far` shows on
+/// `level` of every [`LEVELS`] dither thresholds, `near` on the rest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Pair {
+    near: u8,
+    far: u8,
+    level: u8,
+}
+
+impl Pair {
+    fn pack(self) -> u32 {
+        u32::from(self.near) | u32::from(self.far) << 8 | u32::from(self.level) << 16
+    }
+
+    fn unpack(v: u32) -> Pair {
+        Pair {
+            near: v as u8,
+            far: (v >> 8) as u8,
+            level: (v >> 16) as u8,
+        }
+    }
+}
+
+/// Matched pairs per bucket, packed; 0 means not computed yet (`near` is
+/// never a system colour, so a real pair is never 0).
+static PAIRS: [AtomicU32; 1 << (3 * BITS)] = [const { AtomicU32::new(0) }; 1 << (3 * BITS)];
+
+/// The index to show for `c` where the ordered dither's threshold is
+/// `threshold` (0..1).
+#[inline]
+pub fn dither(c: Rgb, threshold: f32) -> u8 {
+    let p = pair(c);
+    if threshold * (LEVELS as f32) < f32::from(p.level) {
+        p.far
+    } else {
+        p.near
+    }
+}
+
+/// The dither pair for `c` (cached per bucket, like [`nearest`]).
+fn pair(c: Rgb) -> Pair {
+    let (key, rep) = bucket(c);
+    match PAIRS[key].load(Ordering::Relaxed) {
+        0 => {
+            let p = search_pair(rep);
+            PAIRS[key].store(p.pack(), Ordering::Relaxed);
+            p
+        }
+        v => Pair::unpack(v),
+    }
+}
+
+/// The best pair for `c`. One end is among the few closest single
+/// matches; the other is any candidate. The mix level is where `c`
+/// projects onto the pair in linear light (how the eye averages a
+/// pattern), and the score is the mix's distance to `c` plus a cost for
+/// the pattern's contrast.
+fn search_pair(c: Rgb) -> Pair {
+    let cands = candidates();
+    let x = Lab::of(c);
+    let xl = linear(c);
+    let mut ranked: Vec<(f32, usize)> = cands
+        .iter()
+        .enumerate()
+        .map(|(i, cand)| (distance(x, cand.lab), i))
+        .collect();
+    ranked.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let (single, best) = ranked[0];
+    let alone = Pair {
+        near: 16 + best as u8,
+        far: 16 + best as u8,
+        level: 0,
+    };
+    // Only dark tints whose single match loses the hue: anywhere else the
+    // single match is close enough, and a flat colour beats a pattern.
+    let chroma = x.chroma();
+    if x.l > DARK || chroma < TINT || cands[best].lab.chroma() > HUE_KEPT * chroma {
+        return alone;
+    }
+    let mut found = (single * GAIN, alone);
+    for &(_, a) in &ranked[..NEAR_ENDS] {
+        let ca = &cands[a];
+        for (b, cb) in cands.iter().enumerate() {
+            let spread = distance(ca.lab, cb.lab);
+            if spread < SAME {
+                continue;
+            }
+            let d: [f32; 3] = std::array::from_fn(|k| cb.linear[k] - ca.linear[k]);
+            let len2: f32 = d.iter().map(|v| v * v).sum();
+            let proj: f32 = (0..3).map(|k| (xl[k] - ca.linear[k]) * d[k]).sum::<f32>() / len2;
+            let level = (proj * LEVELS as f32).round();
+            if !(1.0..LEVELS as f32).contains(&level) {
+                continue;
+            }
+            let f = level / LEVELS as f32;
+            let mix = Lab::of_linear(std::array::from_fn(|k| ca.linear[k] + d[k] * f));
+            let score = distance(x, mix) + PATTERN_COST * spread;
+            if score < found.0 {
+                found = (
+                    score,
+                    Pair {
+                        near: 16 + a as u8,
+                        far: 16 + b as u8,
+                        level: level as u8,
+                    },
+                );
+            }
+        }
+    }
+    found.1
+}
+
+/// The weighted distance between two colours (squared).
+fn distance(x: Lab, y: Lab) -> f32 {
+    let dl = x.l - y.l;
+    let dc = x.chroma() - y.chroma();
+    let dab = (x.a - y.a).powi(2) + (x.b - y.b).powi(2);
+    let dh = (dab - dc * dc).max(0.0);
+    W_L * dl * dl + W_C * dc * dc + W_H * dh
+}
+
 /// The best candidate for `c` by the weighted OKLab distance.
 fn search(c: Rgb) -> u8 {
-    let candidates = CANDIDATES.get_or_init(|| std::array::from_fn(|i| Lab::of(rgb(16 + i as u8))));
     let x = Lab::of(c);
-    let chroma = x.chroma();
     let mut best = (f32::INFINITY, 16);
-    for (i, y) in candidates.iter().enumerate() {
-        let dl = x.l - y.l;
-        let dc = chroma - y.chroma();
-        let dab = (x.a - y.a).powi(2) + (x.b - y.b).powi(2);
-        let dh = (dab - dc * dc).max(0.0);
-        let d = W_L * dl * dl + W_C * dc * dc + W_H * dh;
+    for (i, y) in candidates().iter().enumerate() {
+        let d = distance(x, y.lab);
         if d < best.0 {
             best = (d, 16 + i as u8);
         }
@@ -75,8 +222,37 @@ fn search(c: Rgb) -> u8 {
     best.1
 }
 
-/// OKLab of indices 16..=255.
-static CANDIDATES: OnceLock<[Lab; 240]> = OnceLock::new();
+/// Indices 16..=255, in OKLab and linear light.
+fn candidates() -> &'static [Candidate; 240] {
+    static CANDIDATES: OnceLock<[Candidate; 240]> = OnceLock::new();
+    CANDIDATES.get_or_init(|| {
+        std::array::from_fn(|i| {
+            let c = rgb(16 + i as u8);
+            Candidate {
+                lab: Lab::of(c),
+                linear: linear(c),
+            }
+        })
+    })
+}
+
+struct Candidate {
+    lab: Lab,
+    linear: [f32; 3],
+}
+
+/// sRGB → linear light.
+fn linear(c: Rgb) -> [f32; 3] {
+    let lin = |v: u8| {
+        let v = f32::from(v) / 255.0;
+        if v <= 0.040_45 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    [lin(c.0), lin(c.1), lin(c.2)]
+}
 
 #[derive(Debug, Clone, Copy)]
 struct Lab {
@@ -88,15 +264,11 @@ struct Lab {
 impl Lab {
     /// sRGB → OKLab (Björn Ottosson's matrices).
     fn of(c: Rgb) -> Lab {
-        let lin = |v: u8| {
-            let v = f32::from(v) / 255.0;
-            if v <= 0.040_45 {
-                v / 12.92
-            } else {
-                ((v + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        let (r, g, b) = (lin(c.0), lin(c.1), lin(c.2));
+        Lab::of_linear(linear(c))
+    }
+
+    /// Linear-light RGB → OKLab.
+    fn of_linear([r, g, b]: [f32; 3]) -> Lab {
         let l = (0.412_221_46 * r + 0.536_332_55 * g + 0.051_445_995 * b).cbrt();
         let m = (0.211_903_5 * r + 0.680_699_5 * g + 0.107_396_96 * b).cbrt();
         let s = (0.088_302_46 * r + 0.281_718_85 * g + 0.629_978_7 * b).cbrt();

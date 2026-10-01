@@ -8,7 +8,9 @@
 //!
 //! * **truecolor**: exact RGB, lerped freely (lightly quantised so slow
 //!   drifts don't repaint every cell every frame).
-//! * **256**: lerped in RGB, then snapped to the nearest xterm index.
+//! * **256**: lerped in RGB, then snapped to the nearest xterm index, or,
+//!   for the lamp, ordered-dithered between the two that best mix to it
+//!   ([`Theme::dithering`]).
 //! * **16**: no blending. Ramps step through the three wax colours, mixes
 //!   pick whichever side dominates.
 //! * **none**: `Color::Reset` everywhere; styles carry the picture with
@@ -216,6 +218,9 @@ pub struct Theme {
     /// Per-role overrides of the palette ([`with_role`](Self::with_role)),
     /// indexed by `Role as usize`.
     repaint: [Option<Repaint>; 9],
+    /// 256 colours only: blends come out as `Color::Rgb`, left for
+    /// [`dither`](Self::dither) to resolve per cell.
+    dither: bool,
 }
 
 /// A role's colour taken from a [`Paint`] instead of the palette.
@@ -237,9 +242,38 @@ impl Theme {
             wax: [Rgb::default(); RAMP_STEPS],
             heat: [Rgb::default(); RAMP_STEPS],
             repaint: [None; 9],
+            dither: false,
         };
         theme.build_ramps();
         theme
+    }
+
+    /// This theme, for drawing into a region that is then passed through
+    /// [`dither`](Self::dither) cell by cell: blended colours (mixes,
+    /// scales, ramps) come back as exact `Color::Rgb`, unmixed roles as
+    /// their hand-picked index. `None` unless the theme blends in 256
+    /// colours, the one depth that dithers.
+    pub fn dithering(&self) -> Option<Theme> {
+        (self.blend && self.depth == ColorDepth::Ansi256).then(|| Theme {
+            dither: true,
+            ..self.clone()
+        })
+    }
+
+    /// Resolve a colour a [`dithering`](Self::dithering) theme drew, at a
+    /// point where an ordered dither's threshold is `threshold` (0..1): RGB
+    /// becomes one of the two xterm indices that best mix to it. A colour
+    /// whose nearest index keeps its hue, or whose best pair looks the
+    /// same, gets that one index everywhere; anything not RGB passes
+    /// through.
+    #[inline]
+    pub fn dither(&self, c: Color, threshold: f32) -> Color {
+        match c {
+            Color::Rgb(r, g, b) if self.dither => {
+                Color::Indexed(xterm::dither(Rgb(r, g, b), threshold))
+            }
+            c => c,
+        }
     }
 
     /// This theme with `role` repainted as `paint` (any mix or scale of
@@ -505,9 +539,11 @@ impl Paint<'_> {
         }
         let Rgb(r, g, b) = self.rgb;
         match self.theme.depth {
-            ColorDepth::Ansi256 => {
-                Color::Indexed(self.index.unwrap_or_else(|| xterm::nearest(self.rgb)))
-            }
+            ColorDepth::Ansi256 => match self.index {
+                Some(i) => Color::Indexed(i),
+                None if self.theme.dither => Color::Rgb(r, g, b),
+                None => Color::Indexed(xterm::nearest(self.rgb)),
+            },
             // Unmixed roles stay exact; blends are quantised.
             _ if self.index.is_some() => Color::Rgb(r, g, b),
             _ => {
