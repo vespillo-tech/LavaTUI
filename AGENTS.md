@@ -316,11 +316,20 @@ numbers); `docs/design.md` is the layout/visual contract.
                 `WidgetForm`s most preferred first, with `Needs` (huge /
                 tall terminal) and `fill`; `draw(model, form, rect, Look)`;
                 `chip(model)` → one-line fallback with a rank) + `WIDGETS`
-                registry (`clock.rs`, `pomodoro.rs`, `music.rs`, `lyrics.rs`). `Place` (side /
+                registry (`clock.rs`, `pomodoro.rs`, `music.rs`, `lyrics.rs`,
+                `cover.rs`). `Place` (side /
                 overlay / off), `Anchor` (per widget:
                 `DockSettings::anchor(w)`; an old single `dock.anchor`
                 loads for all). `rank(model)` (clock 1, pomodoro 3/2/0,
-                music 2/1/0, lyrics 2/1/0 with lines) decides shrink, drop and chip order.
+                music 2/1/0, lyrics and cover 2/1/0 with lines / a picture)
+                decides shrink, drop and chip order. `cover.rs`: the
+                album-cover widget (`o`, `O` cycles detail) and `[art]`
+                (`ArtSettings`: `detail` auto|pixels|sextant|quadrant|
+                halfblock, `size` small|medium|large|fill, `inline` = the
+                music card's small cover while the cover widget is off);
+                `resolve(detail, Caps, depth) -> Drawn`; `draw_cover` is
+                shared with the music card. `picture.rs`: covers in text
+                cells (2-colour best split per cell, cached per track/size).
                 Widgets are stateless views of the `Model`. Seconds never
                 on the lava; date forms need tall.
 - `media/`    — now playing (platform-neutral; backends behind `cfg`):
@@ -334,9 +343,11 @@ numbers); `docs/design.md` is the layout/visual contract.
                 volume/art/URIs); `capabilities()` says what each can do,
                 `FakeSource` for tests, `art.rs`: `ArtLoader` (cover fetch
                 https-only on its thread, disk cache in
-                `$XDG_CACHE_HOME/lavatui/art`, decoded to 64 px `Art`,
+                `$XDG_CACHE_HOME/lavatui/art`, decoded to 128 px `Art`
+                (+ `hires`: a ≤ 400 px PNG as base64 for kitty, when
+                `set_hires`),
                 `scaled(w, h)` box filter). The app holds a source only
-                while the music or lyrics widget is placed (`media_on`): `app/model/music.rs`
+                while the music, lyrics or cover widget is placed (`media_on`): `app/model/music.rs`
                 (`Music`: source, cover loader, latest snapshot, the `A`
                 player-keys mode; `sync` once a frame and after keys;
                 `connect_with` injects a fake in tests). `spotify_web/`:
@@ -354,7 +365,17 @@ numbers); `docs/design.md` is the layout/visual contract.
                 (`patch_modes` → `Music::web_modes`). The music widget's
                 controls row / progress bar are mouse targets:
                 `dock::music::hit` shares `parts`/`card_controls` with draw;
-                `Action::Press` → `Model::music_hit` → a `PlayerKey`.
+                `Action::Press` → `Model::music_hit` → a `PlayerKey` (a
+                click on the cover widget is play / pause).
+- `graphics.rs` — kitty graphics protocol with Unicode placeholders
+                (pure bytes): `detect(env)` (kitty / Ghostty, not tmux),
+                `Kitty` (`want(Option<(Key, png)>)` once a frame after the
+                layout, `write` after the frame's cells: chunks ≤ `BUDGET`
+                a frame, two alternating ids, old one deleted the frame
+                after; `ready(key)` → id), `draw` (placeholder cells, id in
+                the fg colour), `is_placeholder` (compositors and help's
+                fade leave them alone), `cleanup()` (on every way out).
+                `tools/kitty_check.py` checks the bytes in a pty.
 - `lyrics/`   — synced lyrics (pure, no terminal): `lrc.rs` (forgiving
                 LRC parser: multi-stamp lines, `[offset:]`, gaps, word tags
                 stripped), `sync.rs` (`Syncer`: extrapolated `Playback` →

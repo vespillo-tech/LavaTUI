@@ -113,6 +113,7 @@ impl Model {
             Action::NextAnchor => self.next_anchor(now),
             Action::NextLavaWidget => self.next_lava_widget(),
             Action::PlayerKeys => self.player_keys_on(),
+            Action::CoverDetail => self.next_cover_detail(now),
             // Only while the player keys are on (`player_action`).
             Action::Player(_) => {}
             Action::ToggleHour24 => self.toggle(now, |s| &mut s.clock.hour24, HOUR24),

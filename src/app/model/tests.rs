@@ -737,7 +737,11 @@ mod music {
         tick(&mut m, t0);
         assert_eq!(alive.load(Ordering::SeqCst), 1);
         let placed = m.layout.placed(2).expect("music in the panel");
-        assert_eq!(placed.form.variant & 0xff00, 0x100, "the cover on top");
+        assert_eq!(
+            placed.form.variant & 0xff00,
+            0x200,
+            "the cover beside the card"
+        );
         m.update(Action::Place("music"), t0); // on the lava: same source
         tick(&mut m, t0);
         assert_eq!(alive.load(Ordering::SeqCst), 1);
@@ -917,6 +921,216 @@ mod music {
         m.update(Action::Close, t0);
         assert_eq!(Music.chip(&m).unwrap().text, "‖ Slow Rise – The Paraffins");
         assert_eq!(Music.rank(&m), 1, "paused: below the clock again");
+    }
+
+    #[test]
+    fn volume_is_left_alone_where_the_player_has_none() {
+        let (mut m, t0) = model("music-no-volume");
+        let source = fake(t0);
+        with(&mut m, &source);
+        m.settings.art.inline = false;
+        m.update(Action::Place("music"), t0);
+        tick(&mut m, t0);
+        let card = |m: &Model| {
+            let form = Music.forms(m, Place::Side)[0];
+            assert_eq!(form.size.height, 6, "the card");
+            let area = Rect::new(0, 0, 30, 6);
+            let mut buf = ratatui::buffer::Buffer::empty(area);
+            let look = crate::dock::Look {
+                backdrop: crate::dock::Backdrop::Panel,
+                align: ratatui::layout::Alignment::Left,
+            };
+            Music.draw(m, form, area, look, &mut buf);
+            (0..6)
+                .map(|y| (0..30).map(|x| buf[(x, y)].symbol()).collect::<String>())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        assert!(card(&m).contains("vol 70"), "{}", card(&m));
+        // SMTC (Windows) has no volume: no readout, the keys say so.
+        source.set_capabilities(Capabilities {
+            volume: false,
+            ..Capabilities::ALL
+        });
+        assert!(!card(&m).contains("vol"), "{}", card(&m));
+        m.update(Action::PlayerKeys, t0);
+        keys(&mut m, t0, &[P::VolumeUp, P::VolumeDown]);
+        assert!(source.sent().is_empty(), "{:?}", source.sent());
+        assert_eq!(
+            m.toast.as_ref().unwrap().text,
+            "The player has no volume control here"
+        );
+    }
+
+    // --- the cover widget (lava-75z.13) ----------------------------------
+
+    use crate::dock::Cover;
+    use crate::dock::cover::{Caps, CoverSize, Detail};
+
+    /// The cover's index in the registry.
+    const COVER_W: usize = 4;
+
+    fn with_hires(m: &mut Model, source: &FakeSource) {
+        let source = source.clone();
+        m.music.connect_with(
+            move || Box::new(source.clone()),
+            || ArtLoader::preloaded(COVER, Art::solid(Rgb(200, 120, 40)).with_hires("QUJD")),
+        );
+    }
+
+    #[test]
+    fn the_cover_is_a_widget_of_its_own_sized_by_the_setting() {
+        let (mut m, t0) = model_with(Session::default(), temp_config("cover-place"), 120, 36);
+        with(&mut m, &fake(t0));
+        assert_eq!(m.settings.dock.place(&Cover), Place::Off, "off by default");
+        m.update(Action::Place("music"), t0);
+        tick(&mut m, t0);
+        let inline = |m: &Model| Music.forms(m, Place::Side)[0].size == (32, 6).into();
+        assert!(inline(&m), "the card keeps a small cover of its own");
+        m.update(Action::Place("cover"), t0);
+        assert_eq!(m.toast.as_ref().unwrap().text, "cover · side panel");
+        tick(&mut m, t0);
+        assert!(!inline(&m), "one cover at a time");
+        let p = m.layout.placed(COVER_W).expect("in the panel");
+        assert_eq!((p.form.size.width, p.form.size.height), (24, 12));
+        m.settings.art.size = CoverSize::Small;
+        tick(&mut m, t0);
+        let p = m.layout.placed(COVER_W).unwrap();
+        assert_eq!((p.form.size.width, p.form.size.height), (16, 8));
+        assert_eq!(Cover.rank(&m), 2, "the music widget's rank");
+        assert!(Cover.chip(&m).is_none());
+        // On the lava, top right by default.
+        m.update(Action::Place("cover"), t0);
+        tick(&mut m, t0);
+        let lamp = m.layout.lamp.unwrap();
+        let p = m.layout.placed(COVER_W).expect("on the lava");
+        assert!(p.rect.x > lamp.x + lamp.width / 2 && p.rect.y < lamp.y + lamp.height / 2);
+        // A click on it is play / pause.
+        let source = fake(t0);
+        with(&mut m, &source);
+        tick(&mut m, t0);
+        let p = m.layout.placed(COVER_W).unwrap();
+        m.update(
+            Action::Press {
+                col: p.rect.x + 2,
+                row: p.rect.y + 1,
+            },
+            t0,
+        );
+        assert_eq!(source.sent(), [Command::PlayPause]);
+    }
+
+    #[test]
+    fn without_colours_for_it_the_cover_is_one_calm_line() {
+        let session = Session {
+            color: Some(crate::config::ColorChoice::Ansi16),
+            ..Session::default()
+        };
+        let (mut m, t0) = model_with(session, temp_config("cover-16"), 120, 36);
+        with_hires(&mut m, &fake(t0));
+        m.update(Action::Place("cover"), t0);
+        tick(&mut m, t0);
+        let forms = Cover.forms(&m, Place::Side);
+        assert_eq!(forms.len(), 1);
+        assert!(forms[0].size.width <= 20, "{forms:?}");
+        assert_eq!(Cover.rank(&m), 0, "a message gives way");
+        assert!(m.layout.panel.is_some(), "and takes nothing down");
+        // A terminal with real pixels doesn't need the palette's colours.
+        m.caps = Caps {
+            kitty: true,
+            sextants: true,
+        };
+        tick(&mut m, t0);
+        assert_eq!(Cover.forms(&m, Place::Side)[0].size.width, 24);
+    }
+
+    #[test]
+    fn pixels_are_sent_once_drawn_as_placeholders_and_deleted_when_off() {
+        let (mut m, t0) = model_with(Session::default(), temp_config("cover-kitty"), 120, 36);
+        m.caps = Caps {
+            kitty: true,
+            sextants: true,
+        };
+        with_hires(&mut m, &fake(t0));
+        m.update(Action::Place("cover"), t0);
+        tick(&mut m, t0);
+        let p = *m.layout.placed(COVER_W).unwrap();
+        let draw = |m: &Model| {
+            let mut buf = ratatui::buffer::Buffer::empty(m.layout.area);
+            let look = crate::dock::Look {
+                backdrop: crate::dock::Backdrop::Panel,
+                align: ratatui::layout::Alignment::Left,
+            };
+            Cover.draw(m, p.form, p.rect, look, &mut buf);
+            buf[(p.rect.x, p.rect.y)].clone()
+        };
+        // On its way: sextants meanwhile.
+        assert!(m.kitty.busy());
+        assert!(!crate::graphics::is_placeholder(draw(&m).symbol()));
+        let mut out = Vec::new();
+        m.kitty.write(&mut out).unwrap();
+        let sent = String::from_utf8(out).unwrap();
+        assert!(sent.starts_with("\x1b_Ga=T,U=1,f=100,t=d,i="), "{sent:?}");
+        assert!(sent.contains(",c=24,r=12,q=2,m=0;QUJD\x1b\\"), "{sent:?}");
+        // There: placeholders in the image id's colour.
+        tick(&mut m, t0);
+        let cell = draw(&m);
+        assert!(crate::graphics::is_placeholder(cell.symbol()));
+        assert!(matches!(cell.fg, ratatui::style::Color::Rgb(..)));
+        // Nothing more while it stays.
+        for _ in 0..3 {
+            tick(&mut m, t0);
+            let mut out = Vec::new();
+            m.kitty.write(&mut out).unwrap();
+            assert!(out.is_empty());
+        }
+        // Resized (fill size): sent again at the new size.
+        m.settings.art.size = CoverSize::Large;
+        tick(&mut m, t0);
+        let mut out = Vec::new();
+        m.kitty.write(&mut out).unwrap();
+        assert!(String::from_utf8(out).unwrap().contains(",c=34,r=17,"));
+        tick(&mut m, t0);
+        let mut out = Vec::new();
+        m.kitty.write(&mut out).unwrap();
+        assert!(
+            String::from_utf8(out).unwrap().contains("a=d,d=I"),
+            "the old one"
+        );
+        // Off: deleted.
+        m.update(Action::Place("cover"), t0);
+        m.update(Action::Place("cover"), t0);
+        assert_eq!(m.settings.dock.place(&Cover), Place::Off);
+        tick(&mut m, t0);
+        let mut out = Vec::new();
+        m.kitty.write(&mut out).unwrap();
+        assert!(
+            String::from_utf8(out)
+                .unwrap()
+                .starts_with("\x1b_Ga=d,d=I,i=")
+        );
+        assert!(!m.kitty.busy());
+    }
+
+    #[test]
+    fn the_detail_key_cycles_and_says_what_it_comes_to() {
+        let (mut m, t0) = model("cover-detail");
+        let mut seen = Vec::new();
+        for _ in 0..Detail::ALL.len() {
+            m.update(Action::CoverDetail, t0);
+            seen.push(m.toast.as_ref().unwrap().text.clone());
+        }
+        assert_eq!(
+            seen,
+            [
+                "cover · pixels",
+                "cover · sextant",
+                "cover · quadrant",
+                "cover · halfblock",
+                "cover · auto · quadrant",
+            ]
+        );
+        assert_eq!(m.settings.art.detail, Detail::Auto);
     }
 
     #[test]

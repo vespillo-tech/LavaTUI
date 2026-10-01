@@ -23,7 +23,9 @@ use crate::clock::{
 };
 use crate::config::store::Store;
 use crate::config::{self, ColorChoice, Overridden, Session, Settings};
+use crate::dock::cover::Caps;
 use crate::dock::{Place, WIDGETS};
+use crate::graphics::Kitty;
 use crate::render::StyleId;
 use crate::sim::{Field, HEAT_LEVELS, SimSpeed, World};
 use crate::theme::{ColorDepth, Palette, Theme};
@@ -138,6 +140,11 @@ pub struct Model {
 
     /// The music widget's player, cover and keys.
     pub music: Music,
+    /// What the terminal can show pictures with (read once at start).
+    pub caps: Caps,
+    /// The cover as a real picture: what the terminal holds and what's on
+    /// its way (bytes the loop writes after each frame).
+    pub kitty: Kitty,
     /// The Spotify library (Web API): login, playlists, likes.
     pub library: Library,
     /// The lyrics widget's lookups and sync.
@@ -214,6 +221,8 @@ impl Model {
             reset_pending: None,
             last_reset_key: None,
             music: Music::default(),
+            caps: Caps::detect(),
+            kitty: Kitty::default(),
             library: Library::new(settings.spotify_client_id()),
             lyrics: LyricsState::default(),
             lava_focus: None,
@@ -342,6 +351,10 @@ impl Model {
             // The next line (or the end of a fade).
             wake = wake.min(at);
         }
+        if self.kitty.busy() {
+            // A cover on its way to the terminal, a slice a frame.
+            wake = wake.min(self.now + Duration::from_millis(16));
+        }
         if self.saver.as_ref().is_some_and(saving::Saver::busy) || self.library.busy() {
             // Frozen frames still collect save errors and Spotify's
             // answers promptly.
@@ -441,6 +454,7 @@ impl Model {
         self.sync_library();
 
         self.relayout(area);
+        self.sync_pictures();
         if let Some(aspect) = self.lamp_aspect() {
             self.world.set_aspect(aspect);
         }

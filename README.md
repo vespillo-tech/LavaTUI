@@ -59,7 +59,8 @@ in minimal mode:
   a very large one two columns, a cramped portrait one rows across the
   width: whichever keeps the widgets largest.
 - **Widgets go where you want them.** The clock (`t`), the pomodoro
-  (`f`), music (`a`) and lyrics (`y`) each sit in the side panel, on the lava, or off.
+  (`f`), music (`a`), lyrics (`y`) and the album cover (`o`) each sit in
+  the side panel, on the lava, or off.
   On the lava each has its own spot (centre, top, the corners, bottom):
   `l` moves the one you last put there, `L` picks another. They float
   right on the lamp with no background: the wax runs up to every stroke,
@@ -72,9 +73,9 @@ in minimal mode:
   shrink, then fold into one row of chips in the corner
   (`14:32 · ▸ 18:24 · ▶ Song – Artist`), never covering the lamp.
 - **Now playing** (`a`, off by default): the Spotify desktop app's track
-  with its cover art drawn in half-block pixels, title, artist, album, a
-  progress bar, play state and volume, beside the lamp or on the lava. It
-  shrinks from a big cover card down to `▶ title – artist`, and says calmly
+  with a small cover beside it, title, artist, album, a progress bar,
+  play state and volume, beside the lamp or on the lava. It shrinks from
+  that card down to `▶ title – artist`, and says calmly
   when Spotify isn't running or needs permission. `A` turns on the player
   keys: `space` play/pause, `n`/`p` next/previous, `←`/`→` seek, `↑`/`↓`
   volume, `esc` when done. It never blocks a frame: the player is polled on
@@ -89,6 +90,16 @@ in minimal mode:
   the widget). With Premium, shuffle and repeat (`x` / `r`) work too,
   through the Web API. All of it runs on a worker thread; the lamp never
   waits for Spotify.
+- **Album cover** (`o`, off by default): the playing track's cover as a
+  widget of its own, beside the lamp or on the lava (top right by
+  default), small / medium / large / as big as fits (`art.size`). In
+  **kitty and Ghostty it's the real picture** (the kitty graphics
+  protocol, sent once per track and size, then just cells that never
+  flicker); elsewhere it's drawn in text cells: sextants (2 × 3 pixels a
+  cell), quadrants (2 × 2) or half blocks (1 × 2). `O` cycles the detail
+  (`auto` picks the best your terminal has). Clicking it plays / pauses.
+  With the cover widget on, the music card leaves its own small cover
+  out (`art.inline = false` drops that one for good).
 - **Mouse**: the music widget has quiet buttons (`◂◂ ‖ ▸▸`, `♡ + ≡`) and a
   progress bar you can click to seek; pickers and the playlist browser
   click and scroll. Every button has a key.
@@ -183,6 +194,8 @@ unknown `--style` or `--palette` name exits with the list of valid ones.
 | `a` | music (now playing): side panel → on the lava → off |
 | `A` | player keys on (see below) |
 | `y` | lyrics: side panel → on the lava → off (looks tracks up on lrclib.net) |
+| `o` | album cover: side panel → on the lava → off |
+| `O` | cover detail: auto → pixels → sextant → quadrant → halfblock |
 | `l` | move a widget on the lava (the last put there): centre, top, the corners, bottom |
 | `L` | pick which widget on the lava `l` moves |
 | **App** | |
@@ -215,7 +228,8 @@ open, `q` closes it instead of quitting.
   opening key again keeps the choice and closes the picker. In the tiny
   inline picker, `h`/`l` and `←`/`→` move too.
 - **Mouse** (on by default, `input.mouse = false` turns it off): click the
-  music widget's buttons and progress bar, click or drag on the lamp to
+  music widget's buttons and progress bar, click the cover to play /
+  pause, click or drag on the lamp to
   heat the wax there, scroll in help, and scroll or click in pickers and
   the playlist browser (a click picks, a double-click keeps / opens). To
   select text in the terminal while the mouse is on, hold **shift** while
@@ -238,7 +252,7 @@ playing differs:
 | Now playing via | AppleScript, one long-lived `osascript` | MPRIS on the D-Bus session bus (zbus) | System Media Transport Controls |
 | Players | the Spotify desktop app | any MPRIS player, Spotify first | any app in the media flyout, Spotify first |
 | Play/pause, next/previous, seek | ✓ | ✓ | ✓ |
-| Volume | ✓ | ✓ if the player has it | – (SMTC has no volume) |
+| Volume | ✓ | ✓ if the player has it | – (SMTC has no volume: no readout, the keys say so) |
 | Shuffle / repeat | – (no-ops in Spotify 1.2) | ✓ if the player honours them | ✓ if the app honours them |
 | Cover art | ✓ | ✓ (`https` art URLs, so Spotify) | – (SMTC gives a stream, not a URL) |
 | Launches the player? | never | never | never |
@@ -301,10 +315,16 @@ clock = "side"           # side | overlay | off
 pomodoro = "side"        # side | overlay | off
 music = "off"            # side | overlay | off
 lyrics = "off"           # side | overlay | off (on = lookups on lrclib.net)
+cover = "off"            # side | overlay | off
 # each widget's spot on the lava:
 # center | top | top-right | bottom-right | bottom | bottom-left | top-left
-anchor = { clock = "center", pomodoro = "center", music = "top-left", lyrics = "bottom" }
+anchor = { clock = "center", pomodoro = "center", music = "top-left", lyrics = "bottom", cover = "top-right" }
 backing = "none"         # none (text floats on the lamp) | soft (a veiled pool behind)
+
+[art]
+detail = "auto"          # auto | pixels | sextant | quadrant | halfblock
+size = "medium"          # small (16 cols) | medium (24) | large (34) | fill (up to 64)
+inline = true            # the music card's own small cover (while the cover widget is off)
 
 [spotify]
 client_id = ""           # for the Web API library features, see docs/spotify.md
@@ -399,6 +419,15 @@ core); starting `osascript` for every poll used to cost 12.6 %.
 Lyrics read the same player (so on their own they cost about the same as
 music) and add nothing measurable on top of it; the lookup is one request
 per track, on its own thread, and cached.
+
+The cover widget costs nothing per frame either: at 120×36 the median
+draw is 0.24 ms with music alone and 0.24–0.25 ms with the cover in any
+detail (sextant, quadrant, half block, pixels), and bytes per frame are
+unchanged, since the cover's cells never change between frames (its text
+cells are worked out once per track and size). In pixels mode the
+picture (a ≤ 400 px PNG, ~370 KB as base64) is sent once per track and
+size, at most 96 KB a frame (a few frames), inside the frame's
+synchronized update; `tools/kitty_check.py` shows exactly what goes out.
 
 Here is the render time per frame at 200×60 in truecolor: the field
 sampling plus the style draw (`bench_lamp`: a full-area lamp, two sim

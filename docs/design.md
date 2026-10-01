@@ -774,9 +774,9 @@ toasts: no flash, no bell.
 
 ### 4.6 The widget dock
 
-The clock, the pomodoro, music and lyrics are *widgets* (`src/dock/`). Each has a place, persisted as `dock.<name>`, cycled
+The clock, the pomodoro, music, lyrics and the album cover are *widgets* (`src/dock/`). Each has a place, persisted as `dock.<name>`, cycled
 by its key: `t` the clock, `f` the pomodoro (`focus`), `a` music
-(`audio`), each `side → overlay → off → side`. A toast says where it
+(`audio`), `y` lyrics, `o` the cover, each `side → overlay → off → side`. A toast says where it
 went (`clock · on the lava`), adding `· no room` when the layout couldn't
 fit it there (it's in the chip row meanwhile) and `· not in minimal` for
 `side` in minimal mode.
@@ -792,7 +792,7 @@ fit it there (it's in the chip row meanwhile) and `· not in minimal` for
   apart, lined up by it (centred, or flush left / right at the sides);
   different anchors make separate stacks that spread across the lamp.
   Defaults: the clock and the pomodoro centre (so both on the lava stack
-  as in v1.1), music top left, lyrics bottom centre. Limits,
+  as in v1.1), music top left, lyrics bottom centre, the cover top right. Limits,
   so the lamp stays the hero: the lamp ≥ 28 × 10; each stack ≤ 60 % of
   the lamp's width and ≤ half its height; their backings never touch
   each other and together cover ≤ 35 % of the lamp; inset (≥ 5 cols /
@@ -813,8 +813,8 @@ keys, no new overlay, and every press says which widget moved and where.
 
 **Ranks.** Each widget has a rank, recomputed every frame
 (`DockWidget::rank`): the clock 1; the pomodoro 3 running, 2 paused,
-0 idle; music 2 playing, 1 paused, 0 otherwise; lyrics the same, but only
-with lines to show (a message is 0). Ties go to the earlier widget in the registry. The rank decides
+0 idle; music 2 playing, 1 paused, 0 otherwise; lyrics and the cover the
+same, but only with lines / a picture to show (a message is 0). Ties go to the earlier widget in the registry. The rank decides
 everything about room: who shrinks first, who leaves for the chip row
 first, which chips stay, and in the panel the score of each arrangement.
 
@@ -894,18 +894,16 @@ is last in the registry, so it shrinks first):
 
 | form | size | shows |
 |---|---|---|
-| cover on top | A × (A/2 + 7), A = 32, 24 | the cover (half-block pixels, A px square), a blank row, the card |
-| cover beside | 32 × 6 | a 12-col cover, 2 cols, the card |
-| cover on top | A = 20, 16 | as above |
+| cover beside | ≥ 32 × 6 | a 12 × 6 cover, 2 cols, the card (`art.inline`, cover widget off) |
 | card | ≥ 20 × 6 | title (`text`), artist, album (`dim`), a blank row, bar, status line |
 | compact | ≥ 20 × 3 | title, artist, `▶ 1:23 ━━━─── 3:45` |
 | line | ≤ 36 × 1 | `▶ title – artist` |
 
-```
- ████████████████        ← the cover, A × A/2 cells (A × A px)
- ████████████████
- ████████████████
+(v1.4 moved the big cover-on-top forms to the cover widget, below; the
+card keeps only the small cover beside it, and only while the cover
+widget is off, so there's never two.)
 
+```
  Voices (From "The Be…   ← title, cut with … to the card's width
  Dario G                 ← artist (dim)
  Sunmachine              ← album (dim)
@@ -915,7 +913,10 @@ is last in the registry, so it shrinks first):
 ```
 
 The status line drops shuffle/repeat, then the volume, then the total
-before it would crowd the elapsed time. `▶` playing, `‖` paused; the
+before it would crowd the elapsed time. The volume shows only for players
+that have one (`Capabilities::volume`; SMTC on Windows doesn't): there the
+volume keys change nothing and toast `<player> has no volume control
+here`. `▶` playing, `‖` paused; the
 glyph turns `accent` while the player keys are on (the one sign of the
 mode besides the status bar's hints). Shuffle `⇄` and repeat `↻` show
 only for players that can change them (`MediaSource::capabilities`):
@@ -953,13 +954,14 @@ the playlist browser and `a` the add-to-playlist picker (§4.4).
 **Covers.** Fetched on a background thread when the track changes
 (`https` only, ≤ 8 MB), kept on disk in `$XDG_CACHE_HOME/lavatui/art`
 (else the platform cache dir; 256 newest kept), decoded (JPEG / PNG),
-cropped square and shrunk to 64 px, then box-filtered to the cover's
-cells each frame. Pixels go through `Theme::image`: exact in truecolor,
-the nearest xterm index in 256 colours, and no cover at all in 16
-colours or `NO_COLOR` (the cover forms aren't offered). Until the cover
-has arrived (or if it can't be had) a quiet placeholder holds its place
+cropped square and shrunk to 128 px (in pixels mode also kept as a
+≤ 400 px PNG, base64, ready to send), all on that thread. The card's
+small cover is drawn the cover widget's way (below): text cells through
+`Theme::image` (exact in truecolor, the nearest xterm index in 256
+colours, none in 16 colours or `NO_COLOR`, where the cover form isn't
+offered), or kitty pixels. Until the cover has arrived (or if it can't be had) a quiet placeholder holds its place
 (`bg` tinted 18 % toward `dim`, a dim `♪` in the middle), so nothing jumps
-when it lands. On the lava the cover is opaque, drawn as it is (with
+when it arrives. On the lava the cover is opaque, drawn as it is (with
 `dock.backing = "soft"` the soft backing frames it like the text).
 
 **Without a player** the widget is one calm, dim sentence, wrapped at 20
@@ -977,6 +979,69 @@ registry), `‖ …` rank 1 while paused, none otherwise.
 **Frozen lamp:** while music is placed, the idle loop looks at the player
 at least once a second, so a track change or a pause made in Spotify
 shows within a second.
+
+#### Cover
+
+`src/dock/cover.rs` (the widget, `[art]`), `src/dock/picture.rs` (text
+cells), `src/graphics.rs` (kitty). Key `o`: `off → side → overlay → off`;
+off by default; top right on the lava. It reads the music widget's player
+and art loader (the source is held while music, lyrics or the cover is
+placed), so it doesn't need music placed.
+
+**Size** (`art.size`): the widest it may be, in columns: `small` 16,
+`medium` 24 (default), `large` 34, `fill` 64 (as big as the room allows).
+Forms are fixed squares, widest first, each narrower one offered after it
+(64, 56, 48, 40, 34, 28, 24, 20, 16, 12, 10 up to the size's): rows =
+cols ÷ the cell aspect (cols / 2 at 2 : 1), so it's square on screen. The
+layout keeps the first that fits (the lava's limits apply: ≤ 60 % × 50 %
+of the lamp); below 10 × 5 it's left out (no chip: the music chip names
+the track). Its rank is music's while it has a picture, so it shrinks
+before music (later in the registry) and a message never pushes anything
+out.
+
+**Detail** (`art.detail`, `O` cycles it, the toast saying what it comes
+to here, e.g. `cover · auto · quadrant`):
+
+| detail | looks | needs |
+|---|---|---|
+| `pixels` | the real picture, at the terminal's resolution | kitty graphics with Unicode placeholders: kitty, Ghostty (any colour depth but none) |
+| `sextant` | 2 × 3 pixels a cell, two colours each (U+1FB00..1FB3B) | 256 colours+, a terminal that draws Unicode 13 sextants |
+| `quadrant` | 2 × 2 pixels a cell (`▘▝▀▖▌▞▛▗▚▐▜▄▙▟█`) | 256 colours+ |
+| `halfblock` | 1 × 2 pixels a cell (`▀`, exact colours) | 256 colours+ |
+| `auto` (default) | pixels in kitty / Ghostty; else sextants in WezTerm, foot, Windows Terminal; else quadrants | |
+
+Quadrants and sextants try every split of the cell's pixels into two
+groups (8 / 32) and keep the one whose two means lose least: one the
+glyph's ink, the other its background. The cells are worked out once per
+track, size, detail and depth and kept. Without a way to show a picture
+(16 colours without pixels, `NO_COLOR`) the widget is one calm line
+(wrapped like music's), `♪ covers need 256 colours`; with no track,
+`♪ nothing playing`; with no cover, `♪ no cover`.
+
+**Pixels** (kitty graphics protocol). Detected from the environment
+(`TERM` `xterm-kitty` / `xterm-ghostty`, `TERM_PROGRAM` `ghostty` /
+`kitty`, `KITTY_WINDOW_ID`, `GHOSTTY_RESOURCES_DIR`; never inside tmux or
+screen, and not WezTerm or Konsole, which lack Unicode placeholders), so
+there's no terminal query and no reply to read. `art.detail = "pixels"`
+forces it anywhere. The cover is sent as a PNG (`a=T,U=1,f=100,q=2`) with
+a *virtual* placement of exactly the cover's cells (`c`, `r`), in 4096-byte
+base64 chunks, at most 96 KB a frame, after the frame's cells and inside
+its synchronized update; meanwhile the best text cells show. From the
+next frame the cover's cells are Unicode placeholders (U+10EEEE + a row
+and a column diacritic) in a foreground colour that is the image id. To
+ratatui they are ordinary cells, so the lamp's 60 fps diff never touches
+them: nothing is re-sent, nothing flickers, and moving the cover (`l`,
+`o`) or a resize at the same size is just drawing those cells again. A new
+track or size is sent under the other of two ids (from the process id),
+the cells switch, and the old image is deleted (`a=d,d=I`) the frame
+after; turning the cover off deletes it, and every way out (exit, error,
+panic) deletes both. Help leaves placeholder cells unfaded (fading their
+colour would change the id). Not done: sixel and iTerm2 images (they're
+placed by cursor position, which a 60 fps redraw around them would
+smear).
+
+**Mouse:** a click on the cover is play / pause (chosen over opening the
+playlist browser: one obvious action, works without a Spotify login).
 
 #### Lyrics
 
@@ -1374,7 +1439,9 @@ than jumping.
    `esc close`. No title case, no exclamation marks, no emoji.
 8. **Plain Unicode only.** Block elements, box drawing, braille and
    geometric shapes that ship in every common monospace font. No Nerd
-   Font glyphs required.
+   Font glyphs required. (The one exception is opt-in: the cover's
+   `sextant` detail, Unicode 13, which `auto` picks only in terminals
+   that draw sextants themselves.)
 9. **Colour degrades, structure doesn't.** Every screen reads correctly
    in 16 colours and in NO_COLOR.
 10. **Two text weights:** normal and `dim`. Bold appears only in the
@@ -1424,8 +1491,15 @@ mouse = true
 clock = "side"           # side | overlay | off
 pomodoro = "side"        # one key per widget in the registry
 music = "off"
+lyrics = "off"
+cover = "off"
 # where each sits on the lava: center | top | top-right | bottom-right | bottom | bottom-left | top-left
-anchor = { clock = "center", pomodoro = "center", music = "top-left" }
+anchor = { clock = "center", pomodoro = "center", music = "top-left", lyrics = "bottom", cover = "top-right" }
+
+[art]
+detail = "auto"          # auto | pixels | sextant | quadrant | halfblock (§4.6 Cover)
+size = "medium"          # small | medium | large | fill
+inline = true            # the music card's small cover, while the cover widget is off
 
 [spotify]
 client_id = ""           # Web API library features (docs/spotify.md); "" = off

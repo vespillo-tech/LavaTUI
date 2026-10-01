@@ -37,6 +37,8 @@ pub enum Action {
     NextLavaWidget,
     /// `A`: the player keys on (in them: off again).
     PlayerKeys,
+    /// `O`: the next cover detail (`art.detail`).
+    CoverDetail,
     /// One of the player keys (only while they're on).
     Player(PlayerKey),
     ToggleHour24,
@@ -248,6 +250,12 @@ pub static KEYMAP: &[Row] = &[
         "y",
         "lyrics · lrclib.net",
         &[(K('y'), A::Place("lyrics"))],
+    ),
+    row(
+        Widgets,
+        "o O",
+        "cover · detail",
+        &[(K('o'), A::Place("cover")), (K('O'), A::CoverDetail)],
     ),
     row(
         Widgets,

@@ -21,6 +21,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::clock;
+use crate::dock::cover::ArtSettings;
 use crate::dock::{self, DockSettings, Place};
 use crate::render::StyleId;
 use crate::sim::SimSpeed;
@@ -38,6 +39,8 @@ pub struct Settings {
     pub minimal: Minimal,
     pub input: Input,
     pub dock: DockSettings,
+    /// Covers: the cover widget's detail and size, the music card's own.
+    pub art: ArtSettings,
     pub spotify: Spotify,
 }
 
@@ -254,8 +257,8 @@ const RETIRED_STYLES: [&str; 3] = ["heatmap", "dither", "crt"];
 
 impl Settings {
     /// The sections of `config.toml`, in file order.
-    const SECTIONS: [&str; 10] = [
-        "display", "lamp", "theme", "clock", "pomodoro", "ui", "minimal", "input", "dock",
+    const SECTIONS: [&str; 11] = [
+        "display", "lamp", "theme", "clock", "pomodoro", "ui", "minimal", "input", "dock", "art",
         "spotify",
     ];
 
@@ -286,6 +289,7 @@ impl Settings {
             minimal: section("minimal", &file, ig, un),
             input: section("input", &file, ig, un),
             dock: section("dock", &file, ig, un),
+            art: section("art", &file, ig, un),
             spotify: section("spotify", &file, ig, un),
         };
         settings.check_names(&mut out.ignored);
@@ -678,6 +682,28 @@ mod tests {
         let p = Settings::parse("[dock]\nbacking = \"glass\"\n").unwrap();
         assert_eq!(p.ignored, ["dock.backing"]);
         assert_eq!(p.settings.dock.backing, dock::Backing::None);
+    }
+
+    #[test]
+    fn art_settings_load_and_a_bad_value_costs_only_itself() {
+        use crate::dock::cover::{CoverSize, Detail};
+        let art = Settings::default().art;
+        assert_eq!(
+            (art.detail, art.size, art.inline),
+            (Detail::Auto, CoverSize::Medium, true)
+        );
+        let p = Settings::parse("[art]\ndetail = \"pixels\"\nsize = \"fill\"\n").unwrap();
+        assert_eq!(
+            (p.settings.art.detail, p.settings.art.size),
+            (Detail::Pixels, CoverSize::Fill)
+        );
+        assert!(p.ignored.is_empty() && p.unknown.is_empty());
+        let p = Settings::parse("[art]\ndetail = \"sixel\"\nsize = \"small\"\n").unwrap();
+        assert_eq!(p.ignored, ["art.detail"]);
+        assert_eq!(
+            (p.settings.art.detail, p.settings.art.size),
+            (Detail::Auto, CoverSize::Small)
+        );
     }
 
     #[test]

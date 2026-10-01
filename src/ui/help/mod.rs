@@ -170,7 +170,11 @@ fn dim_outside(buf: &mut Buffer, keep: Rect, theme: &Theme) {
             if keep.contains((x, y).into()) {
                 continue;
             }
-            if let Some(cell) = buf.cell_mut((x, y)) {
+            // A kitty placeholder's ink is its image id: leave it be.
+            if let Some(cell) = buf
+                .cell_mut((x, y))
+                .filter(|c| !crate::graphics::is_placeholder(c.symbol()))
+            {
                 cell.fg = theme.fade_to_bg(cell.fg, BEHIND_FADE);
                 cell.bg = theme.fade_to_bg(cell.bg, BEHIND_FADE);
             }

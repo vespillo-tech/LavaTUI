@@ -15,8 +15,10 @@
 //! Colours come from the model's theme, as everywhere else.
 
 mod clock;
+pub mod cover;
 mod lyrics;
 mod music;
+pub mod picture;
 mod pomodoro;
 
 use std::collections::BTreeMap;
@@ -31,6 +33,7 @@ use crate::theme::Role;
 pub use clock::Clock;
 #[cfg(test)]
 pub use clock::{clock_forms, clock_parts};
+pub use cover::Cover;
 pub use lyrics::Lyrics;
 #[cfg(test)]
 pub use lyrics::{Show as LyricsShow, lyrics_forms};
@@ -43,7 +46,7 @@ pub use pomodoro::pomodoro_forms;
 
 /// Every widget, in stacking order: the first sits on top of the panel
 /// (and of the stack on the lava) and is the last to shrink.
-pub static WIDGETS: &[&dyn DockWidget] = &[&Clock, &Pomodoro, &Music, &Lyrics];
+pub static WIDGETS: &[&dyn DockWidget] = &[&Clock, &Pomodoro, &Music, &Lyrics, &Cover];
 
 /// Where a widget sits (`dock.<name>` in the config).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -361,6 +364,28 @@ pub fn by_name(name: &str) -> Option<(usize, &'static dyn DockWidget)> {
         .copied()
         .enumerate()
         .find(|(_, w)| w.name() == name)
+}
+
+/// Where a cover is drawn in this layout, if anywhere: the cover widget's
+/// picture, else the music card's inline one (only one is ever shown).
+/// What the kitty protocol sizes its picture to.
+pub fn cover_at(layout: &crate::ui::layout::Layout) -> Option<Rect> {
+    let (cover, music) = (by_name(Cover.name())?.0, by_name(Music.name())?.0);
+    let placed = || {
+        layout
+            .panel
+            .iter()
+            .chain(&layout.on_lava)
+            .flat_map(|s| s.items.iter().map(move |p| (s.align, p)))
+    };
+    placed()
+        .filter(|(_, p)| p.widget == cover)
+        .find_map(|(align, p)| cover::picture_rect(p.form, p.rect, align))
+        .or_else(|| {
+            placed()
+                .filter(|(_, p)| p.widget == music)
+                .find_map(|(align, p)| music::cover_rect(p.form, p.rect, align))
+        })
 }
 
 /// `x` offset of something `w` wide in `avail` columns.

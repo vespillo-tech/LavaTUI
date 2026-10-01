@@ -9,22 +9,24 @@ use ratatui::layout::{Alignment, Rect};
 use super::chrome::{HINTS, fit_hints, fit_words};
 use super::layout::*;
 use crate::clock::{self, Face, Tier};
+use crate::dock::cover::{CoverSize, Show as CoverShow, cover_forms};
 use crate::dock::{
     Anchor, LyricsShow, Place, Show, WidgetForm, clock_forms, clock_parts, lyrics_forms,
     music_forms, pomodoro_forms,
 };
 
 /// A dock setup to lay out: where the clock (index 0), the pomodoro (1),
-/// music (2) and the lyrics widget (3, only when
-/// `lyrics`) go and at which anchors, the face, and which chips and ranks
-/// they have.
+/// music (2), the lyrics widget (3, only when `lyrics`) and the cover (4,
+/// only when placed) go and at which anchors, the face, and which chips
+/// and ranks they have.
 #[derive(Clone, Copy)]
 struct Case {
     minimal: bool,
     status_bar: bool,
-    places: [Place; 4],
-    anchors: [Anchor; 4],
+    places: [Place; 5],
+    anchors: [Anchor; 5],
     lyrics: bool,
+    cover_size: CoverSize,
     face: &'static dyn Face,
     hour24: bool,
     /// The clock's chip (none in minimal with `minimal.clock = "off"`).
@@ -40,6 +42,7 @@ struct Case {
 
 const CLOCK: usize = 0;
 const POMODORO: usize = 1;
+const COVER: usize = 4;
 /// The longest thing the music widget says instead of a track.
 const PERMISSION: &str = "Allow control of Spotify: System Settings › Privacy & \
     Security › Automation › your terminal › Spotify";
@@ -48,14 +51,16 @@ fn case(face: &'static dyn Face) -> Case {
     Case {
         minimal: false,
         status_bar: true,
-        places: [Place::Side, Place::Side, Place::Off, Place::Off],
+        places: [Place::Side, Place::Side, Place::Off, Place::Off, Place::Off],
         anchors: [
             Anchor::Center,
             Anchor::Center,
             Anchor::TopLeft,
             Anchor::Bottom,
+            Anchor::TopRight,
         ],
         lyrics: false,
+        cover_size: CoverSize::Medium,
         face,
         hour24: true,
         clock_chip: true,
@@ -68,7 +73,13 @@ fn case(face: &'static dyn Face) -> Case {
 
 impl Case {
     fn widgets(&self) -> usize {
-        if self.lyrics { 4 } else { 3 }
+        if self.places[COVER] != Place::Off {
+            5
+        } else if self.lyrics {
+            4
+        } else {
+            3
+        }
     }
 
     fn items(&self) -> Vec<DockItem> {
@@ -100,14 +111,28 @@ impl Case {
                 rank: if self.music_track { 2 } else { 0 },
             },
         ];
-        if self.lyrics {
+        if self.lyrics || p[COVER] != Place::Off {
             items.push(DockItem {
-                place: p[3],
+                place: if self.lyrics { p[3] } else { Place::Off },
                 anchor: self.anchors[3],
                 forms: forms(p[3], &|p| {
                     lyrics_forms(&LyricsShow::Lines { widest: 44 }, p)
                 }),
                 chip: self.music_track.then_some(20),
+                rank: if self.music_track { 2 } else { 0 },
+            });
+        }
+        if p[COVER] != Place::Off {
+            let show = if self.music_track {
+                CoverShow::Picture
+            } else {
+                CoverShow::Message("nothing playing")
+            };
+            items.push(DockItem {
+                place: p[COVER],
+                anchor: self.anchors[COVER],
+                forms: cover_forms(&show, p[COVER], self.cover_size, self.cell_aspect),
+                chip: None,
                 rank: if self.music_track { 2 } else { 0 },
             });
         }
@@ -480,15 +505,27 @@ fn sweep(cols: std::ops::RangeInclusive<u16>, rows: std::ops::RangeInclusive<u16
     }
 }
 
-/// `base` with the four places and anchors given (lyrics on when its place
-/// isn't off).
-fn with(base: Case, places: [Place; 4], anchors: [Anchor; 4]) -> Case {
-    Case {
-        places,
-        anchors,
+/// `base` with the first four places and anchors given (lyrics on when
+/// its place isn't off); the cover keeps `base`'s, unless a fifth anchor
+/// is given.
+fn with(base: Case, places: [Place; 4], anchors: impl Into<Vec<Anchor>>) -> Case {
+    let mut out = Case {
         lyrics: places[3] != Place::Off,
         ..base
+    };
+    out.places[..4].copy_from_slice(&places);
+    for (i, a) in anchors.into().into_iter().enumerate().take(5) {
+        out.anchors[i] = a;
     }
+    out
+}
+
+/// `base` with the cover at `place`, `anchor`.
+fn cover(base: Case, place: Place, anchor: Anchor) -> Case {
+    let mut out = base;
+    out.places[COVER] = place;
+    out.anchors[COVER] = anchor;
+    out
 }
 
 const SIDE: Place = Place::Side;
@@ -546,6 +583,24 @@ fn every_size_is_clean() {
             ..with(base, [SIDE, SIDE, SIDE, SIDE], a)
         },
         with(base, [SIDE, SIDE, SIDE, SIDE], a),
+        cover(
+            with(base, [SIDE, SIDE, SIDE, OFF], a),
+            SIDE,
+            Anchor::TopRight,
+        ),
+        Case {
+            cover_size: CoverSize::Fill,
+            ..cover(base, SIDE, Anchor::TopRight)
+        },
+        Case {
+            minimal: true,
+            cover_size: CoverSize::Large,
+            ..cover(
+                with(base, [SIDE, SIDE, SIDE, OFF], a),
+                SIDE,
+                Anchor::TopRight,
+            )
+        },
     ];
     sweep(1..=300, 1..=100, &variants);
 }
@@ -592,6 +647,12 @@ fn every_size_is_clean_with_widgets_on_the_lava() {
                 pomodoro_chip: Some(7),
                 ..with(base, [LAVA, LAVA, LAVA, LAVA], [anchor, next, next, anchor])
             },
+            cover(with(base, [SIDE, SIDE, LAVA, OFF], one), LAVA, next),
+            Case {
+                cover_size: [CoverSize::Small, CoverSize::Large, CoverSize::Fill][i % 3],
+                music_track: i % 4 != 3,
+                ..cover(with(base, [LAVA, SIDE, OFF, LAVA], one), LAVA, anchor)
+            },
         ]);
     }
     sweep(12..=300, 5..=90, &cases);
@@ -613,13 +674,15 @@ fn every_place_and_anchor_mix_is_clean() {
         let place = |k: u32| [SIDE, LAVA, OFF][(n / 3u32.pow(k) % 3) as usize];
         let places = [place(0), place(1), place(2), place(3)];
         for (p, anchors) in patterns.iter().enumerate() {
-            cases.push(Case {
+            let base = Case {
                 minimal: (n + p as u32).is_multiple_of(7),
                 pomodoro_chip: n.is_multiple_of(2).then_some(7),
                 music_track: n % 4 != 1,
                 music_cover: n % 3 != 2,
                 ..with(case(blocks()), places, *anchors)
-            });
+            };
+            let cover_place = [OFF, LAVA, SIDE][(n as usize + p) % 3];
+            cases.push(cover(base, cover_place, anchors[(n as usize) % 4]));
         }
     }
     let built: Vec<(Case, Vec<DockItem>)> = cases.iter().map(|c| (*c, c.items())).collect();
@@ -793,15 +856,19 @@ fn huge_250x70_has_the_panel_and_date() {
 
 #[test]
 fn a_tall_panel_on_a_huge_screen_takes_two_columns() {
-    let c = with(
-        case(blocks()),
-        [SIDE, SIDE, SIDE, OFF],
-        case(blocks()).anchors,
+    let c = cover(
+        with(
+            case(blocks()),
+            [SIDE, SIDE, SIDE, OFF],
+            case(blocks()).anchors,
+        ),
+        SIDE,
+        Anchor::TopRight,
     );
     let l = at(250, 70, &c);
     let p = l.panel.as_ref().unwrap();
     let xs: Vec<u16> = p.items.iter().map(|i| i.rect.x).collect();
-    assert!(xs[0] < xs[2], "music in the second column: {xs:?}");
+    assert!(xs[0] < xs[3], "the cover in the second column: {xs:?}");
     assert!(p.rect.height * 2 <= 69, "no taller than half the screen");
     assert_eq!(face_tier(&l, &c), Some((Tier::XL, 51, 8)));
     // Two widgets fit in one column there: they stay in one.
@@ -1080,6 +1147,7 @@ fn picture(l: &Layout, case: &Case) -> String {
                 POMODORO => fill(item.rect, 'o'),
                 2 => fill(item.rect, 'm'),
                 3 => fill(item.rect, 'y'),
+                COVER => fill(item.rect, 'v'),
                 _ => {}
             }
         }
@@ -1165,6 +1233,27 @@ fn snapshots_at_mockup_sizes() {
                 [LAVA, SIDE, LAVA, LAVA],
                 [TopRight, Center, TopLeft, Bottom],
             ),
+        ),
+        (
+            "cover_side_120x36",
+            120,
+            36,
+            cover(all([SIDE, SIDE, SIDE, OFF]), SIDE, TopRight),
+        ),
+        (
+            "cover_lava_160x40",
+            160,
+            40,
+            cover(with(full, [SIDE, SIDE, LAVA, OFF], a), LAVA, TopRight),
+        ),
+        (
+            "cover_fill_250x70",
+            250,
+            70,
+            Case {
+                cover_size: CoverSize::Fill,
+                ..cover(all([SIDE, SIDE, SIDE, OFF]), SIDE, TopRight)
+            },
         ),
         (
             "chips_minimal_80x24",
