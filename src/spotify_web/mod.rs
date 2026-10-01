@@ -178,7 +178,10 @@ impl SpotifyWeb {
         let flag = logged_in.clone();
         std::thread::Builder::new()
             .name("spotify-web".into())
-            .spawn(move || work(make(), &job_rx, &event_tx, &flag))
+            .spawn(move || {
+                crate::thread_qos::worker();
+                work(make(), &job_rx, &event_tx, &flag)
+            })
             .expect("spawn spotify-web worker");
         Self {
             client_id,
@@ -216,6 +219,7 @@ impl SpotifyWeb {
         std::thread::Builder::new()
             .name("spotify-login".into())
             .spawn(move || {
+                crate::thread_qos::worker();
                 let job = match wait_for_code(&browser_url, &pkce, &cancel) {
                     Ok(code) => Job::Code {
                         code,

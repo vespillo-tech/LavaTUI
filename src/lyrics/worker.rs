@@ -76,7 +76,10 @@ impl LyricsService {
         };
         thread::Builder::new()
             .name("lyrics".into())
-            .spawn(move || worker.run())?;
+            .spawn(move || {
+                crate::thread_qos::worker();
+                worker.run()
+            })?;
         Ok(Self { tx, rx, latest: 0 })
     }
 

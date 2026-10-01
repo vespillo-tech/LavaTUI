@@ -14,6 +14,7 @@ pub struct Frame {
     pub frame: u64,
     pub wait_start: Instant,
     pub wait_end: Instant,
+    pub wait_cpu_us: u64,
     pub started: Instant,
     pub drawn: Instant,
     pub deadline: Instant,
@@ -51,19 +52,23 @@ impl Trace {
         }
     }
 
+    pub fn enabled(&self) -> bool {
+        self.file.is_some()
+    }
+
     pub fn finish(&mut self) -> io::Result<()> {
         let Some(file) = &mut self.file else {
             return Ok(());
         };
         writeln!(
             file,
-            "frame,wait_start_us,wait_end_us,start_us,end_us,interval_us,input,tick_us,draw_us,diff_us,write_us,flush_us,bytes,writes,sim_steps,sim_dt_s,sim_feed_s,save_us,deadline_miss_us,fps"
+            "frame,wait_start_us,wait_end_us,start_us,end_us,interval_us,input,tick_us,draw_us,diff_us,write_us,flush_us,bytes,writes,sim_steps,sim_dt_s,sim_feed_s,save_us,deadline_miss_us,fps,wait_cpu_us"
         )?;
         let us = |at: Instant| at.saturating_duration_since(self.origin).as_micros();
         for f in self.frames.drain(..) {
             writeln!(
                 file,
-                "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{:.9},{:.9},{},{},{}",
+                "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{:.9},{:.9},{},{},{},{}",
                 f.frame,
                 us(f.wait_start),
                 us(f.wait_end),
@@ -84,7 +89,8 @@ impl Trace {
                 f.sim_feed_s,
                 f.save_us,
                 f.started.saturating_duration_since(f.deadline).as_micros(),
-                f.fps
+                f.fps,
+                f.wait_cpu_us
             )?;
         }
         file.flush()

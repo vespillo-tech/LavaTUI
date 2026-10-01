@@ -171,6 +171,8 @@ reads your quit key; on macOS a read on the master after exit is EOF/EIO.
 `tools/trace_frames.py --output /tmp/lavatui-traces` runs five-minute
 sized pty sessions and summarizes frame intervals/spike locations; see
 `docs/perf/frame-trace.md` for the trace columns and measurement limits.
+`tools/trace_frames.py --summarize /tmp/ghostty-frames.csv` prints native
+terminal interval percentiles and every >2-period gap with its measured stage.
 `docs/screenshots/capture.py` does exactly this (pyte + Pillow) and
 regenerates the README screenshots; rerun it after visible changes.
 `README.md` is the user-facing overview (features, keys, config, perf
@@ -427,4 +429,9 @@ never drift apart; there is no direct crossterm dependency.
   worker joins on that path. If a shared snapshot needs a lock, never hold
   it across I/O or backend calls; bound event draining per frame. Join only
   after drawing stops. Keep fake backends for deterministic model tests.
+- On macOS, the focused animated UI requests USER_INTERACTIVE QoS and
+  finishes each deadline with a bounded precise wait (1.5 ms guard, at most
+  200 us on-core relaxation). Frozen/unfocused waits remain blocking. Every worker
+  must call `crate::thread_qos::worker()` first to shed inherited UI QoS
+  before I/O or spawning child processes.
 - Gate before handing off: `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`.

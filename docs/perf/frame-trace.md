@@ -76,3 +76,62 @@ Trace columns: wait start/end and frame start/end relative to capture origin; co
 ## Validation
 
 cargo fmt --check; cargo clippy --all-targets -- -D warnings; cargo test (385 passed, 11 ignored after compute integration); release build. Regression tests cover early/late fake-clock pacing, immediate input grid preservation, real ratatui clear/diff/flush batching, partial/interrupted writes, legacy output fallback, direct cursor cleanup, worker save coalescing/hand edits and final CLI-override-safe save. Normal and deliberate-panic sized-pty smoke checks verify synchronized framing, cursor restoration and alternate-screen exit. Read-only review findings were addressed. No visual layout/style changes require new screenshots.
+
+
+## Deadline wake follow-up (main 8a977bc)
+
+The focused, animated UI requests macOS USER_INTERACTIVE QoS through libc. The original hint is restored when the lamp becomes idle or unfocused, and on leaving the loop (an unspecified CLI class falls back to DEFAULT, since the setter cannot request UNSPECIFIED). Workers reset to DEFAULT at entry, including workers created after startup; they do not retain the UI priority or pass it to osascript. Failure to set a scheduling hint leaves the app usable.
+
+The input wait polls until 1.5 ms before the deadline. It then checks input between sleeps of at most 100 µs and uses CPU relaxation (`spin_loop`) for the final at-most-200 µs window. This preserves immediate input and bounds active waiting to 200 µs per scheduled wait. A scheduling probe under load found OS `yield_now` itself could return about 10 ms late, even at interactive QoS (1000 repetitions: 100 µs yield window p50 138 µs, p99 2282 µs, max 10027 µs); 100 µs sleeps were p50 129 µs, p99 176 µs, max 194 µs. An initial yield-based candidate is retained in the evidence, and the final implementation avoids OS yield in the deadline window. Idle/frozen and unfocused waits retain ordinary blocking input polling. A scheduler can still delay any wake; this is a scheduling hint and a bounded precision window, not a real-time guarantee.
+
+`wait_cpu_us` is a trace-only macOS thread CPU measurement around the complete input wait, including input dispatch. Zero on unsupported platforms or clock failure means unavailable. The summary prints this CPU cost as a percentage of one core. It is an upper bound on the additional precise-wait cost, not a subtraction of baseline polling CPU. Total process CPU comes separately from the pty harness's wait4 usage.
+
+The fake clock covers deadline completion, a late blocking poll and sleeps, input in both wait phases, zero-duration queue drains, and oversleep past the deadline. A real macOS thread test checks priority restoration and worker priority reset. The merged music lifecycle test now explicitly selects truecolor so its cover assertion is independent of NO_COLOR in the test runner.
+
+## Isolated QoS + precise-wake comparison
+
+Each case ran alone for 185 seconds, before then after, on matching main 8a977bc, seed 7, truecolor, default chrome and music off, target 60 fps. The final group started after waiting six minutes for the host to settle; load never reached the requested low-load goal (1-minute load was 19.25 at final group start, and had peaked above 67 while other builds/tests ran). No local builds overlapped the final captures. These are three-minute diagnostic captures, not the bead's five-minute acceptance run or native Ghostty presentation measurements.
+
+| Size / style | Before p50 / p99 / max (ms) | Final p50 / p99 / max (ms) | Before → final >2-period gaps |
+|---|---:|---:|---:|
+| 300x90-solid | 16.679 / 20.577 / 46.545 | 16.664 / 18.953 / 31.923 | 6 → 0 |
+| 300x90-braille | 16.669 / 21.437 / 77.130 | 16.666 / 18.963 / 29.862 | 32 → 0 |
+| 200x60-solid | 16.656 / 19.034 / 48.007 | 16.664 / 18.098 / 33.585 | 1 → 1 |
+| 200x60-braille | 16.663 / 19.173 / 54.668 | 16.664 / 18.129 / 32.079 | 3 → 0 |
+
+| Size / style | Total process CPU before → final (% of one core) | Final complete input-wait CPU (% of one core) | Median wake lateness before → final (µs) |
+|---|---:|---:|---:|
+| 300x90-solid | 23.92 → 15.57 | 0.50 | 1010 → 8 |
+| 300x90-braille | 21.87 → 17.34 | 0.51 | 1010 → 8 |
+| 200x60-solid | 11.41 → 7.95 | 0.52 | 1011 → 8 |
+| 200x60-braille | 11.98 → 8.36 | 0.51 | 1012 → 8 |
+
+Complete wait CPU includes polling and dispatch, so it bounds the extra precise-wake cost rather than measuring an incremental subtraction. The final relaxation window can consume about 1.2% of one core at 60 fps (200 µs × 60), plus input-poll/check overhead. Process CPU includes startup and frame work; uncontrolled host load prevents a clean causal CPU comparison.
+
+| Size / style | Before 1-minute load start → end | Final 1-minute load start → end |
+|---|---:|---:|
+| 300x90-solid | 12.06 → 4.69 | 19.25 → 16.69 |
+| 300x90-braille | 4.69 → 8.13 | 16.69 → 17.98 |
+| 200x60-solid | 8.13 → 9.33 | 17.98 → 9.83 |
+| 200x60-braille | 9.33 → 9.12 | 9.83 → 16.87 |
+
+Final gap locations (wall-time stages, not proven scheduler causes):
+
+- 300x90-solid: no >2-period gaps.
+- 300x90-braille: no >2-period gaps.
+- 200x60-solid: one stdout-write-stage gap, frame 8994: interval 33.585 ms, write 17.070 ms, wake lateness 9 µs.
+- 200x60-braille: no >2-period gaps.
+
+All new gaps remain in [frame-spikes.csv](frame-spikes.csv); no terminal/scheduler exclusions were applied. Full compact metrics, CPU and load metadata are in [frame-trace-summary.json](frame-trace-summary.json), under `qos-before`, `qos-yield-candidate` and `qos-spin-after`. Raw traces remain in `/tmp/lavatui-qos-before-{size}-{style}`, `/tmp/lavatui-qos-after-{size}-{style}` (the rejected yield trial, two completed 300×90 runs), and `/tmp/lavatui-qos-spin-{size}-{style}` (final). The third yield-trial case was deliberately interrupted after the primitive was rejected and is not included as a completed capture.
+
+Validation: cargo fmt --check, cargo clippy --all-targets -- -D warnings, cargo test (410 passed, 11 ignored), release build, old/new-schema summary output and CPU arithmetic checks, and read-only review. The bead remains open for strict timing acceptance and native-terminal verification; these diagnostics do not justify claiming every hitch eliminated.
+
+## Native Ghostty capture
+
+Run this one-liner from the repository root in native Ghostty, at the size where the hitch occurs:
+
+```sh
+cargo run --release -- --trace /tmp/lavatui-ghostty.csv --fps 60 --frames 18000 --seed 7 && python3 tools/trace_frames.py --summarize /tmp/lavatui-ghostty.csv
+```
+
+It exits after 18,000 frames (about five minutes at focused 60 fps); `q` ends it early and still writes the trace. Keep the window focused to measure 60 fps. The summary prints p50/p99/max frame intervals, wake lateness, wait CPU, and every gap exceeding two frame periods with its measured stage. Reproduce with the usual widgets/settings so the real workload is captured. Save output alongside the terminal size and host load (`uptime`). The trace measures app frame completion, not Ghostty's actual presentation time; synchronized output lets Ghostty present the completed batch together. Existing captures can be summarized without a TTY using `python3 tools/trace_frames.py --summarize /tmp/lavatui-ghostty.csv`.
