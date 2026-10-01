@@ -15,7 +15,7 @@ use ratatui::style::Color;
 
 use super::Grid;
 use crate::sim::Shape;
-use crate::theme::{Role, Theme};
+use crate::theme::Theme;
 
 /// Half-width of `shape` at height `world_y` (0 bottom … 1 top) in a view
 /// `cols` wide, in half columns either side of the view's centre. The same
@@ -62,8 +62,8 @@ pub fn mask(shape: Shape, area: Rect, grid: Grid, mask: &mut Vec<(usize, usize)>
 /// Reshape the cells of `area` that the walls cut through into quadrant
 /// glyphs. Only for blending themes: without a liquid tint there's nothing
 /// to shape, and the glass draws a `▕ │ ▏` edge instead.
-pub fn smooth(shape: Shape, theme: &Theme, area: Rect, buf: &mut Buffer) {
-    let outside = theme.role(Role::Bg);
+/// The outside quadrants get `outside`: `bg`, or `Reset` when transparent.
+pub fn smooth(shape: Shape, theme: &Theme, outside: Color, area: Rect, buf: &mut Buffer) {
     for row in 0..area.height {
         let spans = spans(shape, area.width, area.height, row);
         let (lo, hi) = cells(spans);
@@ -97,6 +97,19 @@ pub fn smooth(shape: Shape, theme: &Theme, area: Rect, buf: &mut Buffer) {
                 .set_char(QUADRANT[usize::from(bits)])
                 .set_fg(inside)
                 .set_bg(outside);
+        }
+    }
+}
+
+/// Hand every cell of `area` the container doesn't touch back to the
+/// terminal: no glyph, default colours (`theme.transparent`).
+pub fn clear_outside(shape: Shape, area: Rect, buf: &mut Buffer) {
+    for row in 0..area.height {
+        let (lo, hi) = cells(spans(shape, area.width, area.height, row));
+        let y = area.y + row;
+        let outside = (0..lo).chain(hi..usize::from(area.width));
+        for x in outside {
+            buf[(area.x + x as u16, y)].reset();
         }
     }
 }

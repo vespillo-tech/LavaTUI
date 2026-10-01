@@ -20,7 +20,7 @@ use ratatui::crossterm::{execute, terminal};
 use ratatui::layout::Rect;
 use ratatui::{DefaultTerminal, Terminal};
 
-pub use model::{LocalTime, Model, Overlay, Picker, TOAST_TIME, Toast};
+pub use model::{LocalTime, Model, Overlay, Picker, PickerKind, TOAST_TIME, Toast};
 
 use crate::clock::ClockTime;
 use crate::config::Session;
@@ -101,9 +101,11 @@ fn run_loop(
     let mut frames = 0;
     let mut lamp = LampState::default();
     let mut events = TerminalEvents;
+    let mut last_drawn = None;
 
     loop {
-        if wait_for_input(&mut events, model, pacer.deadline())? {
+        let deadline = model.idle_until().unwrap_or_else(|| pacer.deadline());
+        if wait_for_input(&mut events, model, deadline)? {
             // Input: draw now, not at the next deadline.
             pacer = FramePacer::new(fps, Instant::now());
         }
@@ -121,9 +123,11 @@ fn run_loop(
         }
 
         let drawn = Instant::now();
+        let dt = last_drawn.map_or(Duration::ZERO, |at| drawn - at);
+        last_drawn = Some(drawn);
         meter.tick(drawn);
         model.stats.fps = meter.fps();
-        model.stats.frame_ms = (drawn - started).as_secs_f64() * 1e3;
+        model.frame_drawn((drawn - started).as_secs_f64() * 1e3, dt, drawn);
         if model.target_fps() != fps {
             fps = model.target_fps();
             pacer = FramePacer::new(fps, drawn);

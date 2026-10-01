@@ -134,12 +134,16 @@ reads your quit key; on macOS a read on the master after exit is EOF/EIO.
                 under an overlay only quit/resize/focus get through),
                 `tick` advances pomodoro/toasts/flash/eased speed/sim steps,
                 recomputes the layout, matches the sim's `Shape` to the frame,
-                and does the debounced (1 s) save. Fps: 10 unfocused, 2 frozen.
+                and does the debounced (1 s) save. Fps: 10 unfocused; frozen
+                frames sleep until the clock / pomodoro readout changes
+                (`idle_until`); `frame_drawn` feeds adaptive quality.
 - `timing.rs` — pure loop timing: `FixedStep` (accumulator, no per-frame
                 cap: sim time tracks real time × speed at any fps; only a
                 > 1.5 s `STALL` is cut short; `alpha()` for interpolation),
                 `FramePacer` (fixed-grid frame deadlines, resyncs when
-                late), `FpsMeter` (EMA).
+                late), `FpsMeter` (EMA), `Quality` (§7 adaptive quality: reduced
+                sample grid, then half fps; recovers with hysteresis and
+                backoff so it never flaps).
 - `sim/`      — wax simulation (pure, seeded, deterministic). `World::new(seed,
                 aspect, Shape)` + `step(dt)` at the fixed `dt` (`SIM_HZ = 120`).
                 World units: height 1, width = visual aspect, x centred on 0.
@@ -210,7 +214,13 @@ reads your quit key; on macOS a read on the master after exit is EOF/EIO.
                 overlay. `mod.rs` draws back to front; `glass.rs` (cap/base in
                 shaded metal with half-cell edges, `▕ ▏` walls in 16/none),
                 `panel.rs` (face + date + pomodoro, chip), `chrome.rs` (status
-                bar + hint fitting, HUD, toasts), `help.rs`, `picker.rs`.
+                bar + hint fitting, HUD, toasts), `help.rs`, `picker.rs`
+                (`placement`/`hit`: geometry shared by draw and mouse).
+                Chrome never shares cells: `ui::draw` leaves out whole any
+                panel/chip/toast/HUD an overlay (or a toast) would touch.
+                `render_tests.rs`: whole frames via `TestBackend` at the
+                mockup sizes (help, pickers, toasts, HUD, minimal), lamp
+                cells printed `~`; snapshots `ui/snapshots/render_*.txt`.
                 `tests.rs`: size sweep 1×1..300×100 × 8 setting variants
                 (no overlap/overflow, lamp always there) + mockup-size checks
                 + layout snapshots in `ui/snapshots/`.

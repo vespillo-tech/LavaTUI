@@ -333,14 +333,140 @@ fn corrupt_config_toasts_and_uses_defaults() {
 }
 
 #[test]
-fn focus_and_freeze_lower_the_frame_rate() {
+fn focus_lowers_the_frame_rate() {
     let (mut m, t0) = model("fps");
     assert_eq!(m.target_fps(), 60);
+    assert_eq!(m.idle_until(), None);
     m.update(Action::Focus(false), t0);
     assert_eq!(m.target_fps(), 10);
     m.update(Action::Focus(true), t0);
+    assert_eq!(m.target_fps(), 60);
+}
+
+/// lava-ebq.3: frozen redraws only when what's shown changes (§7).
+#[test]
+fn frozen_sleeps_until_the_clock_changes() {
+    let (mut m, t0) = model("frozen");
     m.update(Action::Freeze, t0);
-    assert_eq!(m.target_fps(), 2);
+    // The "frozen" toast still has to fade: paced as usual.
+    assert_eq!(m.idle_until(), None);
+    let t1 = t0 + TOAST_TIME;
+    tick(&mut m, t1);
+    // 14:32:07.000 → the next minute is 53 s away.
+    let wake = m.idle_until().expect("idle");
+    assert_eq!(wake - t1, Duration::from_secs(53) + WAKE_SLACK);
+
+    // A running pomodoro ticks every second.
+    m.update(Action::PomodoroToggle, t1);
+    let t2 = t1 + TOAST_TIME + Duration::from_millis(300);
+    tick(&mut m, t2);
+    let wake = m.idle_until().expect("idle");
+    assert!(wake - t2 <= Duration::from_secs(1) + WAKE_SLACK);
+    // 1.7 s in: 24:58.3 left (shown 24:59), 24:58 in 0.3 s.
+    assert_eq!(wake - t2, Duration::from_millis(300) + WAKE_SLACK);
+
+    // Adaptive quality ignores idle frames.
+    m.frame_drawn(500.0, Duration::from_secs(1), t2);
+    m.frame_drawn(500.0, Duration::from_secs(3), t2 + Duration::from_secs(3));
+    assert!(!m.quality.degraded());
+}
+
+/// lava-ebq.3: slow frames drop the grid, then the frame rate (§7).
+#[test]
+fn slow_frames_degrade_quality() {
+    let (mut m, t0) = model("quality");
+    let dt = Duration::from_millis(16);
+    let mut t = t0;
+    for _ in 0..400 {
+        t += dt;
+        m.frame_drawn(20.0, dt, t);
+    }
+    assert!(m.quality.reduced_grid());
+    assert_eq!(m.target_fps(), 30);
+    assert_eq!(
+        m.settings.display.fps, 60,
+        "the user's setting is untouched"
+    );
+}
+
+/// lava-ebq.3: clicking a picker item previews it; a double-click keeps.
+#[test]
+fn clicks_preview_and_double_clicks_keep() {
+    let (mut m, t0) = model("click");
+    m.update(Action::StylePicker, t0);
+    let Overlay::Picker(p) = m.overlay else {
+        panic!("picker open")
+    };
+    let Some(Placement::Sheet { list, .. }) = picker::placement(m.layout.area, &m.layout, &p)
+    else {
+        panic!("80x24 has a sheet")
+    };
+    let click = |row: u16| Action::Click {
+        col: list.x + 2,
+        row: list.y + row,
+    };
+    m.update(click(2), t0);
+    assert_eq!(m.style.index(), 2, "a click previews");
+    assert!(matches!(m.overlay, Overlay::Picker(p) if p.cursor == 2));
+    // Slow second click: just another preview.
+    m.update(click(2), t0 + Duration::from_secs(1));
+    assert!(matches!(m.overlay, Overlay::Picker(_)));
+    m.update(click(2), t0 + Duration::from_millis(1200));
+    assert_eq!(m.overlay, Overlay::None, "a double-click keeps");
+    assert_eq!(m.settings.lamp.style, m.style.style().name());
+    // Off the sheet: swallowed, nothing changes.
+    m.update(Action::StylePicker, t0);
+    m.update(Action::Click { col: 0, row: 0 }, t0);
+    assert!(matches!(m.overlay, Overlay::Picker(p) if p.cursor == 2));
+}
+
+#[test]
+fn inline_picker_arrows_click() {
+    let (mut m, t0) = model_with(Session::default(), temp_config("inline-click"), 30, 10);
+    m.update(Action::StylePicker, t0);
+    let Overlay::Picker(p) = m.overlay else {
+        panic!("picker open")
+    };
+    let Some(Placement::Inline { rect, .. }) = picker::placement(m.layout.area, &m.layout, &p)
+    else {
+        panic!("30x10 is inline")
+    };
+    m.update(
+        Action::Click {
+            col: rect.right() - 1,
+            row: rect.y,
+        },
+        t0,
+    );
+    assert_eq!(m.style.index(), 1, "› is next");
+    m.update(
+        Action::Click {
+            col: rect.x,
+            row: rect.y,
+        },
+        t0,
+    );
+    assert_eq!(m.style.index(), 0, "‹ is previous");
+}
+
+#[test]
+fn picker_list_scrolls_only_to_keep_the_cursor_in_view() {
+    // 50x16: a bottom sheet with a few rows.
+    let (mut m, t0) = model_with(Session::default(), temp_config("scroll"), 50, 16);
+    m.update(Action::StylePicker, t0);
+    let n = PickerKind::Style.items().len();
+    for _ in 0..n - 1 {
+        m.update(Action::Down, t0);
+    }
+    let Overlay::Picker(p) = m.overlay else {
+        panic!()
+    };
+    assert_eq!(p.cursor, n - 1);
+    let top = p.top;
+    assert!(top > 0, "scrolled to the end");
+    // Moving up inside the view doesn't scroll.
+    m.update(Action::Up, t0);
+    assert!(matches!(m.overlay, Overlay::Picker(p) if p.top == top));
 }
 
 #[test]

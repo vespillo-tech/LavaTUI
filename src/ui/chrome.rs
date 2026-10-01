@@ -21,8 +21,8 @@ pub const HINTS: &[(&str, &str, u8)] = &[
     ("?", "help", 7),
 ];
 
-/// Hints shown while a picker is open.
-const PICKER_HINTS: &[(&str, &str, u8)] =
+/// Hints shown while a picker is open (also the sheet's own hint row).
+pub const PICKER_HINTS: &[(&str, &str, u8)] =
     &[("↑↓", "preview", 0), ("⏎", "keep", 1), ("esc", "revert", 2)];
 
 /// Width of hints laid out with two spaces between them.
@@ -118,21 +118,27 @@ pub fn draw_status(buf: &mut Buffer, r: Rect, model: &Model) {
 }
 
 /// Minimal mode / no status bar: the HUD sits in the top-left corner.
-pub fn draw_hud_corner(buf: &mut Buffer, area: Rect, model: &Model) {
-    let hud = format!(" {} ", hud_text(model));
-    if (hud.chars().count() as u16) <= area.width && area.height > 2 {
-        let style = hud_style(model).bg(model.theme.role(Role::Bg));
-        buf.set_string(area.x, area.y, hud, style);
-    }
+/// Where it would go, if it fits.
+pub fn hud_corner_rect(area: Rect, model: &Model) -> Option<Rect> {
+    let w = hud_text(model).chars().count() as u16 + 2;
+    (w <= area.width && area.height > 2).then(|| Rect::new(area.x, area.y, w, 1))
 }
 
+pub fn draw_hud_corner(buf: &mut Buffer, r: Rect, model: &Model) {
+    let style = hud_style(model).bg(model.theme.role(Role::Bg));
+    buf.set_string(r.x, r.y, format!(" {} ", hud_text(model)), style);
+}
+
+/// `60 fps · 2.1 ms · 412k px`: the samples actually taken, so a reduced
+/// grid (adaptive quality, §7) shows as fewer.
 fn hud_text(model: &Model) -> String {
     let samples = model.layout.lamp.map_or(0, |l| {
         let grid = model.style.style().grid();
-        usize::from(l.view.width)
+        let n = usize::from(l.view.width)
             * usize::from(grid.x)
             * usize::from(l.view.height)
-            * usize::from(grid.y)
+            * usize::from(grid.y);
+        crate::render::samples_taken(n, model.quality.reduced_grid())
     });
     format!(
         "{:.0} fps · {:.1} ms · {}k px",
@@ -142,10 +148,11 @@ fn hud_text(model: &Model) -> String {
     )
 }
 
-/// `fps` turns `wax_hot` when frames run late (§7).
+/// `fps` turns `wax_hot` when frames run late or adaptive quality is
+/// holding the lamp back (§7).
 fn hud_style(model: &Model) -> Style {
     let budget = 1000.0 / f64::from(model.target_fps());
-    let role = if model.stats.frame_ms > 0.8 * budget {
+    let role = if model.quality.degraded() || model.stats.frame_ms > 0.8 * budget {
         Role::WaxHot
     } else {
         Role::Dim
@@ -153,12 +160,18 @@ fn hud_style(model: &Model) -> Style {
     model.theme.text(role)
 }
 
-/// ` braille  6/12 ` centred in the toast row; drops trailing words to fit
-/// (never mid-word). The last 400 ms fade out in truecolor.
-pub fn draw_toast(buf: &mut Buffer, r: Rect, toast: &Toast, model: &Model) {
-    let Some(text) = fit_words(&toast.text, usize::from(r.width).saturating_sub(2)) else {
-        return;
-    };
+/// Where ` braille  6/12 ` goes in the toast row `r`: centred, with
+/// trailing words dropped to fit (never mid-word). The text includes its
+/// 1-cell pads.
+pub fn toast_place(r: Rect, toast: &Toast) -> Option<(Rect, String)> {
+    let text = fit_words(&toast.text, usize::from(r.width).saturating_sub(2))?;
+    let padded = format!(" {text} ");
+    let w = padded.chars().count() as u16;
+    Some((Rect::new(r.x + (r.width - w) / 2, r.y, w, 1), padded))
+}
+
+/// Draw a placed toast. The last 400 ms fade out in truecolor.
+pub fn draw_toast(buf: &mut Buffer, r: Rect, text: &str, toast: &Toast, model: &Model) {
     let theme = &model.theme;
     let age = model.now.saturating_duration_since(toast.at);
     let fade_from = TOAST_TIME.saturating_sub(std::time::Duration::from_millis(400));
@@ -171,11 +184,8 @@ pub fn draw_toast(buf: &mut Buffer, r: Rect, toast: &Toast, model: &Model) {
         .paint(Ink::Role(Role::Text))
         .mix(Ink::Role(Role::Bg), fade.min(1.0))
         .color();
-    let padded = format!(" {text} ");
-    let w = padded.chars().count() as u16;
-    let x = r.x + (r.width - w) / 2;
     let style = Style::new().fg(fg).bg(theme.role(Role::Bg));
-    buf.set_string(x, r.y, padded, style);
+    buf.set_string(r.x, r.y, text, style);
 }
 
 /// `text` cut down to whole words (and no dangling `·`) within `width`.
