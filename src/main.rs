@@ -8,6 +8,7 @@ mod dock;
 // Not wired into the app yet: the now-playing widget (lava-75z.2) will be.
 #[allow(dead_code, unused_imports)]
 mod media;
+mod lyrics;
 mod render;
 mod sim;
 mod theme;
