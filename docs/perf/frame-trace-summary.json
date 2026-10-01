@@ -700,5 +700,135 @@
       "case": "200x60-braille",
       "spike_count": 0
     }
+  ],
+  "qos-integrated": [
+    {
+      "trace": "/tmp/lavatui-qos-integrated-300x90-solid/300x90-solid.csv",
+      "frames": 11085,
+      "seconds": 184.729927,
+      "p50_ms": 16.664,
+      "p99_ms": 18.903,
+      "max_ms": 27.046,
+      "fps_counts": {
+        "60": 11085
+      },
+      "bytes": 114576432,
+      "wake_p50_us": 9,
+      "wake_p99_us": 47,
+      "wake_max_us": 1462,
+      "wait_cpu_s": 0.964507,
+      "wait_cpu_percent_core": 0.5221173502656123,
+      "pty_bytes": 114576524,
+      "process_cpu_s": 27.305773,
+      "process_cpu_percent_core": 14.781456065859864,
+      "load_start": [
+        10.9541015625,
+        12.9736328125,
+        16.51220703125
+      ],
+      "load_end": [
+        8.513671875,
+        11.9677734375,
+        15.4501953125
+      ],
+      "case": "300x90-solid",
+      "spike_count": 0
+    },
+    {
+      "trace": "/tmp/lavatui-qos-integrated-300x90-braille/300x90-braille.csv",
+      "frames": 11099,
+      "seconds": 184.984903,
+      "p50_ms": 16.66,
+      "p99_ms": 19.367,
+      "max_ms": 44.42,
+      "fps_counts": {
+        "60": 11099
+      },
+      "bytes": 37324685,
+      "wake_p50_us": 9,
+      "wake_p99_us": 30,
+      "wake_max_us": 2181,
+      "wait_cpu_s": 1.041873,
+      "wait_cpu_percent_core": 0.5632205564364353,
+      "pty_bytes": 37324777,
+      "process_cpu_s": 32.673247,
+      "process_cpu_percent_core": 17.662655962794975,
+      "load_start": [
+        8.513671875,
+        11.9677734375,
+        15.4501953125
+      ],
+      "load_end": [
+        7.02978515625,
+        10.06005859375,
+        13.99609375
+      ],
+      "case": "300x90-braille",
+      "spike_count": 1
+    },
+    {
+      "trace": "/tmp/lavatui-qos-integrated-200x60-solid/200x60-solid.csv",
+      "frames": 11100,
+      "seconds": 184.98337,
+      "p50_ms": 16.669,
+      "p99_ms": 18.37,
+      "max_ms": 28.027,
+      "fps_counts": {
+        "60": 11100
+      },
+      "bytes": 54048641,
+      "wake_p50_us": 10,
+      "wake_p99_us": 29,
+      "wake_max_us": 1365,
+      "wait_cpu_s": 1.090255,
+      "wait_cpu_percent_core": 0.5893800075109454,
+      "pty_bytes": 54048733,
+      "process_cpu_s": 18.025272,
+      "process_cpu_percent_core": 9.744266200794158,
+      "load_start": [
+        7.02978515625,
+        10.06005859375,
+        13.99609375
+      ],
+      "load_end": [
+        4.01953125,
+        7.19921875,
+        12.01025390625
+      ],
+      "case": "200x60-solid",
+      "spike_count": 0
+    },
+    {
+      "trace": "/tmp/lavatui-qos-integrated-200x60-braille/200x60-braille.csv",
+      "frames": 11100,
+      "seconds": 184.983828,
+      "p50_ms": 16.653,
+      "p99_ms": 18.529,
+      "max_ms": 28.341,
+      "fps_counts": {
+        "60": 11100
+      },
+      "bytes": 19304473,
+      "wake_p50_us": 10,
+      "wake_p99_us": 29,
+      "wake_max_us": 9339,
+      "wait_cpu_s": 1.123812,
+      "wait_cpu_percent_core": 0.6075190529628353,
+      "pty_bytes": 19304565,
+      "process_cpu_s": 21.471452,
+      "process_cpu_percent_core": 11.60720492820594,
+      "load_start": [
+        4.01953125,
+        7.19921875,
+        12.01025390625
+      ],
+      "load_end": [
+        3.47314453125,
+        5.47998046875,
+        10.33642578125
+      ],
+      "case": "200x60-braille",
+      "spike_count": 0
+    }
   ]
 }

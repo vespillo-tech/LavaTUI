@@ -3052,3 +3052,4 @@ qos-before,200x60-braille,3193,54.668,wait/deadline wake,43228,28483,149,1143,31
 qos-before,200x60-braille,3457,34.717,wait/deadline wake,33423,18943,32,826,331,105,0
 qos-before,200x60-braille,6130,37.423,diff_us,16442,1013,23,820,20085,53,0
 qos-spin-after,200x60-solid,8994,33.585,write_us,15585,9,18,585,326,17070,0
+qos-integrated,300x90-braille,10131,44.42,write_us,12524,13,23,1593,462,29818,0

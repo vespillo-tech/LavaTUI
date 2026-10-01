@@ -381,15 +381,16 @@ never drift apart; there is no direct crossterm dependency.
   codebase.
 - Colours are decided only in `theme/`.
 - Fixed simulation timestep, decoupled from render frame rate.
-- Worker integration: create media/lyrics/Spotify workers before the frame
-  loop; frame/input handlers only consume ready snapshots or send commands.
+- Worker integration: UI-side worker constructors only allocate state,
+  channels and start threads; backend setup and blocking I/O belong inside
+  the worker. Frame/input handlers only consume ready snapshots or send commands.
   No process spawning, HTTP, keyring, filesystem I/O, blocking receives or
   worker joins on that path. If a shared snapshot needs a lock, never hold
   it across I/O or backend calls; bound event draining per frame. Join only
   after drawing stops. Keep fake backends for deterministic model tests.
 - On macOS, the focused animated UI requests USER_INTERACTIVE QoS and
   finishes each deadline with a bounded precise wait (1.5 ms guard, at most
-  200 us on-core relaxation). Frozen/unfocused waits remain blocking. Every worker
-  must call `crate::thread_qos::worker()` first to shed inherited UI QoS
+  200 us on-core relaxation). Frozen/unfocused waits remain blocking. Workers started
+  from the UI must call `crate::thread_qos::worker()` first to shed inherited UI QoS
   before I/O or spawning child processes.
 - Gate before handing off: `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`.

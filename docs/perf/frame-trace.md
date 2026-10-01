@@ -126,6 +126,23 @@ All new gaps remain in [frame-spikes.csv](frame-spikes.csv); no terminal/schedul
 
 Validation: cargo fmt --check, cargo clippy --all-targets -- -D warnings, cargo test (410 passed, 11 ignored), release build, old/new-schema summary output and CPU arithmetic checks, and read-only review. The bead remains open for strict timing acceptance and native-terminal verification; these diagnostics do not justify claiming every hitch eliminated.
 
+## Integrated remeasurement (main 6250200)
+
+Main advanced during capture to include Dock v2, synced lyrics, and the cheaper/platform media backends. It was merged into this branch as c560005; the dependency conflict retains macOS libc, Linux zbus and Windows APIs. The wake/QoS changes survived the merge. The osascript process and its reader are started lazily from Backend::exchange on the DEFAULT-priority media worker; the UI does not launch or wait on that process.
+
+Four more isolated 185-second cases ran with the same seed, colour, target rate and scratch defaults (music/lyrics off). This verifies the integrated build; it is separate from the matching-8a977bc before/after comparison above. All cases stayed at 60 fps.
+
+| Size / style | p50 / p99 / max (ms) | >2-period gaps | Wait CPU (% of one core) | Total process CPU (% of one core) | 1-minute load start → end |
+|---|---:|---:|---:|---:|---:|
+| 300x90-solid | 16.664 / 18.903 / 27.046 | 0 | 0.52 | 14.78 | 10.95 → 8.51 |
+| 300x90-braille | 16.660 / 19.367 / 44.420 | 1 | 0.56 | 17.66 | 8.51 → 7.03 |
+| 200x60-solid | 16.669 / 18.370 / 28.027 | 0 | 0.59 | 9.74 | 7.03 → 4.02 |
+| 200x60-braille | 16.653 / 18.529 / 28.341 | 0 | 0.61 | 11.61 | 4.02 → 3.47 |
+
+There was one gap: 300×90 braille frame 10131, interval 44.420 ms; stdout write 29.818 ms, tick 0.023 ms, draw 1.593 ms, residual diff/encoding 0.462 ms, wake lateness 13 µs. It remains in the CSV; the trace identifies the output stage but cannot establish whether the writer blocked or was descheduled there. All other integrated cases had no >2-period gaps. Complete input-wait CPU is 0.52–0.61% of one core, bounding the extra wake cost. Median wake lateness is 9–10 µs. Native Ghostty capture remains needed for the actual renderer/presentation workload, especially with the user's usual widgets enabled.
+
+Integrated gates: cargo fmt --check, cargo clippy --all-targets -- -D warnings, cargo test (445 passed, 12 ignored), release build. Review verified merge retention and worker priority inheritance. Normal and deliberate-panic sized-pty smoke checks cover synchronized framing, cursor restoration and leaving the alternate screen. No author changes were made in sim/render/theme hot loops; changes there came from main. No push or remote sync.
+
 ## Native Ghostty capture
 
 Run this one-liner from the repository root in native Ghostty, at the size where the hitch occurs:
