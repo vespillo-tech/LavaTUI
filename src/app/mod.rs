@@ -109,6 +109,10 @@ pub fn disable_terminal_modes() {
 }
 
 fn restore_modes(mut writer: impl Write) -> io::Result<()> {
+    if output::ansi_output() {
+        // Our kitty images, if any were sent.
+        writer.write_all(&crate::graphics::cleanup())?;
+    }
     queue!(
         writer,
         event::DisableMouseCapture,
@@ -159,6 +163,8 @@ fn run_loop(
             full_repaint(terminal)?;
         }
         let timings = draw_frame(terminal, model, &mut lamp, started, local_time())?;
+        // Pictures after the cells, in the same synchronized update.
+        model.kitty.write(terminal.backend_mut())?;
         if std::mem::take(&mut model.bell) {
             terminal.backend_mut().write_all(b"\x07")?;
         }

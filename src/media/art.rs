@@ -6,7 +6,9 @@
 //! lock. The worker looks in the disk cache first, else downloads the image
 //! (`https` only, size-capped), stores the raw bytes, then decodes it,
 //! crops it square and shrinks it to [`ART_PX`]² ([`Art`]): small enough to
-//! scale to any cell size every frame for free.
+//! scale to any cell size every frame for free. When pixels are wanted
+//! ([`ArtLoader::set_hires`], the kitty graphics protocol) it also keeps a
+//! sharper copy, up to [`HIRES_PX`]² and ready to send: PNG, base64.
 //!
 //! Cache: `$XDG_CACHE_HOME/lavatui/art`, else the platform cache dir; one
 //! file per URL (named by its SHA-256), the oldest pruned past
@@ -26,22 +28,31 @@ use sha2::{Digest, Sha256};
 use crate::theme::Rgb;
 
 /// Decoded covers are this many pixels square.
-pub const ART_PX: u32 = 64;
+pub const ART_PX: u32 = 128;
+/// The sharp copy for real pixels is at most this many pixels square
+/// (Spotify's covers are 640): sharp up to a ~40-column cover on a
+/// 10-pixel-wide cell, and ~200-300 KB to send.
+pub const HIRES_PX: u32 = 400;
 /// Covers kept on disk (a Spotify cover is ~60 KB: ~15 MB at most).
 const CACHE_FILES: usize = 256;
 /// Bigger downloads are refused (Spotify's 640 px covers are ~100 KB).
 const MAX_BYTES: u64 = 8 * 1024 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(10);
 
-/// A cover, decoded and shrunk: `ART_PX`² pixels, row by row.
+/// A cover, decoded and shrunk: `ART_PX`² pixels, row by row, and the
+/// sharp copy when it was asked for.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Art {
     pixels: Vec<Rgb>,
+    /// Up to [`HIRES_PX`]² as PNG, base64: what the kitty protocol sends.
+    pub hires: Option<Arc<String>>,
 }
 
 impl Art {
-    /// Decode a JPEG or PNG, crop it to its centre square and shrink it.
-    pub fn decode(bytes: &[u8]) -> Result<Self, String> {
+    /// Decode a JPEG or PNG, crop it to its centre square and shrink it
+    /// (and keep the sharp copy too, with `hires`).
+    pub fn decode(bytes: &[u8], hires: bool) -> Result<Self, String> {
+        use base64::Engine;
         let image = image::load_from_memory(bytes).map_err(|e| e.to_string())?;
         let (w, h) = (image.width(), image.height());
         let side = w.min(h);
@@ -51,7 +62,24 @@ impl Art {
         let square = image.crop_imm((w - side) / 2, (h - side) / 2, side, side);
         let small = square.thumbnail_exact(ART_PX, ART_PX).to_rgb8();
         let pixels = small.pixels().map(|p| Rgb(p[0], p[1], p[2])).collect();
-        Ok(Self { pixels })
+        let hires = hires.then(|| {
+            let n = side.min(HIRES_PX);
+            let sharp = if n == side {
+                square.to_rgb8()
+            } else {
+                square
+                    .resize_exact(n, n, image::imageops::FilterType::CatmullRom)
+                    .to_rgb8()
+            };
+            let mut png = std::io::Cursor::new(Vec::new());
+            sharp.write_to(&mut png, image::ImageFormat::Png).ok()?;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(png.into_inner());
+            Some(Arc::new(b64))
+        });
+        Ok(Self {
+            pixels,
+            hires: hires.flatten(),
+        })
     }
 
     /// A flat colour, for tests.
@@ -59,7 +87,20 @@ impl Art {
     pub fn solid(c: Rgb) -> Self {
         Self {
             pixels: vec![c; (ART_PX * ART_PX) as usize],
+            hires: None,
         }
+    }
+
+    /// With a sharp copy (`b64`, standing in for a PNG), for tests.
+    #[cfg(test)]
+    pub fn with_hires(mut self, b64: &str) -> Self {
+        self.hires = Some(Arc::new(b64.to_owned()));
+        self
+    }
+
+    /// The cover's average colour.
+    pub fn mean(&self) -> Rgb {
+        self.scaled(1, 1)[0]
     }
 
     /// The cover at `w` × `h` pixels, row by row, each the average of the
@@ -133,15 +174,19 @@ impl Fetch for Ureq {
     }
 }
 
-/// The cover the worker last finished, by URL.
-type Latest = Arc<Mutex<Option<(String, ArtState)>>>;
+/// What the worker is asked for: a URL, and whether the sharp copy too.
+type Request = (String, bool);
+
+/// The cover the worker last finished, by request.
+type Latest = Arc<Mutex<Option<(Request, ArtState)>>>;
 
 /// Handle to the art worker. Dropping it stops the worker once it has
 /// finished the cover in hand.
 pub struct ArtLoader {
-    requests: Option<Sender<String>>,
+    requests: Option<Sender<Request>>,
     latest: Latest,
-    wanted: Option<String>,
+    wanted: Option<Request>,
+    hires: bool,
 }
 
 impl ArtLoader {
@@ -169,6 +214,7 @@ impl ArtLoader {
             requests: spawned.is_ok().then_some(tx),
             latest,
             wanted: None,
+            hires: false,
         }
     }
 
@@ -176,30 +222,41 @@ impl ArtLoader {
     /// tests of what draws it.
     #[cfg(test)]
     pub fn preloaded(url: &str, art: Art) -> Self {
+        let hires = art.hires.is_some();
+        let request = (url.to_owned(), hires);
         Self {
             requests: None,
             latest: Arc::new(Mutex::new(Some((
-                url.to_owned(),
+                request.clone(),
                 ArtState::Ready(Arc::new(art)),
             )))),
-            wanted: Some(url.to_owned()),
+            wanted: Some(request),
+            hires,
         }
+    }
+
+    /// Whether covers come with the sharp copy (from the next [`want`]).
+    ///
+    /// [`want`]: Self::want
+    pub fn set_hires(&mut self, on: bool) {
+        self.hires = on;
     }
 
     /// Ask for the cover at `url` (a no-op if it's the one already asked
     /// for). Anything but `https` is never fetched.
     pub fn want(&mut self, url: &str) {
-        if self.wanted.as_deref() == Some(url) {
+        let request = (url.to_owned(), self.hires);
+        if self.wanted.as_ref() == Some(&request) {
             return;
         }
-        self.wanted = Some(url.to_owned());
+        self.wanted = Some(request.clone());
         let sent = url.starts_with("https://")
             && self
                 .requests
                 .as_ref()
-                .is_some_and(|tx| tx.send(url.to_owned()).is_ok());
+                .is_some_and(|tx| tx.send(request.clone()).is_ok());
         if !sent {
-            *lock(&self.latest) = Some((url.to_owned(), ArtState::Missing));
+            *lock(&self.latest) = Some((request, ArtState::Missing));
         }
     }
 
@@ -209,7 +266,7 @@ impl ArtLoader {
             return ArtState::Loading;
         };
         match &*lock(&self.latest) {
-            Some((url, state)) if url == wanted => state.clone(),
+            Some((request, state)) if request == wanted => state.clone(),
             _ => ArtState::Loading,
         }
     }
@@ -233,7 +290,7 @@ pub fn cache_dir() -> Option<PathBuf> {
 struct Worker<F> {
     fetch: F,
     cache: Option<PathBuf>,
-    requests: Receiver<String>,
+    requests: Receiver<Request>,
     latest: Latest,
 }
 
@@ -241,26 +298,26 @@ impl<F: Fetch> Worker<F> {
     fn run(mut self) {
         while let Ok(first) = self.requests.recv() {
             // Skipped through tracks quickly: only the last one matters.
-            let url = self.requests.try_iter().last().unwrap_or(first);
-            let state = match self.load(&url) {
+            let request = self.requests.try_iter().last().unwrap_or(first);
+            let state = match self.load(&request.0, request.1) {
                 Some(art) => ArtState::Ready(Arc::new(art)),
                 None => ArtState::Missing,
             };
-            *lock(&self.latest) = Some((url, state));
+            *lock(&self.latest) = Some((request, state));
         }
     }
 
-    fn load(&mut self, url: &str) -> Option<Art> {
+    fn load(&mut self, url: &str, hires: bool) -> Option<Art> {
         let path = self.cache.as_ref().map(|dir| dir.join(file_name(url)));
         if let Some(art) = path
             .as_ref()
             .and_then(|p| fs::read(p).ok())
-            .and_then(|bytes| Art::decode(&bytes).ok())
+            .and_then(|bytes| Art::decode(&bytes, hires).ok())
         {
             return Some(art);
         }
         let bytes = self.fetch.get(url).ok()?;
-        let art = Art::decode(&bytes).ok()?;
+        let art = Art::decode(&bytes, hires).ok()?;
         if let (Some(dir), Some(path)) = (&self.cache, &path) {
             let _ = fs::create_dir_all(dir).and_then(|()| write_atomic(path, &bytes));
             prune(dir, CACHE_FILES);
@@ -335,7 +392,8 @@ mod tests {
     #[test]
     fn decodes_crops_square_and_scales() {
         // 200×100: the centre 100×100 square is still half red, half blue.
-        let art = Art::decode(&png(200, 100)).unwrap();
+        let art = Art::decode(&png(200, 100), false).unwrap();
+        assert_eq!(art.hires, None);
         let px = art.scaled(4, 2);
         assert_eq!(px.len(), 8);
         assert_eq!(px[0], Rgb(255, 0, 0));
@@ -344,8 +402,25 @@ mod tests {
         for (w, h) in [(1, 1), (3, 7), (64, 64), (100, 50)] {
             assert_eq!(art.scaled(w, h).len(), usize::from(w * h));
         }
-        assert_eq!(art.scaled(1, 1)[0], Rgb(128, 0, 128));
-        assert!(Art::decode(b"not an image").is_err());
+        let Rgb(r, g, b) = art.mean();
+        assert!((127..=128).contains(&r) && g == 0 && (127..=128).contains(&b));
+        assert!(Art::decode(b"not an image", false).is_err());
+    }
+
+    #[test]
+    fn the_sharp_copy_is_a_square_png_capped_in_size() {
+        use base64::Engine;
+        let decode = |w, h| {
+            let art = Art::decode(&png(w, h), true).unwrap();
+            let b64 = art.hires.expect("asked for");
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(b64.as_bytes())
+                .unwrap();
+            let img = image::load_from_memory_with_format(&bytes, ImageFormat::Png).unwrap();
+            (img.width(), img.height())
+        };
+        assert_eq!(decode(900, 640), (HIRES_PX, HIRES_PX));
+        assert_eq!(decode(120, 300), (120, 120), "never enlarged");
     }
 
     /// Serves one PNG, counting requests; fails after `fail_after`.
@@ -383,6 +458,14 @@ mod tests {
         loader.want("https://i.example/a");
         assert!(matches!(wait(&loader), ArtState::Ready(_)));
         loader.want("https://i.example/a"); // same: no new request
+        assert_eq!(*count.lock().unwrap(), 1);
+        // The sharp copy is another request (from the disk cache).
+        loader.set_hires(true);
+        loader.want("https://i.example/a");
+        match wait(&loader) {
+            ArtState::Ready(art) => assert!(art.hires.is_some()),
+            other => panic!("{other:?}"),
+        }
         assert_eq!(*count.lock().unwrap(), 1);
 
         // A new loader, offline: the cover comes from disk.

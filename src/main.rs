@@ -5,6 +5,7 @@ mod cli;
 mod clock;
 mod config;
 mod dock;
+mod graphics;
 mod lyrics;
 // Partly used so far: the music widget (lava-75z.2) reads it; play_uri&co are
 // for the library UI (lava-75z.5).

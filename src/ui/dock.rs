@@ -10,6 +10,7 @@ use ratatui::style::{Color, Modifier, Style};
 
 use crate::app::Model;
 use crate::dock::{Backdrop, Backing, Look, WIDGETS};
+use crate::graphics;
 use crate::theme::{self, ColorDepth, Role, TERMINAL_DEFAULT, Theme};
 use crate::ui::layout::{CHIP_SEP, ChipRow, Stack, halo};
 
@@ -135,8 +136,9 @@ fn float(buf: &mut Buffer, scratch: &Buffer, dim: Color, lamp: &Theme) {
     let mut puts = vec![Put::Nothing; w * h];
     for (i, put) in puts.iter_mut().enumerate() {
         let from = &scratch[at(i)];
-        if from.bg != TERMINAL_DEFAULT {
-            // A picture (album art) brings its own background.
+        if from.bg != TERMINAL_DEFAULT || graphics::is_placeholder(from.symbol()) {
+            // A picture (album art) brings its own background (and a kitty
+            // placeholder's ink is its image id: never touched).
             buf[at(i)].set_symbol(from.symbol()).set_style(from.style());
         } else if from.symbol() != " " {
             let block = ink_halves(from.symbol()).is_some();
@@ -417,7 +419,7 @@ fn soft(buf: &mut Buffer, scratch: &Buffer, lamp: &Theme) {
         let from = &scratch[pos];
         // Pictures (album art) bring their own background; text keeps the
         // backing's.
-        let own_bg = from.bg != TERMINAL_DEFAULT;
+        let own_bg = from.bg != TERMINAL_DEFAULT || graphics::is_placeholder(from.symbol());
         if from.symbol() != " " || own_bg {
             let to = &mut buf[pos];
             let bg = if own_bg { from.bg } else { to.bg };

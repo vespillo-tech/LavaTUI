@@ -11,13 +11,19 @@ a monospace font. Clock times are whatever the local time is.
     /tmp/v/bin/python docs/screenshots/capture.py hero help  # some
     /tmp/v/bin/python docs/screenshots/capture.py music      # needs Spotify playing
     /tmp/v/bin/python docs/screenshots/capture.py lyrics     # Spotify + lrclib.net
+    /tmp/v/bin/python docs/screenshots/capture.py cover      # Spotify; text-cell covers
 
 `music` (the now-playing widget, beside the lamp and on the lava) and
 `lyrics` (the lyrics widget at three sizes, on the lava over several
 styles and in the side panel; it looks the playing track up on
-lrclib.net) are never part of "all": they show whatever Spotify is
-playing, so they're for checking the widgets, not for committing. They
-land in $LAVATUI_SHOT_OUT (default: the temp dir).
+lrclib.net) and `cover` (the cover widget in each text-cell detail, beside
+the lamp and on the lava) are never part of "all": they show whatever
+Spotify is playing, so they're for checking the widgets, not for
+committing. They land in $LAVATUI_SHOT_OUT (default: the temp dir).
+
+pyte can't show kitty graphics, so the terminal's own variables that would
+make `art.detail = "auto"` pick pixels (Ghostty's, kitty's) are dropped:
+captures always show text cells. `tools/kitty_check.py` checks pixels.
 
 Fonts default to macOS Menlo; set LAVATUI_SHOT_FONT to a .ttf/.ttc
 elsewhere (e.g. DejaVuSansMono.ttf).
@@ -74,7 +80,8 @@ def run(args):
         t, s = k.split(":", 1)
         keys.append((float(t), s.encode().decode("unicode_escape").encode()))
     env = dict(os.environ, TERM="xterm-256color", COLORTERM="truecolor")
-    env.pop("NO_COLOR", None)
+    for k in ("NO_COLOR", "TERM_PROGRAM", "GHOSTTY_RESOURCES_DIR", "KITTY_WINDOW_ID", "TMUX"):
+        env.pop(k, None)
     for e in args.env:
         k, v = e.split("=", 1)
         if v:
@@ -144,6 +151,12 @@ for k, m in QUAD.items():
 BOX = {"─": (1, 1, 0, 0, 1), "━": (1, 1, 0, 0, 2), "│": (0, 0, 1, 1, 1), "╭": (0, 1, 0, 1, 1),
        "╮": (1, 0, 0, 1, 1), "╰": (0, 1, 1, 0, 1), "╯": (1, 0, 1, 0, 1)}
 SHADE = {"░": 0.25, "▒": 0.5, "▓": 0.75}
+# Block sextants (U+1FB00..U+1FB3B): 2 × 3 cells, bit i = cell i, left to
+# right, top to bottom; every pattern but empty, full and the half blocks.
+SEXT = {}
+for m in range(1, 63):
+    if m not in (21, 42):
+        SEXT[chr(0x1FB00 + m - 1 - (m > 21) - (m > 42))] = m
 
 
 def mix(a, b, t):
@@ -173,6 +186,13 @@ def render(screen, out, pad=0):
                 for x0, y0, x1, y1 in BLOCKS[ch]:
                     d.rectangle([px + x0 * CW // 8, py + y0 * CH // 8,
                                  px + x1 * CW // 8 - 1, py + y1 * CH // 8 - 1], fill=fg)
+            elif ch in SEXT:
+                m = SEXT[ch]
+                for i in range(6):
+                    if m >> i & 1:
+                        x0, y0 = px + (i % 2) * CW // 2, py + (i // 2) * CH // 3
+                        x1, y1 = px + (i % 2 + 1) * CW // 2, py + (i // 2 + 1) * CH // 3
+                        d.rectangle([x0, y0, x1 - 1, y1 - 1], fill=fg)
             elif ch in BOX:
                 l, r, u, dn, wgt = BOX[ch]
                 cx, cy = px + CW // 2, py + CH // 2
@@ -277,6 +297,23 @@ LYRICS |= {
 LYRICS["lyrics-with-music-200x50"] = Shot(
     200, 50, '[lamp];style="topo";[theme];palette="abyss";[dock];music="overlay";lyrics="overlay"', frames=600
 )
+COVER = {
+    f"cover-{place}-{detail}": Shot(
+        120, 36,
+        f'[lamp];style="{style}";[theme];palette="{pal}";[dock];music="{place}";cover="{place}";[art];detail="{detail}"',
+        frames=420,
+    )
+    for detail in ["sextant", "quadrant", "halfblock"]
+    for (place, style, pal) in [("side", "solid", "lava"), ("overlay", "braille", "abyss")]
+}
+COVER |= {
+    "cover-fill-200x50": Shot(200, 50, '[lamp];style="solid";[dock];cover="side";[art];size="fill";detail="sextant"', frames=420),
+    "cover-small-80x24": Shot(80, 24, '[lamp];style="solid";[dock];cover="overlay";[art];size="small"', frames=420),
+    "cover-inline-120x36": Shot(120, 36, '[lamp];style="solid";[dock];music="side";[art];detail="quadrant"', frames=420),
+    "cover-256-120x36": Shot(120, 36, '[lamp];style="solid";[dock];cover="side";[art];detail="sextant"', args="--seed 2 --color 256", frames=420),
+    "cover-16-80x24": Shot(80, 24, '[lamp];style="ascii";[dock];cover="side"', args="--seed 2 --color 16", frames=420),
+    "cover-tiny-30x10": Shot(30, 10, '[lamp];style="solid";[dock];cover="overlay"', frames=420),
+}
 TILES = {f"style-{s}": Shot(34, 30, TILE + f'style="{s}"') for s in STYLES}
 TILES |= {f"palette-{p}": Shot(34, 30, TILE + f'style="solid";[theme];palette="{p}"') for p in PALETTES}
 
@@ -291,6 +328,8 @@ def main(names):
         jobs |= LYRICS
     if "library" in want:
         jobs |= LIBRARY
+    if "cover" in want:
+        jobs |= COVER
     if "styles" in want:
         jobs |= {n: s for n, s in TILES.items() if n.startswith("style-")}
     if "palettes" in want:
@@ -299,7 +338,7 @@ def main(names):
     def one(item):
         name, shot = item
         out = os.path.join(HERE if name in SHOTS else tmp, name + ".png")
-        if name in LIVE or name in LYRICS or name in LIBRARY:
+        if name in LIVE or name in LYRICS or name in LIBRARY or name in COVER:
             live = os.environ.get("LAVATUI_SHOT_OUT", tempfile.gettempdir())
             out = os.path.join(live, name + ".png")
         render(run(shot), out)

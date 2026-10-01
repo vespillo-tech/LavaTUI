@@ -1,6 +1,7 @@
 //! The music widget's state: the media source and the cover loader, both
-//! alive only while the widget is placed (side or on the lava), and the
-//! player keys (`A`).
+//! alive only while a widget that needs them is placed (music, lyrics,
+//! cover), the player keys (`A`), and which cover the kitty protocol
+//! should hold.
 //!
 //! Nothing here waits on the player: [`Music::sync`] reads the source's
 //! latest snapshot once a frame (a short lock) and commands are queued.
@@ -9,7 +10,9 @@ use std::time::{Duration, Instant};
 
 use super::Model;
 use super::library::ListKind;
+use crate::dock::cover::{self, Drawn};
 use crate::dock::{self, DockWidget, Place};
+use crate::graphics;
 use crate::media::art::{ArtLoader, ArtState};
 use crate::media::{self, Capabilities, Command, MediaSource, Snapshot};
 use crate::ui::keymap::PlayerKey;
@@ -69,8 +72,9 @@ impl Music {
 
     /// Once a frame: connect when `on` (the widget is placed), disconnect
     /// when not (which stops the polling), read the latest state, and ask
-    /// for the cover when pictures can be shown.
-    pub fn sync(&mut self, on: bool, images: bool) {
+    /// for the cover when pictures can be shown (`hires`: the sharp copy
+    /// for real pixels too).
+    pub fn sync(&mut self, on: bool, images: bool, hires: bool) {
         if !on {
             self.source = None;
             self.art = None;
@@ -86,7 +90,9 @@ impl Music {
             .map(|t| t.artwork_url.as_str())
             .filter(|u| !u.is_empty());
         if let Some(url) = url.filter(|_| images) {
-            self.art.get_or_insert_with(|| (self.load_art)()).want(url);
+            let art = self.art.get_or_insert_with(|| (self.load_art)());
+            art.set_hires(hires);
+            art.want(url);
         }
         self.snapshot = Some(snapshot);
     }
@@ -147,34 +153,114 @@ impl Model {
         self.settings.dock.place(&dock::Music) != Place::Off
     }
 
-    /// Whether anything needs the player: the music or the lyrics widget.
+    /// Whether the cover widget is placed.
+    pub fn cover_on(&self) -> bool {
+        self.settings.dock.place(&dock::Cover) != Place::Off
+    }
+
+    /// Whether anything needs the player: the music, lyrics or cover
+    /// widget.
     pub fn media_on(&self) -> bool {
-        self.music_on() || self.lyrics_on()
+        self.music_on() || self.lyrics_on() || self.cover_on()
+    }
+
+    /// How covers are drawn here and now (`art.detail` resolved).
+    pub fn pictures(&self) -> Drawn {
+        cover::resolve(self.settings.art.detail, self.caps, self.theme.depth())
+    }
+
+    /// Whether the music card shows its own small cover.
+    pub fn inline_cover(&self) -> bool {
+        self.settings.art.inline && !self.cover_on() && self.pictures() != Drawn::None
     }
 
     /// Connect or let go of the player as the widgets' places say, read its
     /// latest state (each frame, and after any key), and sync the lyrics
     /// to it.
     pub(super) fn sync_music(&mut self) {
-        let images = self.music_on() && self.theme.shows_images();
-        self.music.sync(self.media_on(), images);
+        let pictures = self.pictures();
+        let images = (self.music_on() && self.inline_cover()) || self.cover_on();
+        let images = images && pictures != Drawn::None;
+        self.music
+            .sync(self.media_on(), images, pictures == Drawn::Pixels);
         self.patch_modes();
         self.sync_lyrics();
     }
 
+    /// After each layout: the picture the terminal should hold (the cover
+    /// at the size it's laid out at, in pixels mode), or none.
+    pub(super) fn sync_pictures(&mut self) {
+        let want = (|| {
+            if self.pictures() != Drawn::Pixels {
+                return None;
+            }
+            let ArtState::Ready(art) = self.music.art() else {
+                return None;
+            };
+            let png = art.hires.clone()?;
+            let track = self.music.snapshot.as_ref()?.track.as_ref()?;
+            let r = dock::cover_at(&self.layout)?;
+            let key = graphics::Key {
+                source: track.artwork_url.clone(),
+                cols: r.width,
+                rows: r.height,
+            };
+            Some((key, png))
+        })();
+        self.kitty
+            .want(want.as_ref().map(|(key, png)| (key.clone(), png)));
+    }
+
     /// The player key a mouse press at (`col`, `row`) stands for: a
-    /// control or the progress bar of the music widget, wherever it's
-    /// placed (the layout's own rects, so it matches what's drawn).
+    /// control or the progress bar of the music widget, or the cover
+    /// (play / pause), wherever they're placed (the layout's own rects, so
+    /// it matches what's drawn).
     pub(super) fn music_hit(&self, col: u16, row: u16) -> Option<PlayerKey> {
         let music = dock::by_name(dock::Music.name())?.0;
+        let cover = dock::by_name(dock::Cover.name())?.0;
         let at = (col, row).into();
-        self.layout
+        let mut placed = self
+            .layout
             .panel
             .iter()
             .chain(&self.layout.on_lava)
             .flat_map(|s| s.items.iter().map(move |p| (s.align, p)))
-            .filter(|(_, p)| p.widget == music && p.rect.contains(at))
-            .find_map(|(align, p)| dock::music_hit(self, p.form, p.rect, align, col, row))
+            .filter(|(_, p)| p.rect.contains(at));
+        placed.find_map(|(align, p)| {
+            if p.widget == music {
+                dock::music_hit(self, p.form, p.rect, align, col, row)
+            } else if p.widget == cover {
+                let r = cover::picture_rect(p.form, p.rect, align)?;
+                let snap = self.music.snapshot.as_ref()?;
+                (r.contains(at) && snap.track.is_some() && snap.status.is_available())
+                    .then_some(PlayerKey::PlayPause)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// `O`: the next cover detail; the toast says what it comes to here.
+    pub(super) fn next_cover_detail(&mut self, now: Instant) {
+        let art = &mut self.settings.art;
+        art.detail = art.detail.next();
+        let detail = art.detail;
+        self.changed(now);
+        self.sync_music();
+        let drawn = match self.pictures() {
+            Drawn::Pixels => "pixels",
+            Drawn::Text(cover_mode) => match cover_mode {
+                dock::picture::TextMode::Sextant => "sextant",
+                dock::picture::TextMode::Quadrant => "quadrant",
+                dock::picture::TextMode::HalfBlock => "halfblock",
+            },
+            Drawn::None => "no pictures here",
+        };
+        self.toast(if drawn == detail.name() {
+            format!("cover · {drawn}")
+        } else {
+            format!("cover · {} · {drawn}", detail.name())
+        });
     }
 
     /// `A`: the player keys on (they last until esc).
@@ -220,6 +306,10 @@ impl Model {
             PlayerKey::Previous => Command::Previous,
             PlayerKey::SeekBack => Command::Seek(snap.position_at(now).saturating_sub(SEEK_STEP)),
             PlayerKey::SeekForward => Command::Seek(snap.position_at(now) + SEEK_STEP),
+            PlayerKey::VolumeUp | PlayerKey::VolumeDown if !caps.volume => {
+                self.toast(format!("{player} has no volume control here"));
+                return;
+            }
             PlayerKey::VolumeUp | PlayerKey::VolumeDown => {
                 let volume = if key == PlayerKey::VolumeUp {
                     snap.volume.saturating_add(VOLUME_STEP).min(100)

@@ -1,23 +1,23 @@
-//! Music (now playing): the cover, title, artist, album, a progress bar
-//! with the times, play state and volume; `▶ title – artist` as its chip.
-//! Off by default (`a` places it, `A` turns on the player keys).
+//! Music (now playing): title, artist, album, a progress bar with the
+//! times, play state and volume, and a small cover; `▶ title – artist` as
+//! its chip. Off by default (`a` places it, `A` turns on the player keys).
 //!
 //! Forms, most preferred first (the layout keeps the first that fits):
 //!
 //! | form | size | shows |
 //! |---|---|---|
-//! | cover on top | A × (A/2 + 7), A = 32, 24, 20, 16 | the cover (half-block pixels, A px square), then the card |
-//! | cover beside | 32 × 6 | a 12-col cover left of the card |
+//! | cover beside | ≥ 32 × 6 | a 12 × 6 cover left of the card |
 //! | card | ≥ 20 × 6 | title, artist, album, ·, bar, `▶ 1:23  vol 70  3:45` |
 //! | compact | ≥ 20 × 3 | title, artist, `▶ 1:23 ━━━─── 3:45` |
 //! | line | ≤ 36 × 1 | `▶ title – artist` |
 //!
-//! Cover forms only exist when the theme can show a picture (truecolor or
-//! 256 colours, [`Theme::image`](crate::theme::Theme::image)) and the track
-//! has a cover; until it has loaded (or if it can't be) a quiet placeholder
-//! holds its place, so nothing jumps when it arrives. With no player to
-//! show, the widget is one calm sentence instead (`Spotify isn't running`)
-//! and has no chip.
+//! The big cover is its own widget ([`super::Cover`]); the card's small
+//! one is there only with `art.inline` on, while the cover widget is off,
+//! when covers can be shown at all ([`Drawn`](super::cover::Drawn)) and the
+//! track has one. It's drawn the cover widget's way (pixels or text cells);
+//! until it has loaded a quiet placeholder holds its place, so nothing
+//! jumps when it arrives. With no player to show, the widget is one calm
+//! sentence instead (`Spotify isn't running`) and has no chip.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Rect};
@@ -26,15 +26,12 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::{Anchor, ChipText, DockWidget, Look, Place, WidgetForm, align_x};
 use crate::app::{Account, Model};
-use crate::media::art::ArtState;
 use crate::media::{Snapshot, Status};
-use crate::theme::{Ink, Role};
+use crate::theme::Role;
 use crate::ui::keymap::PlayerKey;
 
 pub struct Music;
 
-/// Cover sizes (cols; rows are half) for the cover-on-top forms.
-const COVERS: [u16; 4] = [32, 24, 20, 16];
 /// The cover beside the card: 12 cols, 6 rows, as tall as the card.
 const SIDE_COVER: u16 = 12;
 /// The card's rows, and its narrowest.
@@ -50,7 +47,6 @@ const CHIP_MAX: u16 = 32;
 const MESSAGE_W: (u16, u16) = (20, 30);
 
 /// `WidgetForm::variant`: the kind in the high byte, a cover size low.
-const V_COVER_TOP: u16 = 0x100;
 const V_COVER_SIDE: u16 = 0x200;
 const V_CARD: u16 = 0x300;
 const V_COMPACT: u16 = 0x400;
@@ -62,7 +58,8 @@ const V_MESSAGE: u16 = 0x600;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Show {
     Track {
-        /// A cover can be shown (the theme draws pictures and there is one).
+        /// The card's small cover is shown (`art.inline`, the cover widget
+        /// off, pictures possible, and the track has one).
         cover: bool,
         /// Playing (the times tick every second).
         playing: bool,
@@ -85,7 +82,7 @@ fn show(model: &Model) -> Show {
         (Status::Connecting, _) => message("…"),
         (Status::Stopped, _) | (_, None) => message("nothing playing"),
         (Status::Playing | Status::Paused, Some(track)) => Show::Track {
-            cover: model.theme.shows_images() && !track.artwork_url.is_empty(),
+            cover: model.inline_cover() && !track.artwork_url.is_empty(),
             playing: snap.status == Status::Playing,
             line_w: width(&line_text(snap)).min(LINE_MAX),
         },
@@ -111,15 +108,11 @@ pub fn music_forms(show: &Show, place: Place) -> Vec<WidgetForm> {
             };
             let mut forms = Vec::new();
             if cover {
-                let top =
-                    |a: u16| WidgetForm::fill(a.max(CARD.0), a / 2 + 1 + CARD.1, V_COVER_TOP | a);
-                forms.extend([top(COVERS[0]), top(COVERS[1])]);
                 forms.push(WidgetForm::fill(
                     SIDE_COVER + 2 + BESIDE_W,
                     CARD.1,
                     V_COVER_SIDE | SIDE_COVER,
                 ));
-                forms.extend([top(COVERS[2]), top(COVERS[3])]);
             }
             forms.push(WidgetForm::fill(CARD.0, CARD.1, V_CARD));
             forms.push(WidgetForm::fill(COMPACT.0, COMPACT.1, V_COMPACT));
@@ -265,24 +258,14 @@ fn parts(form: WidgetForm, area: Rect, align: Alignment) -> Option<Parts> {
             let card = Rect::new(area.x + size + 2, area.y, area.width - size - 2, CARD.1);
             parts.card = Some((card, Alignment::Left));
         }
-        V_COVER_TOP => {
-            let block_w = size.max(CARD.0).min(area.width);
-            if block_w < size || area.height < size / 2 + 1 + CARD.1 {
-                return None;
-            }
-            let block = Rect {
-                x: area.x + align_x(align, area.width, block_w),
-                width: block_w,
-                ..area
-            };
-            let cover_x = block.x + align_x(align, block_w, size);
-            parts.cover = Some(Rect::new(cover_x, block.y, size, size / 2));
-            let card = Rect::new(block.x, block.y + size / 2 + 1, block_w, CARD.1);
-            parts.card = Some((card, align));
-        }
         _ => return None,
     }
     Some(parts)
+}
+
+/// Where the inline cover goes in a placed form, if it has one.
+pub fn cover_rect(form: WidgetForm, area: Rect, align: Alignment) -> Option<Rect> {
+    parts(form, area, align)?.cover
 }
 
 /// A clickable control in the widget (each also has a player key).
@@ -630,7 +613,9 @@ impl Pen<'_, '_> {
             }
             modes.push('↻');
         }
-        right.insert(0, format!("vol {}", self.snap.volume));
+        if caps.volume {
+            right.insert(0, format!("vol {}", self.snap.volume));
+        }
         if !modes.is_empty() {
             right.insert(0, modes);
         }
@@ -662,43 +647,9 @@ impl Pen<'_, '_> {
         total_text(self.snap)
     }
 
-    /// The cover in `r`, as half-block pixels (`r.width` × `2·r.height`),
-    /// or a quiet placeholder while it loads (or if it can't).
+    /// The small cover in `r` (the cover widget's drawing).
     fn cover(&mut self, r: Rect) {
-        let theme = &self.model.theme;
-        let buf = &mut *self.buf;
-        let r = r.intersection(buf.area);
-        if let ArtState::Ready(art) = self.model.music.art() {
-            let px = art.scaled(r.width, r.height * 2);
-            let w = usize::from(r.width);
-            for y in 0..r.height {
-                for x in 0..r.width {
-                    let i = usize::from(y) * 2 * w + usize::from(x);
-                    let (top, bottom) = (theme.image(px[i]), theme.image(px[i + w]));
-                    if let (Some(top), Some(bottom)) = (top, bottom) {
-                        buf[(r.x + x, r.y + y)]
-                            .set_char('▀')
-                            .set_fg(top)
-                            .set_bg(bottom);
-                    }
-                }
-            }
-            return;
-        }
-        let tile = theme
-            .paint(Ink::Role(Role::Bg))
-            .mix(Ink::Role(Role::Dim), 0.18)
-            .color();
-        for pos in r.positions() {
-            buf[pos].set_char(' ').set_bg(tile);
-        }
-        let (cx, cy) = (r.x + r.width / 2, r.y + r.height / 2);
-        if r.contains((cx, cy).into()) {
-            buf[(cx, cy)]
-                .set_char('♪')
-                .set_fg(theme.role(Role::Dim))
-                .set_bg(tile);
-        }
+        super::cover::draw_cover(self.model, r, self.buf);
     }
 }
 
@@ -789,24 +740,12 @@ mod tests {
     }
 
     #[test]
-    fn forms_go_from_the_big_cover_down_to_one_line() {
+    fn forms_go_from_the_small_cover_down_to_one_line() {
         let forms = music_forms(&track(true), Place::Side);
         let kinds: Vec<u16> = forms.iter().map(|f| f.variant).collect();
-        assert_eq!(
-            kinds,
-            [
-                V_COVER_TOP | 32,
-                V_COVER_TOP | 24,
-                V_COVER_SIDE | 12,
-                V_COVER_TOP | 20,
-                V_COVER_TOP | 16,
-                V_CARD,
-                V_COMPACT,
-                V_LINE,
-            ]
-        );
-        assert_eq!(forms[0].size.height, 16 + 1 + 6);
-        assert_eq!(forms[2].size.width, 12 + 2 + 18);
+        assert_eq!(kinds, [V_COVER_SIDE | 12, V_CARD, V_COMPACT, V_LINE]);
+        assert_eq!(forms[0].size.width, 12 + 2 + 18);
+        assert_eq!(forms[0].size.height, 6);
         let last = forms.last().unwrap();
         assert_eq!(
             (last.size.width, last.size.height, last.fill),
@@ -816,7 +755,8 @@ mod tests {
         // one-line form has none.
         assert!(forms[..forms.len() - 1].iter().all(|f| f.seconds));
         assert!(!last.seconds);
-        // No cover (16 colours, or a track without one): no cover forms.
+        // No cover (16 colours, the cover widget placed, `art.inline` off,
+        // or a track without one): no cover forms.
         let plain = music_forms(&track(false), Place::Overlay);
         assert_eq!(plain.len(), 3);
         assert_eq!(plain[0].variant, V_CARD);
