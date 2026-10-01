@@ -375,9 +375,11 @@ numbers); `docs/design.md` is the layout/visual contract.
                 own: `InputMode::Player`) that drives
                 both dispatch (`action_for(event, InputMode)`) and the help
                 overlay. `mod.rs` draws back to front; `dock.rs` (panel, widgets on the
-                lava over their soft backing: veiled 82 % to liquid, fading
-                out over 1½ rows, truecolor only — plain liquid below it —
-                and the chip), `chrome.rs` (status
+                lava, floating by default — `dock.backing = "none"`:
+                glyphs only, each cell keeping the lamp's colours, ink
+                per word by contrast with hysteresis — or on the soft
+                backing, `"soft"`: veiled 82 % to liquid, truecolor
+                only — and the chip), `chrome.rs` (status
                 bar + hint fitting, HUD, toasts), `help/` (`sheet.rs`: the
                 pure geometry the model also reads — form per size, lines,
                 body rect, `footprint`, `max_scroll`; `mod.rs` draws),
