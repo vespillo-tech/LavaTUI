@@ -5,7 +5,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 
-use crate::app::{Model, Overlay, TOAST_TIME, Toast};
+use crate::app::{Model, Overlay, TOAST_FADE, TOAST_TIME, Toast};
 use crate::theme::{ColorDepth, Ink, Role};
 
 /// The status bar's key hints in display order, with their drop rank
@@ -170,13 +170,13 @@ pub fn toast_place(r: Rect, toast: &Toast) -> Option<(Rect, String)> {
     Some((Rect::new(r.x + (r.width - w) / 2, r.y, w, 1), padded))
 }
 
-/// Draw a placed toast. The last 400 ms fade out in truecolor.
+/// Draw a placed toast. The last [`TOAST_FADE`] fades out in truecolor.
 pub fn draw_toast(buf: &mut Buffer, r: Rect, text: &str, toast: &Toast, model: &Model) {
     let theme = &model.theme;
     let age = model.now.saturating_duration_since(toast.at);
-    let fade_from = TOAST_TIME.saturating_sub(std::time::Duration::from_millis(400));
+    let fade_from = TOAST_TIME.saturating_sub(TOAST_FADE);
     let fade = if theme.depth() == ColorDepth::TrueColor && age > fade_from {
-        (age - fade_from).as_secs_f32() / 0.4
+        (age - fade_from).as_secs_f32() / TOAST_FADE.as_secs_f32()
     } else {
         0.0
     };

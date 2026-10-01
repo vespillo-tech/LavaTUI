@@ -46,7 +46,7 @@ pub enum Role {
 }
 
 impl Role {
-    #[cfg_attr(not(test), expect(dead_code, reason = "palette tests iterate roles"))]
+    #[cfg(test)]
     pub const ALL: [Role; 9] = [
         Role::Bg,
         Role::Liquid,

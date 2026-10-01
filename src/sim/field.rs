@@ -111,10 +111,7 @@ impl Field {
     }
 
     /// Viewport width in world units (the lamp's visual aspect).
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "read by render styles (lava-bdj)")
-    )]
+    #[cfg(test)]
     pub fn aspect(&self) -> f32 {
         self.view_width
     }
@@ -125,10 +122,7 @@ impl Field {
     }
 
     /// Sample one point (`u`, `v` normalised, `v` down).
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "read by render styles (lava-bdj)")
-    )]
+    #[cfg(test)]
     pub fn sample(&self, u: f32, v: f32) -> Sample {
         let x = (u - 0.5) * self.view_width;
         let y = 1.0 - v;

@@ -15,7 +15,6 @@
 //!   clock. The sim's `dt` never changes; only how many steps run per frame.
 
 use std::ops::RangeInclusive;
-use std::time::Duration;
 
 use super::{Phase, Shape, World};
 
@@ -107,15 +106,6 @@ impl SimSpeed {
     pub fn factor(self) -> f64 {
         Self::FACTORS[self.0]
     }
-
-    /// Real time → sim time.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the app eases between notches via factor()")
-    )]
-    pub fn scale(self, elapsed: Duration) -> Duration {
-        elapsed.mul_f64(self.factor())
-    }
 }
 
 impl Default for SimSpeed {
@@ -180,7 +170,7 @@ impl World {
     }
 
     /// True from [`World::reseed`] until the new lamp has budded.
-    #[cfg_attr(not(test), expect(dead_code, reason = "for a future HUD line"))]
+    #[cfg(test)]
     pub fn is_reseeding(&self) -> bool {
         self.reseed.is_some()
     }
@@ -287,9 +277,5 @@ mod tests {
             speed = speed.slower();
             assert_eq!(speed.factor(), expected);
         }
-        assert_eq!(
-            speed.scale(Duration::from_millis(100)),
-            Duration::from_millis(25)
-        );
     }
 }

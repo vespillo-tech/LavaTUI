@@ -39,6 +39,15 @@ fn assert_close(a: f64, b: f64, tol: f64) {
     assert!((a - b).abs() <= tol, "{a} vs {b} (tol {tol})");
 }
 
+/// The wax colour span sits inside the temperatures the sim produces:
+/// above the coolest liquid, below the pool.
+#[test]
+fn wax_temp_span_is_inside_the_sim_range() {
+    let (cool, hot) = (f64::from(WAX_TEMP.0), f64::from(WAX_TEMP.1));
+    assert!(AMBIENT_TOP < cool && cool < NEUTRAL_TEMP);
+    assert!(NEUTRAL_TEMP < hot && hot < POOL_TEMP);
+}
+
 #[test]
 fn hot_rises_cold_sinks() {
     let mut world = World::bare(1.0);

@@ -22,8 +22,8 @@ use crate::ui::layout::SizeTier;
 const SHEET: (u16, u16) = (64, 18);
 /// Columns needed inside the sheet for two columns.
 const TWO_COLUMNS: u16 = 56;
-/// How far the lamp behind the sheet is dimmed (truecolor).
-const DIM: f32 = 0.65;
+/// How far the lamp behind the sheet fades toward `bg` (truecolor).
+const BEHIND_FADE: f32 = 0.65;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Line {
@@ -223,8 +223,8 @@ fn dim_outside(buf: &mut Buffer, keep: Rect, theme: &Theme) {
                 continue;
             }
             if let Some(cell) = buf.cell_mut((x, y)) {
-                cell.fg = theme.fade_to_bg(cell.fg, DIM);
-                cell.bg = theme.fade_to_bg(cell.bg, DIM);
+                cell.fg = theme.fade_to_bg(cell.fg, BEHIND_FADE);
+                cell.bg = theme.fade_to_bg(cell.bg, BEHIND_FADE);
             }
         }
     }

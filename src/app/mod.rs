@@ -20,7 +20,7 @@ use ratatui::crossterm::{execute, terminal};
 use ratatui::layout::Rect;
 use ratatui::{DefaultTerminal, Terminal};
 
-pub use model::{LocalTime, Model, Overlay, Picker, PickerKind, TOAST_TIME, Toast};
+pub use model::{LocalTime, Model, Overlay, Picker, PickerKind, TOAST_FADE, TOAST_TIME, Toast};
 
 use crate::clock::ClockTime;
 use crate::config::Session;

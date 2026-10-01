@@ -29,7 +29,7 @@ use ratatui::layout::Rect;
 use ratatui::widgets::StatefulWidget;
 
 use crate::light::Lighting;
-use crate::sim::{Field, SURFACE, Sample};
+use crate::sim::{Field, SURFACE, Sample, WAX_TEMP};
 use crate::theme::Theme;
 
 /// Most samples a frame may take (docs/design.md §2.4). Above it the field
@@ -139,11 +139,12 @@ pub fn soft_edge(density: f32, edge: f32) -> f32 {
     smoothstep((density - (SURFACE - edge / 2.0)) / edge)
 }
 
-/// Where a wax temperature sits on the wax gradient (0 cool … 1 hot).
-/// Wax lives between the cool top liquid and the heater pool.
+/// Where a wax temperature sits on the wax gradient (0 cool … 1 hot):
+/// its place in the sim's [`WAX_TEMP`] span.
 #[inline]
 pub fn wax_heat(temp: f32) -> f32 {
-    ((temp - 0.25) / 0.65).clamp(0.0, 1.0)
+    const SPAN: f32 = WAX_TEMP.1 - WAX_TEMP.0;
+    ((temp - WAX_TEMP.0) / SPAN).clamp(0.0, 1.0)
 }
 
 /// Lighting as a nudge along a 0..1 level (heat, glyph density) rather

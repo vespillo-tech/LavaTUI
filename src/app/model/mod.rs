@@ -33,6 +33,8 @@ pub const SIM_HZ: u32 = 120;
 const PREWARM_STEPS: u32 = 600;
 /// How long a toast stays up (§4.2).
 pub const TOAST_TIME: Duration = Duration::from_millis(1400);
+/// The end of a toast's time that it fades out over (truecolor).
+pub const TOAST_FADE: Duration = Duration::from_millis(400);
 /// Phase-change flash length (§4.5).
 pub const FLASH_TIME: Duration = Duration::from_millis(600);
 /// `r` must be pressed twice within this to reset the pomodoro.

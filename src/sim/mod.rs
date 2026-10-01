@@ -61,6 +61,10 @@ const AMBIENT_BOTTOM: f64 = 0.42;
 const AMBIENT_TOP: f64 = 0.18;
 /// Temperature of the pool on the heater, and of buds leaving it.
 const POOL_TEMP: f64 = 0.92;
+/// The span wax temperatures show across, cool to hot: from a little
+/// above the top liquid (wax that has cooled there) to a little below
+/// the pool (fresh off the heater). Renderers map it onto the wax colours.
+pub const WAX_TEMP: (f32, f32) = (0.25, 0.9);
 
 /// Upward acceleration per unit of `temp - NEUTRAL_TEMP` for a
 /// reference-size blob (world units / s²).
@@ -290,18 +294,12 @@ impl World {
         }
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "read by render styles (lava-bdj)")
-    )]
+    #[cfg(test)]
     pub fn blobs(&self) -> &[Blob] {
         &self.blobs
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "read by render styles (lava-bdj)")
-    )]
+    #[cfg(test)]
     pub fn stats(&self) -> Stats {
         self.stats
     }
@@ -318,10 +316,7 @@ impl World {
 
     /// Single field sample at the current state. Convenience for tests and
     /// one-offs; renderers should reuse a [`Field`].
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "read by render styles (lava-bdj)")
-    )]
+    #[cfg(test)]
     pub fn sample(&self, u: f64, v: f64) -> Sample {
         let mut field = Field::default();
         field.prepare(self, 1.0);
