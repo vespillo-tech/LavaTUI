@@ -5,12 +5,15 @@ mod cli;
 mod clock;
 mod config;
 mod dock;
+mod lyrics;
 // Not wired into the app yet: the now-playing widget (lava-75z.2) will be.
 #[allow(dead_code, unused_imports)]
 mod media;
-mod lyrics;
 mod render;
 mod sim;
+// Not wired into the UI yet (lava-75z.5 does that).
+#[allow(dead_code)]
+mod spotify_web;
 mod theme;
 mod timing;
 mod ui;
