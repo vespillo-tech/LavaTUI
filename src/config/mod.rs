@@ -38,6 +38,7 @@ pub struct Settings {
     pub minimal: Minimal,
     pub input: Input,
     pub dock: DockSettings,
+    pub spotify: Spotify,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -104,6 +105,15 @@ pub struct Minimal {
 pub struct Input {
     /// Mouse capture (off by default: it breaks native text selection).
     pub mouse: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct Spotify {
+    /// Your Spotify app's Client ID, for the Web API library features
+    /// (`docs/spotify.md`). Empty: off, unless `LAVATUI_SPOTIFY_CLIENT_ID`
+    /// is set. Playback control needs none of this.
+    pub client_id: String,
 }
 
 /// `display.color` / `--color`.
@@ -236,8 +246,9 @@ const RETIRED_STYLES: [&str; 3] = ["heatmap", "dither", "crt"];
 
 impl Settings {
     /// The sections of `config.toml`, in file order.
-    const SECTIONS: [&str; 9] = [
+    const SECTIONS: [&str; 10] = [
         "display", "lamp", "theme", "clock", "pomodoro", "ui", "minimal", "input", "dock",
+        "spotify",
     ];
 
     /// Parse a hand-editable `config.toml`. Only a TOML syntax error fails;
@@ -267,6 +278,7 @@ impl Settings {
             minimal: section("minimal", &file, ig, un),
             input: section("input", &file, ig, un),
             dock: section("dock", &file, ig, un),
+            spotify: section("spotify", &file, ig, un),
         };
         settings.check_names(&mut out.ignored);
         out.baseline = settings.clone().sanitized();
@@ -350,7 +362,26 @@ impl Settings {
             *min = (*min).clamp(1, 24 * 60);
         }
         p.cycles = p.cycles.clamp(1, 12);
+        // A Client ID is 32 hex digits; anything with other characters (a
+        // pasted secret, a quote) is no ID at all.
+        let id = self.spotify.client_id.trim();
+        self.spotify.client_id = if id.chars().all(|c| c.is_ascii_alphanumeric()) {
+            id.to_owned()
+        } else {
+            String::new()
+        };
         self
+    }
+
+    /// The Spotify Client ID to use: `spotify.client_id`, else
+    /// `LAVATUI_SPOTIFY_CLIENT_ID`; `None` keeps the Web API features off.
+    pub fn spotify_client_id(&self) -> Option<String> {
+        let id = self.spotify.client_id.trim();
+        if id.is_empty() {
+            crate::spotify_web::client_id_from_env()
+        } else {
+            Some(id.to_owned())
+        }
     }
 
     pub fn minimal(&self) -> bool {
@@ -500,6 +531,26 @@ pub fn to_persist(live: &Settings, file: &Settings, overridden: &[Overridden]) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spotify_client_id_is_a_plain_setting() {
+        let parsed = Settings::parse("[spotify]\nclient_id = \" 0123abcdEF \"\n").unwrap();
+        assert_eq!(parsed.settings.spotify.client_id, "0123abcdEF");
+        assert_eq!(
+            parsed.settings.spotify_client_id().as_deref(),
+            Some("0123abcdEF")
+        );
+        assert!(parsed.ignored.is_empty() && parsed.unknown.is_empty());
+        // Not an ID (a quote, a URL): no ID, reported like any clamp.
+        let parsed = Settings::parse("[spotify]\nclient_id = \"abc\\\"; rm\"\n").unwrap();
+        assert_eq!(parsed.settings.spotify.client_id, "");
+        assert_eq!(parsed.clamped.len(), 1, "{:?}", parsed.clamped);
+        // A wrong type costs just that key.
+        let parsed = Settings::parse("[spotify]\nclient_id = 5\n").unwrap();
+        assert_eq!(parsed.ignored, ["spotify.client_id"]);
+        let text = toml::to_string(&Settings::default()).unwrap();
+        assert!(text.contains("[spotify]\nclient_id = \"\""), "{text}");
+    }
 
     #[test]
     fn empty_file_is_defaults() {

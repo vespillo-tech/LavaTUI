@@ -8,7 +8,7 @@ use ratatui::layout::Rect;
 use super::chrome::{HINTS, fit_hints, fit_words};
 use super::layout::*;
 use crate::clock::{self, Face, Tier};
-use crate::dock::{Anchor, Place, clock_forms, clock_parts, pomodoro_forms};
+use crate::dock::{Anchor, Place, Show, clock_forms, clock_parts, music_forms, pomodoro_forms};
 
 /// A dock setup to lay out: where the clock (index 0) and the pomodoro
 /// (index 1) go, the face, and which chips they'd show.
@@ -24,12 +24,21 @@ struct Case {
     clock_chip: bool,
     /// A running pomodoro's chip width; `None` while idle.
     pomodoro_chip: Option<u16>,
+    music: Place,
+    /// What the music widget shows: a track (with a cover, playing: its
+    /// chip outranks the clock's) or, if not, the longest message.
+    music_track: bool,
+    music_cover: bool,
     anchor: Anchor,
     cell_aspect: f64,
 }
 
 const CLOCK: usize = 0;
 const POMODORO: usize = 1;
+const WIDGETS: usize = 3;
+/// The longest thing the music widget says instead of a track.
+const PERMISSION: &str = "Allow control of Spotify: System Settings › Privacy & \
+    Security › Automation › your terminal › Spotify";
 
 fn case(face: &'static dyn Face) -> Case {
     Case {
@@ -41,6 +50,9 @@ fn case(face: &'static dyn Face) -> Case {
         hour24: true,
         clock_chip: true,
         pomodoro_chip: None,
+        music: Place::Off,
+        music_track: true,
+        music_cover: true,
         anchor: Anchor::Center,
         cell_aspect: 2.0,
     }
@@ -63,7 +75,24 @@ impl Case {
                 forms: forms(self.pomodoro, &|p| pomodoro_forms(p, 5)),
                 chip: self.pomodoro_chip.map(|w| (w, 2)),
             },
+            DockItem {
+                place: self.music,
+                forms: forms(self.music, &|p| music_forms(&self.show(), p)),
+                chip: self.music_track.then_some((24, 2)),
+            },
         ]
+    }
+
+    fn show(&self) -> Show {
+        if self.music_track {
+            Show::Track {
+                cover: self.music_cover,
+                playing: true,
+                line_w: 30,
+            }
+        } else {
+            Show::Message(PERMISSION.into())
+        }
     }
 
     fn input<'a>(&self, items: &'a [DockItem]) -> LayoutInput<'a> {
@@ -77,7 +106,7 @@ impl Case {
     }
 
     fn place(&self, widget: usize) -> Place {
-        [self.clock, self.pomodoro][widget]
+        [self.clock, self.pomodoro, self.music][widget]
     }
 }
 
@@ -148,7 +177,7 @@ fn check(l: &Layout, case: &Case) {
     for (stack, place) in [(&l.panel, Place::Side), (&l.on_lava, Place::Overlay)] {
         let Some(stack) = stack else { continue };
         // A stack holds exactly the widgets put there, in order.
-        let want: Vec<usize> = (0..2).filter(|&w| case.place(w) == place).collect();
+        let want: Vec<usize> = (0..WIDGETS).filter(|&w| case.place(w) == place).collect();
         let got: Vec<usize> = stack.items.iter().map(|p| p.widget).collect();
         assert_eq!(got, want, "{ctx}: {place:?} stack");
         for (i, a) in stack.items.iter().enumerate() {
@@ -247,15 +276,18 @@ fn check(l: &Layout, case: &Case) {
         Place::Overlay => l.on_lava.is_none(),
         Place::Off => false,
     };
+    let fits = |w: u16| w + 2 <= lamp.width;
     let chips = [
-        case.clock_chip.then_some(1u8),
-        case.pomodoro_chip.map(|_| 2u8),
+        case.clock_chip.then_some(1u8).filter(|_| fits(5)),
+        case.pomodoro_chip.filter(|&w| fits(w)).map(|_| 2u8),
+        case.music_track.then_some(2u8).filter(|_| fits(24)),
     ];
-    let want = (0..2)
+    // Ties go to the earlier widget.
+    let want = (0..WIDGETS)
         .filter(|&w| homeless(w))
-        .filter_map(|w| chips[w].map(|rank| (rank, w)))
+        .filter_map(|w| chips[w].map(|rank| (rank, std::cmp::Reverse(w))))
         .max()
-        .map(|(_, w)| w);
+        .map(|(_, w)| w.0);
     if let Some(c) = l.chip {
         inside(c.rect, "chip");
         assert!(!micro, "{ctx}: chip in micro");
@@ -338,6 +370,21 @@ fn every_size_is_clean() {
             cell_aspect: 2.4,
             ..base
         },
+        Case {
+            music: Place::Side,
+            ..base
+        },
+        Case {
+            music: Place::Side,
+            music_track: false,
+            pomodoro_chip: Some(7),
+            ..base
+        },
+        Case {
+            music: Place::Side,
+            minimal: true,
+            ..base
+        },
     ];
     sweep(1..=300, 1..=100, &variants);
 }
@@ -402,6 +449,22 @@ fn every_size_is_clean_with_widgets_on_the_lava() {
                 pomodoro: Place::Overlay,
                 pomodoro_chip: Some(12),
                 cell_aspect: 2.4,
+                ..base
+            },
+            Case {
+                anchor,
+                face,
+                clock: Place::Side,
+                music: Place::Overlay,
+                ..base
+            },
+            Case {
+                anchor,
+                face,
+                pomodoro: Place::Overlay,
+                music: Place::Overlay,
+                music_cover: i % 2 == 0,
+                music_track: i % 3 != 0,
                 ..base
             },
         ]);

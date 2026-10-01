@@ -627,3 +627,298 @@ fn widget_toasts_say_when_there_is_no_room() {
         "on the lava · top · nothing there yet"
     );
 }
+
+// --- music (lava-75z.2) --------------------------------------------------
+
+mod music {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    use super::*;
+    use crate::dock::Music;
+    use crate::media::art::{Art, ArtLoader};
+    use crate::media::{
+        Capabilities, Command, FakeSource, MediaSource, Snapshot, Track, Unavailable,
+    };
+    use crate::theme::Rgb;
+    use crate::ui::keymap::PlayerKey as P;
+
+    const S: Duration = Duration::from_secs(1);
+    const COVER: &str = "https://i.example/cover";
+
+    /// A source that counts how many of it are alive.
+    struct Counted(FakeSource, Arc<AtomicUsize>);
+
+    impl MediaSource for Counted {
+        fn snapshot(&self) -> Snapshot {
+            self.0.snapshot()
+        }
+        fn send(&self, command: Command) {
+            self.0.send(command);
+        }
+        fn capabilities(&self) -> Capabilities {
+            self.0.capabilities()
+        }
+    }
+
+    impl Drop for Counted {
+        fn drop(&mut self) {
+            self.1.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    fn fake(now: Instant) -> FakeSource {
+        let track = Track {
+            id: "fake:1".into(),
+            name: "Slow Rise".into(),
+            artist: "The Paraffins".into(),
+            album: "Heat Rises".into(),
+            duration: S * 214,
+            artwork_url: COVER.into(),
+        };
+        FakeSource::new(
+            Snapshot {
+                track: Some(std::sync::Arc::new(track)),
+                position: S * 42,
+                volume: 70,
+                ..Snapshot::new(crate::media::Status::Playing, now)
+            },
+            Vec::new(),
+        )
+    }
+
+    /// A model with `source` as its player (alive count in the `Arc`).
+    fn with(m: &mut Model, source: &FakeSource) -> Arc<AtomicUsize> {
+        let alive = Arc::new(AtomicUsize::new(0));
+        let (source, count) = (source.clone(), Arc::clone(&alive));
+        m.music.connect_with(
+            move || {
+                count.fetch_add(1, Ordering::SeqCst);
+                Box::new(Counted(source.clone(), Arc::clone(&count)))
+            },
+            || ArtLoader::preloaded(COVER, Art::solid(Rgb(200, 120, 40))),
+        );
+        alive
+    }
+
+    fn keys(m: &mut Model, t: Instant, keys: &[P]) {
+        for &k in keys {
+            m.update(Action::Player(k), t);
+        }
+    }
+
+    #[test]
+    fn off_by_default_and_never_connects() {
+        let (mut m, t0) = model("music-off");
+        let alive = with(&mut m, &fake(t0));
+        tick(&mut m, t0);
+        assert_eq!(m.settings.dock.place(&Music), Place::Off);
+        assert_eq!(alive.load(Ordering::SeqCst), 0);
+        assert!(m.music.snapshot.is_none());
+    }
+
+    #[test]
+    fn connects_while_placed_and_lets_go_when_off() {
+        let (mut m, t0) = model_with(Session::default(), temp_config("music-life"), 120, 36);
+        let alive = with(&mut m, &fake(t0));
+        m.update(Action::Place("music"), t0);
+        assert_eq!(m.toast.as_ref().unwrap().text, "music · side panel");
+        tick(&mut m, t0);
+        assert_eq!(alive.load(Ordering::SeqCst), 1);
+        let placed = m.layout.placed(2).expect("music in the panel");
+        assert_eq!(placed.form.variant & 0xff00, 0x100, "the cover on top");
+        m.update(Action::Place("music"), t0); // on the lava: same source
+        tick(&mut m, t0);
+        assert_eq!(alive.load(Ordering::SeqCst), 1);
+        assert!(m.layout.on_lava.is_some());
+        m.update(Action::Place("music"), t0); // off: dropped, polling stops
+        tick(&mut m, t0);
+        assert_eq!(alive.load(Ordering::SeqCst), 0);
+        assert!(m.music.snapshot.is_none());
+    }
+
+    #[test]
+    fn player_keys_send_commands() {
+        let (mut m, t0) = model("music-keys");
+        let source = fake(t0);
+        with(&mut m, &source);
+        m.update(Action::Place("music"), t0);
+        tick(&mut m, t0);
+        m.update(Action::PlayerKeys, t0);
+        assert_eq!(m.input_mode(), InputMode::Player);
+        keys(
+            &mut m,
+            t0,
+            &[
+                P::PlayPause,
+                P::PlayPause,
+                P::SeekForward,
+                P::SeekBack,
+                P::VolumeUp,
+                P::VolumeDown,
+                P::VolumeDown,
+                P::Next,
+                P::Previous,
+            ],
+        );
+        let sent = source.sent();
+        assert_eq!(sent[..2], [Command::PlayPause, Command::PlayPause]);
+        let Command::Seek(fwd) = sent[2] else {
+            panic!("{sent:?}")
+        };
+        let Command::Seek(back) = sent[3] else {
+            panic!("{sent:?}")
+        };
+        assert!(fwd >= S * 52 && fwd < S * 53, "{fwd:?}");
+        assert!(back >= S * 42 && back < S * 43, "{back:?}");
+        assert_eq!(
+            sent[4..],
+            [
+                Command::SetVolume(75),
+                Command::SetVolume(70),
+                Command::SetVolume(65),
+                Command::Next,
+                Command::Previous,
+            ]
+        );
+        assert_eq!(m.toast.as_ref().unwrap().text, "volume 65");
+        // Seen at once in the widget's snapshot (optimistic).
+        assert_eq!(m.music.snapshot.as_ref().unwrap().volume, 65);
+    }
+
+    #[test]
+    fn shuffle_and_repeat_only_where_the_player_has_them() {
+        let (mut m, t0) = model("music-shuffle");
+        let source = fake(t0);
+        with(&mut m, &source);
+        m.update(Action::Place("music"), t0);
+        tick(&mut m, t0);
+        m.update(Action::PlayerKeys, t0);
+        keys(&mut m, t0, &[P::Shuffle, P::Repeat]);
+        assert_eq!(
+            source.sent(),
+            [Command::SetShuffle(true), Command::SetRepeat(true)]
+        );
+        // Spotify's AppleScript can't (lava-75z.9): nothing is sent.
+        source.set_capabilities(Capabilities::NONE);
+        keys(&mut m, t0, &[P::Shuffle, P::Repeat]);
+        assert_eq!(source.sent().len(), 2);
+        assert!(
+            m.toast.as_ref().unwrap().text.contains("can't shuffle"),
+            "{:?}",
+            m.toast
+        );
+    }
+
+    #[test]
+    fn before_the_first_answer_it_still_has_a_form() {
+        // No forms would take the whole panel (clock, pomodoro) down.
+        let (mut m, t0) = model("music-early");
+        with(&mut m, &fake(t0));
+        m.settings.dock.set(&Music, Place::Side);
+        m.music.snapshot = None;
+        assert!(!Music.forms(&m, Place::Side).is_empty());
+        m.relayout(m.layout.area);
+        assert!(m.layout.panel.is_some());
+    }
+
+    #[test]
+    fn the_player_keys_are_a_mode() {
+        let (mut m, t0) = model("music-mode");
+        m.update(Action::PlayerKeys, t0);
+        assert_eq!(m.input_mode(), InputMode::Normal, "nothing to control");
+        assert_eq!(
+            m.toast.as_ref().unwrap().text,
+            "music is off · a to show it"
+        );
+
+        with(&mut m, &fake(t0));
+        m.update(Action::Place("music"), t0);
+        tick(&mut m, t0);
+        m.update(Action::PlayerKeys, t0);
+        assert_eq!(m.input_mode(), InputMode::Player);
+        let style = m.style;
+        m.update(Action::NextStyle, t0);
+        assert_eq!(m.style, style, "global keys wait");
+        m.update(Action::Close, t0);
+        assert_eq!(m.input_mode(), InputMode::Normal);
+        m.update(Action::PlayerKeys, t0);
+        m.update(Action::Help, t0);
+        assert_eq!(m.input_mode(), InputMode::Help);
+        assert!(!m.music.keys, "help ends them");
+        m.update(Action::Close, t0);
+        m.update(Action::PlayerKeys, t0);
+        m.update(Action::Place("music"), t0); // passes? no: keys are a mode
+        assert_eq!(m.settings.dock.place(&Music), Place::Side);
+        m.update(Action::Quit, t0);
+        assert!(m.quit, "quit always gets through");
+    }
+
+    #[test]
+    fn without_a_player_it_says_why_calmly() {
+        let (mut m, t0) = model_with(Session::default(), temp_config("music-states"), 120, 36);
+        let source = fake(t0);
+        with(&mut m, &source);
+        m.update(Action::Place("music"), t0);
+        for (reason, says) in [
+            (Unavailable::NotRunning, "Spotify isn't running"),
+            (Unavailable::NotInstalled, "Spotify isn't installed"),
+            (Unavailable::PermissionDenied, "Spotify"),
+            (Unavailable::Unsupported, "No media player"),
+        ] {
+            source.set(Snapshot {
+                player: Some("Spotify".into()),
+                ..Snapshot::new(crate::media::Status::Unavailable(reason), t0)
+            });
+            tick(&mut m, t0);
+            let forms = Music.forms(&m, Place::Side);
+            assert_eq!(forms.len(), 1, "one calm message");
+            assert!(forms[0].size.width <= 20 && forms[0].size.height <= 6);
+            assert!(Music.chip(&m).is_none(), "no chip without a track");
+            m.update(Action::PlayerKeys, t0);
+            m.update(Action::Player(P::PlayPause), t0);
+            assert!(
+                m.toast.as_ref().unwrap().text.contains(says),
+                "{:?}",
+                m.toast
+            );
+            m.update(Action::Close, t0);
+        }
+        assert!(source.sent().is_empty(), "nothing sent to no player");
+    }
+
+    #[test]
+    fn the_chip_names_the_track_and_outranks_the_clock_while_playing() {
+        let (mut m, t0) = model("music-chip");
+        let source = fake(t0);
+        with(&mut m, &source);
+        m.update(Action::Place("music"), t0);
+        m.update(Action::ToggleMinimal, t0);
+        tick(&mut m, t0);
+        let chip = Music.chip(&m).unwrap();
+        assert_eq!(chip.text, "▶ Slow Rise – The Paraffins");
+        assert_eq!(m.layout.chip.unwrap().widget, 2);
+        m.update(Action::PlayerKeys, t0);
+        m.update(Action::Player(P::PlayPause), t0);
+        m.update(Action::Close, t0);
+        assert_eq!(Music.chip(&m).unwrap().text, "‖ Slow Rise – The Paraffins");
+        assert_eq!(m.layout.chip.unwrap().widget, 0, "paused: the clock again");
+    }
+
+    #[test]
+    fn a_frozen_lamp_still_looks_at_the_player_each_second() {
+        let (mut m, t0) = model("music-frozen");
+        with(&mut m, &fake(t0));
+        m.update(Action::Freeze, t0);
+        m.toast = None;
+        tick(&mut m, t0);
+        let off = m.idle_until().unwrap();
+        m.update(Action::Place("music"), t0);
+        m.toast = None;
+        tick(&mut m, t0);
+        let on = m.idle_until().unwrap();
+        assert!(on <= t0 + S + Duration::from_millis(10), "{:?}", on - t0);
+        assert!(on <= off);
+    }
+}

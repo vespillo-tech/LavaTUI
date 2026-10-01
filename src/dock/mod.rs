@@ -10,10 +10,12 @@
 //! place has no room falls back to the one-line chip ([`DockWidget::chip`]).
 //!
 //! Widgets are stateless views: whatever they show lives on the app
-//! [`Model`] (the pomodoro, the local time) and they read it from there.
+//! [`Model`] (the pomodoro, the local time, the player's snapshot) and
+//! they read it from there.
 //! Colours come from the model's theme, as everywhere else.
 
 mod clock;
+mod music;
 mod pomodoro;
 
 use std::collections::BTreeMap;
@@ -28,13 +30,16 @@ use crate::theme::Role;
 pub use clock::Clock;
 #[cfg(test)]
 pub use clock::{clock_forms, clock_parts};
+pub use music::Music;
+#[cfg(test)]
+pub use music::{Show, music_forms};
 pub use pomodoro::Pomodoro;
 #[cfg(test)]
 pub use pomodoro::pomodoro_forms;
 
 /// Every widget, in stacking order: the first sits on top of the panel
 /// (and of the stack on the lava) and is the last to shrink.
-pub static WIDGETS: &[&dyn DockWidget] = &[&Clock, &Pomodoro];
+pub static WIDGETS: &[&dyn DockWidget] = &[&Clock, &Pomodoro, &Music];
 
 /// Where a widget sits (`dock.<name>` in the config).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

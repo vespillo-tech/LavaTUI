@@ -8,7 +8,7 @@ use crate::ui::keymap::{KEYMAP, Section};
 use crate::ui::layout::{HELP_SHEET, SizeTier, reaches};
 
 /// The sheet's outer size cap (§4.3).
-const SHEET: (u16, u16) = (64, 18);
+const SHEET: (u16, u16) = (66, 22);
 /// Columns needed inside the sheet for two columns.
 const TWO_COLUMNS: u16 = 56;
 
@@ -54,24 +54,33 @@ fn align(mut lines: Vec<Line>) -> Vec<Line> {
     lines
 }
 
-/// Two columns (lamp + widgets | clock & pomodoro + app), labels lined
-/// up per column; or one, app first so `m ? q` are on screen at the
+/// Two columns (lamp + clock & pomodoro | widgets + music + app), labels
+/// lined up per column; or one, app first so `m ? q` are on screen at the
 /// smallest sizes, labels lined up per section (room is short there).
 fn columns(two: bool) -> Vec<Vec<Line>> {
     if two {
-        let pair = |a, b| {
-            let mut col = section(a);
-            col.push(Line::Blank);
-            col.extend(section(b));
+        let column = |sections: &[Section]| {
+            let mut col = Vec::new();
+            for (i, &s) in sections.iter().enumerate() {
+                if i > 0 {
+                    col.push(Line::Blank);
+                }
+                col.extend(section(s));
+            }
             align(col)
         };
         return vec![
-            pair(Section::Lamp, Section::Widgets),
-            pair(Section::Clock, Section::App),
+            column(&[Section::Lamp, Section::Clock]),
+            column(&[Section::Widgets, Section::Music, Section::App]),
         ];
     }
     let mut one = align(section(Section::App));
-    for s in [Section::Lamp, Section::Clock, Section::Widgets] {
+    for s in [
+        Section::Lamp,
+        Section::Clock,
+        Section::Widgets,
+        Section::Music,
+    ] {
         one.push(Line::Blank);
         one.extend(align(section(s)));
     }

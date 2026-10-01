@@ -190,6 +190,13 @@ impl SpotifyWeb {
         }
     }
 
+    /// The client for the configured Client ID
+    /// ([`Settings::spotify_client_id`](crate::config::Settings::spotify_client_id)),
+    /// or `None` when there isn't one (the library features stay off).
+    pub fn from_settings(settings: &crate::config::Settings) -> Option<Self> {
+        settings.spotify_client_id().map(Self::new)
+    }
+
     pub fn is_logged_in(&self) -> bool {
         self.logged_in.load(Ordering::Relaxed)
     }

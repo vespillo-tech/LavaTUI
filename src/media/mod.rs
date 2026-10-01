@@ -19,9 +19,12 @@
 //!   (`runner` runs it with a timeout). It never launches Spotify.
 //! - [`fake`]: [`FakeSource`], an in-memory player for tests and for
 //!   building the UI without a real one.
+//! - [`art`]: [`ArtLoader`](art::ArtLoader), album covers fetched, cached
+//!   and decoded on their own thread.
 //!
 //! No terminal code, and no I/O on the caller's thread.
 
+pub mod art;
 pub mod fake;
 #[cfg(target_os = "macos")]
 pub mod runner;
@@ -44,6 +47,11 @@ pub trait MediaSource: Send {
     /// Queue a command. Returns at once; the snapshot reflects the expected
     /// result immediately and the player's real state shortly after.
     fn send(&self, command: Command);
+
+    /// Which optional controls actually work with this player.
+    fn capabilities(&self) -> Capabilities {
+        Capabilities::ALL
+    }
 
     fn play_pause(&self) {
         self.send(Command::PlayPause);
@@ -93,6 +101,26 @@ pub fn detect() -> Box<dyn MediaSource> {
     {
         Box::new(Polled::unavailable(Unavailable::Unsupported))
     }
+}
+
+/// Optional controls a player may not honour.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Capabilities {
+    /// `SetShuffle` takes effect (and `Snapshot::shuffle` means something).
+    pub shuffle: bool,
+    /// `SetRepeat` takes effect.
+    pub repeat: bool,
+}
+
+impl Capabilities {
+    pub const ALL: Self = Self {
+        shuffle: true,
+        repeat: true,
+    };
+    pub const NONE: Self = Self {
+        shuffle: false,
+        repeat: false,
+    };
 }
 
 /// Something to ask the player to do.

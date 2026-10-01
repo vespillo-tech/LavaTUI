@@ -365,6 +365,22 @@ impl Theme {
         }
     }
 
+    /// A picture's pixel (album art): exact in truecolor, the nearest xterm
+    /// index in 256 colours, and `None` below that, where a picture can't
+    /// be shown at all (the widget then drops it). Palette-independent.
+    pub fn image(&self, c: Rgb) -> Option<Color> {
+        match self.depth {
+            ColorDepth::TrueColor => Some(Color::Rgb(c.0, c.1, c.2)),
+            ColorDepth::Ansi256 => Some(Color::Indexed(xterm::nearest(c))),
+            ColorDepth::Ansi16 | ColorDepth::None => None,
+        }
+    }
+
+    /// Whether [`image`](Self::image) shows pictures at this depth.
+    pub fn shows_images(&self) -> bool {
+        self.image(Rgb::default()).is_some()
+    }
+
     /// A text style in `role`. In NO_COLOR, `accent` becomes bold (§5.3).
     pub fn text(&self, role: Role) -> Style {
         let style = Style::new().fg(self.role(role));

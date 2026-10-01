@@ -498,16 +498,18 @@ fn corner_chip(area: Rect, lamp: Rect, input: &LayoutInput, out: &Layout) -> Opt
         Place::Overlay => out.on_lava.is_none(),
         Place::Off => false,
     };
+    // Only chips that fit the lamp's width (with their 1-cell pads).
+    let fits = |&(w, _): &(u16, u8)| w + 2 <= lamp.width;
     let mut best: Option<(usize, u16, u8)> = None;
     for (i, d) in input.dock.iter().enumerate() {
-        if let Some((w, rank)) = d.chip.filter(|_| homeless(d.place))
+        if let Some((w, rank)) = d.chip.filter(|_| homeless(d.place)).filter(fits)
             && best.is_none_or(|b| rank > b.2)
         {
             best = Some((i, w, rank));
         }
     }
     let (widget, text_w, _) = best?;
-    let w = (text_w + 2).min(area.width);
+    let w = text_w + 2;
     Some(Chip {
         rect: Rect::new(lamp.right() - w, lamp.bottom() - 1, w, 1),
         widget,

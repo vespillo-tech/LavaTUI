@@ -19,15 +19,17 @@ use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 
-use super::chrome::{HINTS, PICKER_HINTS};
-use super::keymap::{Action, InputMode, KEYMAP, action_for};
+use super::chrome::{HINTS, PICKER_HINTS, PLAYER_HINTS};
+use super::keymap::{Action, InputMode, KEYMAP, PlayerKey, action_for};
 use super::picker::{self, Placement, grow};
 use crate::app::{LocalTime, Model, Overlay};
 use crate::clock::ClockTime;
 use crate::config::store::Store;
 use crate::config::{ColorChoice, Session};
+use crate::media::art::{Art, ArtLoader};
+use crate::media::{FakeSource, Snapshot, Status, Track, Unavailable};
 use crate::render::LampState;
-use crate::theme::Role;
+use crate::theme::{Rgb, Role};
 
 /// The mockup sizes (§1.5) plus the micro / tiny ones from the beads.
 const SIZES: &[(u16, u16)] = &[
@@ -162,7 +164,57 @@ fn scenarios() -> Vec<(&'static str, Setup)> {
             m.update(Action::DebugHud, t);
             m.toast = None;
         }),
+        ("music beside, player keys", |m, t| {
+            music(m, t, Status::Playing, 1);
+            m.update(Action::PlayerKeys, t);
+            m.toast = None;
+        }),
+        ("music on the lava, paused", |m, t| {
+            m.update(Action::Place("pomodoro"), t);
+            music(m, t, Status::Paused, 2);
+        }),
+        ("music: spotify not running", |m, t| {
+            music(m, t, Status::Unavailable(Unavailable::NotRunning), 1);
+        }),
+        ("minimal music chip", |m, t| {
+            music(m, t, Status::Playing, 1);
+            m.update(Action::ToggleMinimal, t);
+            m.toast = None;
+        }),
     ]
+}
+
+const COVER: &str = "https://i.example/cover";
+
+/// The music widget on a fake player in `status`, placed by `presses` of
+/// `a` (1 side, 2 on the lava), its cover already loaded.
+fn music(m: &mut Model, t: Instant, status: Status, presses: usize) {
+    let track = Track {
+        id: "fake:1".into(),
+        name: "Convection (Long Version)".into(),
+        artist: "Wax & Wane".into(),
+        album: "Lamplight".into(),
+        duration: std::time::Duration::from_secs(402),
+        artwork_url: COVER.into(),
+    };
+    let fake = FakeSource::new(
+        Snapshot {
+            player: Some("Spotify".into()),
+            track: Some(std::sync::Arc::new(track)),
+            position: std::time::Duration::from_secs(97),
+            volume: 70,
+            ..Snapshot::new(status, t)
+        },
+        Vec::new(),
+    );
+    m.music.connect_with(
+        move || Box::new(fake.clone()),
+        || ArtLoader::preloaded(COVER, Art::solid(Rgb(200, 120, 40))),
+    );
+    for _ in 0..presses {
+        m.update(Action::Place("music"), t);
+    }
+    m.toast = None;
 }
 
 fn scene(cols: u16, rows: u16, seed: u64, setup: Setup) -> (Model, Buffer) {
@@ -376,7 +428,9 @@ fn small_help_pins_app_keys_and_hints_scrolling() {
     let (mut m, t0) = model(80, 24, 7);
     m.update(Action::Help, t0);
     let buf = text(&draw(&m, 80, 24));
-    assert!(!buf.contains('↓') && !buf.contains('↕'), "{buf}");
+    // The hint sits in the title row (the music keys show arrows too).
+    let title = buf.lines().find(|l| l.contains("╭ keys")).unwrap();
+    assert!(!title.contains('↓') && !title.contains('↕'), "{buf}");
 }
 
 /// lava-ebq.43: the two-column sheet keeps a 2-col gutter, and every
@@ -494,6 +548,8 @@ fn key(k: &str) -> Event {
         "⏎" => KeyCode::Enter,
         "esc" => KeyCode::Esc,
         "↑↓" => KeyCode::Up,
+        "←→" => KeyCode::Right,
+        "n p" => KeyCode::Char('n'),
         k => KeyCode::Char(k.chars().next().unwrap()),
     };
     Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
@@ -532,6 +588,21 @@ fn hint_keys_resolve_through_the_keymap() {
             other => panic!("unknown picker hint {other}"),
         };
         assert_eq!(action_for(&key(k), picker), Some(want), "{k} {label}");
+    }
+    for (k, label, _) in PLAYER_HINTS {
+        let want = match *label {
+            "play" => Action::Player(PlayerKey::PlayPause),
+            "skip" => Action::Player(PlayerKey::Next),
+            "seek" => Action::Player(PlayerKey::SeekForward),
+            "volume" => Action::Player(PlayerKey::VolumeUp),
+            "done" => Action::Close,
+            other => panic!("unknown player hint {other}"),
+        };
+        assert_eq!(
+            action_for(&key(k), InputMode::Player),
+            Some(want),
+            "{k} {label}"
+        );
     }
 }
 

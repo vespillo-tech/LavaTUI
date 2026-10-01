@@ -6,7 +6,8 @@ mod clock;
 mod config;
 mod dock;
 mod lyrics;
-// Not wired into the app yet: the now-playing widget (lava-75z.2) will be.
+// Partly used so far: the music widget (lava-75z.2) reads it; play_uri&co are
+// for the library UI (lava-75z.5).
 #[allow(dead_code, unused_imports)]
 mod media;
 mod render;

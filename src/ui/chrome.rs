@@ -19,6 +19,15 @@ pub const HINTS: &[(&str, &str, u8)] = &[
     ("?", "help", 5),
 ];
 
+/// Hints shown while the player keys are on (`A`).
+pub const PLAYER_HINTS: &[(&str, &str, u8)] = &[
+    ("␣", "play", 5),
+    ("n p", "skip", 3),
+    ("←→", "seek", 2),
+    ("↑↓", "volume", 1),
+    ("esc", "done", 4),
+];
+
 /// Hints shown while a picker is open (also the sheet's own hint row).
 pub const PICKER_HINTS: &[(&str, &str, u8)] =
     &[("↑↓", "preview", 0), ("⏎", "keep", 1), ("esc", "revert", 2)];
@@ -85,6 +94,8 @@ pub fn draw_status(buf: &mut Buffer, r: Rect, model: &Model) {
     // Right: hints.
     let all = if matches!(model.overlay, Overlay::Picker(_)) {
         PICKER_HINTS
+    } else if model.music.keys {
+        PLAYER_HINTS
     } else {
         HINTS
     };

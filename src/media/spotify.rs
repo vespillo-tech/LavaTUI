@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use super::runner::{RunError, Runner};
 use super::worker::Backend;
-use super::{Command, Snapshot, Status, Track, Unavailable};
+use super::{Capabilities, Command, Snapshot, Status, Track, Unavailable};
 
 const BUNDLE_ID: &str = "com.spotify.client";
 const HEADER: &str = "lavatui1";
@@ -56,6 +56,12 @@ impl<R: Runner> Backend for Spotify<R> {
         };
         snapshot.player = Some(Arc::clone(&self.name));
         snapshot
+    }
+
+    /// Spotify 1.2's `set shuffling` / `set repeating` are no-ops (they
+    /// read back unchanged, lava-75z.9), so the UI doesn't offer them.
+    fn capabilities(&self) -> Capabilities {
+        Capabilities::NONE
     }
 }
 

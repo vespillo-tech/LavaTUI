@@ -4,6 +4,12 @@
 //! Global keys only fire when no overlay is open (except `ctrl-c`, which
 //! always quits). Overlays have their own small fixed key sets. `esc` never
 //! quits: it closes overlays and is a no-op otherwise.
+//!
+//! The player keys (the [`Section::Music`] rows) are a mode of their own:
+//! `A` turns them on and they take the keyboard (like an overlay, but with
+//! no sheet) until `esc`, `q` or `A` again. That keeps one global key for
+//! the whole player instead of nine, and lets them reuse the obvious
+//! letters (`␣`, `n`, `p`, arrows) the lamp and pomodoro already own.
 
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -27,6 +33,10 @@ pub enum Action {
     Place(&'static str),
     /// Move the widgets on the lava to the next spot.
     NextAnchor,
+    /// `A`: the player keys on (in them: off again).
+    PlayerKeys,
+    /// One of the player keys (only while they're on).
+    Player(PlayerKey),
     ToggleHour24,
     PomodoroToggle,
     PomodoroSkip,
@@ -63,12 +73,30 @@ pub enum Action {
     },
 }
 
+/// What a player key does (`app/model/music.rs`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlayerKey {
+    PlayPause,
+    Next,
+    Previous,
+    SeekBack,
+    SeekForward,
+    VolumeDown,
+    VolumeUp,
+    Shuffle,
+    Repeat,
+}
+
 /// A key as written in the table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Key {
     Char(char),
     Ctrl(char),
     Space,
+    Left,
+    Right,
+    Up,
+    Down,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,6 +106,8 @@ pub enum Section {
     /// Where the dock widgets go.
     Widgets,
     App,
+    /// The player keys: live only after `A` ([`InputMode::Player`]).
+    Music,
 }
 
 impl Section {
@@ -87,6 +117,7 @@ impl Section {
             Section::Clock => "clock & pomodoro",
             Section::Widgets => "widgets",
             Section::App => "app",
+            Section::Music => "music · after A",
         }
     }
 }
@@ -117,7 +148,8 @@ const fn row(
 
 use Action as A;
 use Key::{Char as K, Ctrl};
-use Section::{App, Clock, Lamp, Widgets};
+use PlayerKey as P;
+use Section::{App, Clock, Lamp, Music, Widgets};
 
 pub static KEYMAP: &[Row] = &[
     row(Lamp, "s", "next style", &[(K('s'), A::NextStyle)]),
@@ -179,6 +211,13 @@ pub static KEYMAP: &[Row] = &[
     ),
     row(
         Widgets,
+        "a",
+        "music side/lava/off",
+        &[(K('a'), A::Place("music"))],
+    ),
+    row(Widgets, "A", "music keys", &[(K('A'), A::PlayerKeys)]),
+    row(
+        Widgets,
         "l",
         "move lava widgets",
         &[(K('l'), A::NextAnchor)],
@@ -195,6 +234,49 @@ pub static KEYMAP: &[Row] = &[
     row(App, "b", "status bar", &[(K('b'), A::ToggleStatusBar)]),
     row(App, "d", "debug hud", &[(K('d'), A::DebugHud)]),
     row(App, "ctrl-l", "redraw", &[(Ctrl('l'), A::Redraw)]),
+    // The player keys, after `A` (their own mode: they may reuse keys).
+    row(
+        Music,
+        "␣",
+        "play / pause",
+        &[(Key::Space, A::Player(P::PlayPause))],
+    ),
+    row(
+        Music,
+        "n p",
+        "next · previous",
+        &[
+            (K('n'), A::Player(P::Next)),
+            (K('p'), A::Player(P::Previous)),
+        ],
+    ),
+    row(
+        Music,
+        "←→ ↑↓",
+        "seek · volume",
+        &[
+            (Key::Left, A::Player(P::SeekBack)),
+            (Key::Right, A::Player(P::SeekForward)),
+            (K('h'), A::Player(P::SeekBack)),
+            (K('l'), A::Player(P::SeekForward)),
+            (Key::Up, A::Player(P::VolumeUp)),
+            (Key::Down, A::Player(P::VolumeDown)),
+            (K('k'), A::Player(P::VolumeUp)),
+            (K('j'), A::Player(P::VolumeDown)),
+            (K('+'), A::Player(P::VolumeUp)),
+            (K('='), A::Player(P::VolumeUp)),
+            (K('-'), A::Player(P::VolumeDown)),
+        ],
+    ),
+    row(
+        Music,
+        "x r",
+        "shuffle · repeat",
+        &[
+            (K('x'), A::Player(P::Shuffle)),
+            (K('r'), A::Player(P::Repeat)),
+        ],
+    ),
 ];
 
 /// Which key set is live.
@@ -207,6 +289,8 @@ pub enum InputMode {
         opener: Action,
         inline: bool,
     },
+    /// The player keys (`A`); `esc`, `q` and `A` leave them.
+    Player,
 }
 
 pub fn action_for(event: &Event, mode: InputMode) -> Option<Action> {
@@ -237,6 +321,10 @@ fn key_of(key: &KeyEvent) -> Option<Key> {
             Some(Key::Char(c.to_ascii_uppercase()))
         }
         KeyCode::Char(c) => Some(Key::Char(c)),
+        KeyCode::Left => Some(Key::Left),
+        KeyCode::Right => Some(Key::Right),
+        KeyCode::Up => Some(Key::Up),
+        KeyCode::Down => Some(Key::Down),
         _ => None,
     }
 }
@@ -252,8 +340,20 @@ fn key_action(event: &KeyEvent, mode: InputMode) -> Option<Action> {
             if code == KeyCode::Esc {
                 return None;
             }
-            binding(key?)
+            binding(Section::is_global, key?)
         }
+        InputMode::Player => match (code, key) {
+            (KeyCode::Esc, _) | (_, Some(K('q'))) => Some(Action::Close),
+            (_, Some(k)) => match binding(|s| s == Music, k) {
+                Some(a) => Some(a),
+                None => match binding(Section::is_global, k)? {
+                    Action::PlayerKeys => Some(Action::Close),
+                    Action::Help => Some(Action::Help),
+                    _ => None,
+                },
+            },
+            _ => None,
+        },
         InputMode::Help => match (code, key) {
             (KeyCode::Esc, _) | (_, Some(K('?') | K('q'))) => Some(Action::Close),
             (KeyCode::Up, _) | (_, Some(K('k'))) => Some(Action::Up),
@@ -268,15 +368,24 @@ fn key_action(event: &KeyEvent, mode: InputMode) -> Option<Action> {
             (KeyCode::Left, _) | (_, Some(K('h'))) if inline => Some(Action::Up),
             (KeyCode::Right, _) | (_, Some(K('l'))) if inline => Some(Action::Down),
             (_, Some(K(c @ '1'..='9'))) => Some(Action::Jump(c as u8 - b'1')),
-            (_, Some(k)) if binding(k) == Some(opener) => Some(Action::Keep),
+            (_, Some(k)) if binding(Section::is_global, k) == Some(opener) => Some(Action::Keep),
             _ => None,
         },
     }
 }
 
-fn binding(key: Key) -> Option<Action> {
+impl Section {
+    /// Its keys work with nothing open (all but the player keys).
+    fn is_global(self) -> bool {
+        self != Music
+    }
+}
+
+/// What `key` does in the rows of the sections `live` accepts.
+fn binding(live: impl Fn(Section) -> bool, key: Key) -> Option<Action> {
     KEYMAP
         .iter()
+        .filter(|r| live(r.section))
         .flat_map(|r| r.binds)
         .find(|(k, _)| *k == key)
         .map(|&(_, a)| a)
@@ -370,22 +479,59 @@ mod tests {
         assert_eq!(action_for(&ch('q'), PICKER), Some(Action::Close));
     }
 
+    fn event_of(key: Key) -> Event {
+        match key {
+            Key::Char(c) => ch(c),
+            Key::Ctrl(c) => press(KeyCode::Char(c), KeyModifiers::CONTROL),
+            Key::Space => ch(' '),
+            Key::Left => press(KeyCode::Left, KeyModifiers::NONE),
+            Key::Right => press(KeyCode::Right, KeyModifiers::NONE),
+            Key::Up => press(KeyCode::Up, KeyModifiers::NONE),
+            Key::Down => press(KeyCode::Down, KeyModifiers::NONE),
+        }
+    }
+
     #[test]
     fn every_bound_key_dispatches_to_its_row() {
         for row in KEYMAP {
+            let mode = if row.section == Section::Music {
+                InputMode::Player
+            } else {
+                InputMode::Normal
+            };
             for &(key, action) in row.binds {
-                let event = match key {
-                    Key::Char(c) => ch(c),
-                    Key::Ctrl(c) => press(KeyCode::Char(c), KeyModifiers::CONTROL),
-                    Key::Space => ch(' '),
-                };
-                assert_eq!(
-                    action_for(&event, InputMode::Normal),
-                    Some(action),
-                    "{key:?}"
-                );
+                assert_eq!(action_for(&event_of(key), mode), Some(action), "{key:?}");
             }
         }
+    }
+
+    #[test]
+    fn player_keys_take_the_keyboard_until_esc() {
+        let player = InputMode::Player;
+        let normal = InputMode::Normal;
+        assert_eq!(action_for(&ch('A'), normal), Some(Action::PlayerKeys));
+        // Shared letters mean the player's thing in the player keys...
+        assert_eq!(
+            action_for(&ch(' '), player),
+            Some(Action::Player(PlayerKey::PlayPause))
+        );
+        assert_eq!(
+            action_for(&ch('n'), player),
+            Some(Action::Player(PlayerKey::Next))
+        );
+        // ...and the lamp's / pomodoro's outside them.
+        assert_eq!(action_for(&ch(' '), normal), Some(Action::PomodoroToggle));
+        assert_eq!(action_for(&ch('n'), normal), Some(Action::PomodoroSkip));
+        let left = press(KeyCode::Left, KeyModifiers::NONE);
+        assert_eq!(action_for(&left, normal), None);
+        // Leaving: esc, q, A; help still opens; other globals are off.
+        for leave in [press(KeyCode::Esc, KeyModifiers::NONE), ch('q'), ch('A')] {
+            assert_eq!(action_for(&leave, player), Some(Action::Close));
+        }
+        assert_eq!(action_for(&ch('?'), player), Some(Action::Help));
+        assert_eq!(action_for(&ch('s'), player), None);
+        let ctrl_c = press(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert_eq!(action_for(&ctrl_c, player), Some(Action::Quit));
     }
 
     #[test]
@@ -411,9 +557,17 @@ mod tests {
 
     #[test]
     fn keys_are_unique() {
-        let keys: Vec<Key> = KEYMAP.iter().flat_map(|r| r.binds).map(|b| b.0).collect();
-        for (i, k) in keys.iter().enumerate() {
-            assert!(!keys[i + 1..].contains(k), "{k:?} bound twice");
+        // Within each mode: the player keys may reuse global ones.
+        for player in [false, true] {
+            let keys: Vec<Key> = KEYMAP
+                .iter()
+                .filter(|r| (r.section == Section::Music) == player)
+                .flat_map(|r| r.binds)
+                .map(|b| b.0)
+                .collect();
+            for (i, k) in keys.iter().enumerate() {
+                assert!(!keys[i + 1..].contains(k), "{k:?} bound twice");
+            }
         }
     }
 

@@ -22,7 +22,7 @@ truncate mid-word, wrap, overlap or overflow.
 | **visual aspect** `A` | `cols / (rows × cell_aspect)`: the true on-screen width÷height. `cell_aspect` defaults to 2.0 (see §2.3). |
 | **content area** | Terminal minus the status bar row when it's shown. |
 | **lamp region** | The part of the content area that belongs to the lamp. The fluid fills it edge to edge: there is no frame or silhouette. |
-| **widget** | A dock widget (§4.6): the clock or the pomodoro (more to come). Each is placed `side`, `overlay` (on the lava) or `off`. |
+| **widget** | A dock widget (§4.6): the clock, the pomodoro or music (now playing). Each is placed `side`, `overlay` (on the lava) or `off`. |
 | **panel** | The widgets placed `side` (clock + pomodoro by default), stacked beside the lamp (right panel) or below it (bottom panel). |
 | **on the lava** | The widgets placed `overlay`, stacked over the lamp at the dock's anchor on a soft backing (§4.6). |
 | **chip** | The single-line fallback for a widget with no room where it was put: ` 14:32 ` or ` ▸ 18:24 `, drawn over a corner of the lamp. |
@@ -559,11 +559,12 @@ Inset by the side margin (§1.3) on each side.
 
 The form depends on the terminal size (`ui/help/sheet.rs`):
 
-* **≥ 68 × 20: a centred sheet**, `min(64, cols−4)` × `min(18, rows−2)`,
+* **≥ 68 × 20: a centred sheet**, `min(66, cols−4)` × `min(22, rows−2)`,
   with a **rounded border in `metal`**. Overlays are the only place
   borders appear. The title `keys` sits in the top border in `accent`,
   and `esc close` in the bottom-right border in `dim`. The sheet always
-  has two columns: *lamp* then *widgets* | *clock & pomodoro* then *app*, with section
+  has two columns: *lamp* then *clock & pomodoro* | *widgets*, *music · after A*
+  (the player keys, §6.2) then *app*, with section
   headers in `dim`, keys in `accent` and labels in `text`. Labels line up
   per column at its widest key + 2; the left column takes its natural
   width (at least half) and a 2-col gutter separates them. The rows come
@@ -574,7 +575,8 @@ The form depends on the terminal size (`ui/help/sheet.rs`):
 * **Smaller (not Micro): a full-screen sheet**, one column, scrollable
   with `j/k/↑/↓`, no border: `keys` (accent) top-left and `esc close`
   (dim) top-right on the first row, the body from the third row. The
-  *app* section comes first (`m ? q` lead it), then lamp, clock, widgets;
+  *app* section comes first (`m ? q` lead it), then lamp, clock, widgets,
+  music;
   labels line up per section. When keys are cut off, a dim scroll hint
   sits after `keys`: `↓ j/k more` (`↑` at the end, `↕` between),
   shortened to `↓ more` or `↓` to fit.
@@ -585,32 +587,32 @@ The form depends on the terminal size (`ui/help/sheet.rs`):
   does *not* quit.
 
 80×24, captured from the app (`--color none`; the panel stays hidden while
-the sheet would touch it, §8.2):
+the sheet would touch it, §8.2). Everything fits without scrolling from
+80×24 up:
 
 ```
-
-
-
-        ╭ keys ────────────────────────────────────────────────────────╮
-        │  lamp                         clock & pomodoro               │
-        │  s    next style              c       next face              │
-        │  S    style picker            C       face picker            │
-        │  p    next palette            T       12h / 24h              │
-        │  P    palette picker          ␣       start / pause          │
-        │  [ ]  heat − +                n       skip phase             │
-        │  - +  speed                   r r     reset pomodoro         │
-        │  z    freeze                                                 │
-        │  0    reset heat & speed      app                            │
-        │  R    reseed wax              m       minimal                │
-        │                               ?       this help              │
-        │  widgets                      q       quit · ctrl-c          │
-        │  t    clock side/lava/off     b       status bar             │
-        │  f    pomodoro side/lava/off  d       debug hud              │
-        │  l    move lava widgets       ctrl-l  redraw                 │
-        │                                                              │
-        ╰─────────────────────────────────────────────────── esc close ╯
- ⣀⣀⣀⣀⣀⣠⣤⣴⣶⣶⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⣦⣤⣀⣀
-⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⣶⣤⣤⣤
+       ╭ keys ──────────────────────────────────────────────────────────╮
+       │  lamp                          widgets                         │
+       │  s    next style               t       clock side/lava/off     │
+       │  S    style picker             f       pomodoro side/lava/off  │
+       │  p    next palette             a       music side/lava/off     │
+       │  P    palette picker           A       music keys              │
+       │  [ ]  heat − +                 l       move lava widgets       │
+       │  - +  speed                                                    │
+       │  z    freeze                   music · after A                 │
+       │  0    reset heat & speed       ␣       play / pause            │
+       │  R    reseed wax               n p     next · previous         │
+       │                                ←→ ↑↓   seek · volume           │
+       │  clock & pomodoro              x r     shuffle · repeat        │
+       │  c    next face                                                │
+       │  C    face picker              app                             │
+       │  T    12h / 24h                m       minimal                 │
+       │  ␣    start / pause            ?       this help               │
+       │  n    skip phase               q       quit · ctrl-c           │
+       │  r r  reset pomodoro           b       status bar              │
+       │                                d       debug hud               │
+       │                                ctrl-l  redraw                  │
+       ╰───────────────────────────────────────────────────── esc close ╯
   ● braille · lava      s style  c clock  p palette  m minimal  ␣ pomo  ? help
 ```
 
@@ -728,16 +730,18 @@ toasts: no flash, no bell.
 
 ### 4.6 The widget dock
 
-The clock and the pomodoro are *widgets* (`src/dock/`). Each has a
-place, persisted as `dock.<name>`, cycled by its key: `t` the clock, `f`
-the pomodoro (`focus`), each `side → overlay → off → side`. A toast says
+The clock, the pomodoro and music are *widgets* (`src/dock/`). Each has
+a place, persisted as `dock.<name>`, cycled by its key: `t` the clock,
+`f` the pomodoro (`focus`), `a` music (`audio`), each `side → overlay →
+off → side`. A toast says
 where it went (`clock · on the lava`), adding `· no room` when the
 layout couldn't fit it there (it's in the chip meanwhile) and `· not in
 minimal` for `side` in minimal mode.
 
 * **side**: stacked in the panel (§1.4, §4.5), 2 rows apart, in
-  registry order (clock above pomodoro). The default for both, so the
-  default screen is the v1 panel, cell for cell.
+  registry order (clock, pomodoro, music). The default for the clock and
+  the pomodoro, so the default screen is the v1 panel, cell for cell;
+  music is `off` by default.
 * **overlay**: stacked on the lava, 1 row apart, at the anchor
   (`dock.anchor`; `l` moves it: centre → top → top right → bottom
   right → bottom → bottom left → top left). Widgets line up by the
@@ -768,6 +772,82 @@ cutout, exact to the liquid's index.
 Chrome rules still hold: an overlay sheet (help, picker) touching the
 stack's backing hides the whole stack (§8.2); the face picker sits on
 whichever side keeps the panel and the stack clear when it can.
+
+A chip is only offered when it fits the lamp's width (with its pads); a
+wider one (a long track name in a tiny terminal) passes to the next
+widget in rank.
+
+#### Music (now playing)
+
+`src/dock/music.rs`, fed by `src/media/` (the player) and
+`src/media/art.rs` (covers). Off by default. While it's placed (side or
+on the lava) the app holds a media source, whose worker thread polls the
+player (Spotify through AppleScript on macOS; MPRIS / SMTC to come); `off`
+drops it, which stops the polling. The UI only ever reads the source's
+latest snapshot (a short lock) once a frame, and commands are queued and
+shown at once (optimistically), so the player never stalls a frame.
+
+Forms, most preferred first (the layout keeps the first that fits; music
+is last in the registry, so it shrinks first):
+
+| form | size | shows |
+|---|---|---|
+| cover on top | A × (A/2 + 7), A = 32, 24 | the cover (half-block pixels, A px square), a blank row, the card |
+| cover beside | 32 × 6 | a 12-col cover, 2 cols, the card |
+| cover on top | A = 20, 16 | as above |
+| card | ≥ 20 × 6 | title (`text`), artist, album (`dim`), a blank row, bar, status line |
+| compact | ≥ 20 × 3 | title, artist, `▶ 1:23 ━━━─── 3:45` |
+| line | ≤ 36 × 1 | `▶ title – artist` |
+
+```
+ ████████████████        ← the cover, A × A/2 cells (A × A px)
+ ████████████████
+ ████████████████
+
+ Voices (From "The Be…   ← title, cut with … to the card's width
+ Dario G                 ← artist (dim)
+ Sunmachine              ← album (dim)
+
+ ━━━━━━━━━━━━──────────  ← elapsed in text (dim while paused), rest dim
+ ▶ 3:28     vol 68  5:19 ← play state + elapsed · ⇄ ↻ vol (dim) · total (dim)
+```
+
+The status line drops shuffle/repeat, then the volume, then the total
+before it would crowd the elapsed time. `▶` playing, `‖` paused; the
+glyph turns `accent` while the player keys are on (the one sign of the
+mode besides the status bar's hints). Shuffle `⇄` and repeat `↻` show
+only for players that can change them (`MediaSource::capabilities`):
+Spotify's AppleScript can't (its setters are no-ops, lava-75z.9), so for
+it they're neither shown nor offered. On the lava the forms line up by the
+anchor (centred lines under a centred cover).
+
+**Covers.** Fetched on a background thread when the track changes
+(`https` only, ≤ 8 MB), kept on disk in `$XDG_CACHE_HOME/lavatui/art`
+(else the platform cache dir; 256 newest kept), decoded (JPEG / PNG),
+cropped square and shrunk to 64 px, then box-filtered to the cover's
+cells each frame. Pixels go through `Theme::image`: exact in truecolor,
+the nearest xterm index in 256 colours, and no cover at all in 16
+colours or `NO_COLOR` (the cover forms aren't offered). Until the cover
+has arrived (or if it can't be had) a quiet placeholder holds its place
+(`bg` tinted 18 % toward `dim`, a dim `♪` in the middle), so nothing jumps
+when it lands. On the lava the cover is opaque; the soft backing frames
+it like the text.
+
+**Without a player** the widget is one calm, dim sentence, wrapped at 20
+cols beside the lamp and 30 on the lava, and it has no chip: `♪ Spotify
+isn't running`, `♪ Spotify isn't installed`, the Automation permission
+path (`♪ Allow control of Spotify: System Settings › Privacy & Security ›
+Automation › your terminal › Spotify`), `♪ No media player support on
+this platform yet`, `♪ nothing playing` (running, nothing loaded), `♪ …`
+for the moment before the first answer.
+
+**Chip:** `▶ title – artist` (≤ 32 cols, cut with `…`), rank 2 while
+playing (above the clock; ties go to the pomodoro, earlier in the
+registry), `‖ …` rank 1 while paused, none otherwise.
+
+**Frozen lamp:** while music is placed, the idle loop looks at the player
+at least once a second, so a track change or a pause made in Spotify
+shows within a second.
 
 ---
 
@@ -946,6 +1026,8 @@ so they can't drift.
 | `p` / `P` | next palette / palette picker | |
 | `t` | clock: side → on the lava → off | §4.6; toast `clock · on the lava` |
 | `f` | pomodoro: side → on the lava → off | §4.6 |
+| `a` | music: side → on the lava → off | §4.6; off by default |
+| `A` | player keys on (§6.2) | toast `music keys · esc when done`; with music off: `music is off · a to show it` |
 | `l` | move the widgets on the lava | centre → top → top right → … → top left |
 | `T` | 12h / 24h | |
 | `space` | pomodoro start / pause / resume | starts a focus phase if idle |
@@ -966,10 +1048,21 @@ so they can't drift.
 | help | `j k ↑ ↓` scroll · `?` `esc` `q` close |
 | picker | `j k ↑ ↓` move (live preview) · `1`–`9` jump · `⏎` `space` keep · `esc` `q` revert · opening key = keep + close |
 | tiny inline picker | `h l ← →` (also `j k`) move · `⏎` keep · `esc` revert |
+| player keys (`A`) | `␣` play / pause · `n` `p` next / previous · `← →` (`h l`) seek ∓ 10 s · `↑ ↓` (`k j`, `+ -`) volume ± 5 · `x` `r` shuffle / repeat (where the player can) · `esc` `q` `A` done · `?` help (ends them) |
+
+**The player keys** are a mode, like an overlay without a sheet: `A`
+turns them on and they take the keyboard until `esc`, `q` or `A`. That
+keeps one global key for the whole player (instead of nine more single
+keys in an already full map) and lets it reuse the obvious letters
+(`␣`, `n`, `p`, arrows) that the pomodoro and lamp own outside it. The
+status bar's hints become `␣ play  n p skip  ←→ seek  ↑↓ volume  esc
+done` and the widget's play glyph turns `accent`. Volume toasts its new
+value (`volume 65`); with no player, any key toasts why (`Spotify isn't
+running`). Leaving music `off` ends the mode.
 
 Every key not listed is ignored (no beep, no toast). Overlay keys take
 precedence over global keys; global keys other than `ctrl-c` don't fire
-while an overlay is open.
+while an overlay (or the player keys) is open.
 
 ### 6.3 Mouse
 
@@ -1031,6 +1124,15 @@ at 200×60 (solid/braille); output ≈ 10 KB/s at 80×24 and ≈ 55 KB/s at
 (`bench_lamp`): 0.02–0.14 ms per frame at 80×24 and 0.12–0.76 ms at
 200×60 for every style, truecolor or 256 colours. All within the targets
 above. Details in the README.
+
+**Music** (lava-75z.2, same machine, 10 s pty runs at 60 fps, min of 3,
+Spotify playing): drawing the widget, cover included, is too small to
+see; the cost is the Spotify backend's `osascript` poll, once a second
+while playing (≈ 50–90 ms of CPU per run): 80×24 solid 2.5 % of a core
+with music off → 11.1 % beside the lamp or on the lava; 200×50 8.1 % →
+16.7 %. That is over the 5 % target at 80×24; cheaper polling is
+lava-75z.11. Output is unchanged (64 KB/s at 80×24 either way; a little
+less on the lava, which covers wax).
 
 Speed changes (`-`/`+`/`0`) ease in over a fraction of a second rather
 than jumping.
@@ -1113,12 +1215,17 @@ mouse = false
 anchor = "center"        # center | top | top-right | bottom-right | bottom | bottom-left | top-left
 clock = "side"           # side | overlay | off
 pomodoro = "side"        # one key per widget in the registry
+music = "off"
+
+[spotify]
+client_id = ""           # Web API library features (docs/spotify.md); "" = off
 ```
 
 Out-of-range values are clamped rather than rejected: `fps` 1–240,
 `cell_aspect` 1.6–2.6 (NaN → 2.0), `heat` 1–5, `speed` snapped to the
 nearest step (≤ 0 or non-finite → 1), pomodoro minutes 1–1440, `cycles`
-1–12. The old style name `glass` is accepted as `chrome`.
+1–12, `spotify.client_id` trimmed (anything but letters and digits → `""`).
+An empty `client_id` falls back to `LAVATUI_SPOTIFY_CLIENT_ID`. The old style name `glass` is accepted as `chrome`.
 
 Retired in v1.1, and quietly ignored in an old file (no toast; the next
 save takes them out): `lamp.frame`, `lamp.lighting`, `clock.show`

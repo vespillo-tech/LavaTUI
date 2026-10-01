@@ -3,7 +3,8 @@
 A lava lamp for your terminal. Blobs of wax warm on the heater, rise,
 cool, sink, merge and split, and you can draw them in nine render
 styles: smooth half-blocks, braille, halftone, a synthwave sunset,
-digital rain, a topographic map and more. Next to the lamp sit a clock and a pomodoro timer.
+digital rain, a topographic map and more. Next to the lamp sit a clock and a pomodoro timer,
+and, if you want it, what's playing in Spotify, cover art included.
 Turn those off with one key and you just have the lamp.
 
 ![lavatui demo: the lamp cycling through render styles and palettes, the style picker previewing styles live, and minimal mode](docs/screenshots/demo.gif)
@@ -60,6 +61,16 @@ in minimal mode:
   readable over every style; `l` moves them round (centre, top, corners,
   bottom). They shrink, then fall back to the corner chip, rather than
   ever covering the lamp.
+- **Now playing** (`a`, off by default): the Spotify desktop app's track
+  with its cover art drawn in half-block pixels, title, artist, album, a
+  progress bar, play state and volume, beside the lamp or on the lava. It
+  shrinks from a big cover card down to `▶ title – artist`, and says calmly
+  when Spotify isn't running or needs permission. `A` turns on the player
+  keys: `space` play/pause, `n`/`p` next/previous, `←`/`→` seek, `↑`/`↓`
+  volume, `esc` when done. It never blocks a frame: the player is polled on
+  its own thread, only while the widget is shown, and covers are fetched
+  and cached (`$XDG_CACHE_HOME/lavatui/art`) in the background. macOS for
+  now (AppleScript; Linux MPRIS and Windows to come).
 - **Clock faces**: blocks, segment, analog, binary, words and text. Each
   face comes in several sizes, and the largest one that fits is used; on
   a very large terminal the panel widens for the biggest ones.
@@ -141,6 +152,8 @@ unknown `--style` or `--palette` name exits with the list of valid ones.
 | **Widgets** | |
 | `t` | clock: side panel → on the lava → off |
 | `f` | pomodoro: side panel → on the lava → off |
+| `a` | music (now playing): side panel → on the lava → off |
+| `A` | player keys on (see below) |
 | `l` | move the widgets on the lava (centre, top, the corners, bottom) |
 | **App** | |
 | `m` | minimal mode on/off |
@@ -153,6 +166,12 @@ unknown `--style` or `--palette` name exits with the list of valid ones.
 `esc` never quits: it only closes overlays. When help or a picker is
 open, `q` closes it instead of quitting.
 
+- **Player keys** (after `A`, until `esc`, `q` or `A`): `space` play /
+  pause, `n` / `p` next / previous, `←` / `→` (`h` / `l`) seek 10 s,
+  `↑` / `↓` (`k` / `j`, `+` / `-`) volume, `x` / `r` shuffle / repeat
+  where the player supports them (Spotify's AppleScript doesn't). They
+  take the keyboard like an overlay, so they can reuse `space`, `n` and
+  `p`; the status bar shows them while they're on.
 - **In help:** `j`/`k` or `↑`/`↓` scroll. `?`, `esc` or `q` close it.
 - **In pickers:** `j`/`k` or `↑`/`↓` move (with live preview), `1`–`9`
   jump, `enter` or `space` keep, and `esc` or `q` revert. Pressing the
@@ -219,7 +238,17 @@ mouse = false
 anchor = "center"        # center | top | top-right | bottom-right | bottom | bottom-left | top-left
 clock = "side"           # side | overlay | off
 pomodoro = "side"        # side | overlay | off
+music = "off"            # side | overlay | off
+
+[spotify]
+client_id = ""           # for the Web API library features, see docs/spotify.md
+                         # ("" = off; LAVATUI_SPOTIFY_CLIENT_ID works too)
 ```
+
+Music needs nothing set up: it talks to the Spotify desktop app. The
+first time, macOS asks whether your terminal may control Spotify; if you
+said no, the widget tells you where to change it (System Settings ›
+Privacy & Security › Automation).
 
 The file is meant to be edited by hand, even while the lamp runs. A bad
 value (or a style, palette or face that doesn't exist) is ignored, a value
@@ -288,6 +317,11 @@ frame since removed); render times are `bench_lamp` on v1.1.
 | Output in braille (80×24 / 200×60) | ~5 KB/s / ~21 KB/s |
 
 Braille changes few cells per frame, so it is the cheapest to send.
+
+With music on and Spotify playing, the widget's drawing costs next to
+nothing, but asking Spotify through `osascript` once a second does:
+about 11 % of a core at 80×24 (vs 2.5 % without), 17 % at 200×50.
+Making that cheaper is tracked as lava-75z.11.
 
 Here is the render time per frame at 200×60 in truecolor: the field
 sampling plus the style draw (`bench_lamp`: a full-area lamp, two sim

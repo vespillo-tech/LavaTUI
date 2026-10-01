@@ -6,7 +6,7 @@ use ratatui::style::Style;
 
 use crate::app::Model;
 use crate::dock::{Backdrop, Look, WIDGETS};
-use crate::theme::{ColorDepth, Role, Theme};
+use crate::theme::{ColorDepth, Role, TERMINAL_DEFAULT, Theme};
 use crate::ui::layout::{Chip, Stack, halo};
 
 /// The side panel: each widget in its slot, on the app background.
@@ -86,9 +86,12 @@ pub fn draw_on_lava(buf: &mut Buffer, stack: &Stack, model: &Model, lamp: &Theme
     }
     for pos in r.positions() {
         let from = &scratch[pos];
-        if from.symbol() != " " {
+        // Pictures (album art) bring their own background; text keeps the
+        // backing's.
+        let own_bg = from.bg != TERMINAL_DEFAULT;
+        if from.symbol() != " " || own_bg {
             let to = &mut buf[pos];
-            let bg = to.bg;
+            let bg = if own_bg { from.bg } else { to.bg };
             to.set_symbol(from.symbol())
                 .set_style(from.style())
                 .set_bg(bg);

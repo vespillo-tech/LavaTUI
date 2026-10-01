@@ -6,7 +6,7 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
-use super::{Command, MediaSource, Snapshot, Status, Track};
+use super::{Capabilities, Command, MediaSource, Snapshot, Status, Track};
 
 /// Previous within this far into a track goes to the previous track;
 /// later, it restarts the current one (as Spotify does).
@@ -22,6 +22,7 @@ struct Inner {
     playlist: Vec<Arc<Track>>,
     index: usize,
     sent: Vec<Command>,
+    capabilities: Capabilities,
 }
 
 impl FakeSource {
@@ -43,6 +44,7 @@ impl FakeSource {
                 playlist,
                 index,
                 sent: Vec::new(),
+                capabilities: Capabilities::ALL,
             })),
         }
     }
@@ -80,6 +82,12 @@ impl FakeSource {
     /// Replace the whole state (e.g. to show an unavailable reason).
     pub fn set(&self, snapshot: Snapshot) {
         self.lock().snapshot = snapshot;
+    }
+
+    /// Act like a player without some controls (e.g. Spotify's
+    /// AppleScript, which can't shuffle).
+    pub fn set_capabilities(&self, capabilities: Capabilities) {
+        self.lock().capabilities = capabilities;
     }
 
     /// Every command sent so far, in order.
@@ -178,6 +186,10 @@ impl MediaSource for FakeSource {
 
     fn send(&self, command: Command) {
         self.send_at(command, Instant::now());
+    }
+
+    fn capabilities(&self) -> Capabilities {
+        self.lock().capabilities
     }
 }
 

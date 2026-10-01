@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::{Command, MediaSource, Snapshot, Status, Unavailable};
+use super::{Capabilities, Command, MediaSource, Snapshot, Status, Unavailable};
 
 /// A player that can be asked, blocking, for its state.
 pub trait Backend: Send + 'static {
@@ -30,6 +30,11 @@ pub trait Backend: Send + 'static {
     /// state, stamped with the instant it was read. Failures come back as
     /// an `Unavailable` status, never a panic.
     fn exchange(&mut self, commands: &[Command]) -> Snapshot;
+
+    /// Which optional controls work (fixed for the backend's life).
+    fn capabilities(&self) -> Capabilities {
+        Capabilities::ALL
+    }
 }
 
 /// How long to wait before the next poll, by what the player is doing.
@@ -90,6 +95,7 @@ struct State {
 pub struct Polled {
     state: Arc<Mutex<State>>,
     commands: Option<Sender<Command>>,
+    capabilities: Capabilities,
 }
 
 impl Polled {
@@ -100,6 +106,7 @@ impl Polled {
             sent: 0,
         }));
         let (tx, rx) = mpsc::channel();
+        let capabilities = backend.capabilities();
         let worker = Worker {
             backend,
             state: Arc::clone(&state),
@@ -114,6 +121,7 @@ impl Polled {
             Ok(_) => Self {
                 state,
                 commands: Some(tx),
+                capabilities,
             },
             Err(err) => Self::unavailable(Unavailable::Error(err.to_string())),
         }
@@ -127,6 +135,7 @@ impl Polled {
                 sent: 0,
             })),
             commands: None,
+            capabilities: Capabilities::NONE,
         }
     }
 }
@@ -134,6 +143,10 @@ impl Polled {
 impl MediaSource for Polled {
     fn snapshot(&self) -> Snapshot {
         lock(&self.state).snapshot.clone()
+    }
+
+    fn capabilities(&self) -> Capabilities {
+        self.capabilities
     }
 
     fn send(&self, command: Command) {
@@ -297,6 +310,7 @@ mod tests {
         let handle = Polled {
             state: Arc::clone(&state),
             commands: Some(tx),
+            capabilities: Capabilities::ALL,
         };
         let worker = Worker {
             backend: Scripted(answer, Arc::clone(&log)),

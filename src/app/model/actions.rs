@@ -25,10 +25,12 @@ impl Model {
         let handled = match self.overlay {
             Overlay::Picker(picker) => self.picker_action(picker, action),
             Overlay::Help { scroll } => self.help_action(scroll, action),
+            Overlay::None if self.music.keys => self.player_action(action, now),
             Overlay::None => false,
         };
-        // Under an overlay only quitting and terminal events get through (§6.2).
-        let passes = self.overlay == Overlay::None
+        // Under an overlay (or in the player keys) only quitting and
+        // terminal events get through (§6.2).
+        let passes = (self.overlay == Overlay::None && !self.music.keys)
             || matches!(
                 action,
                 Action::Quit | Action::Resize | Action::Focus(_) | Action::Redraw
@@ -36,6 +38,7 @@ impl Model {
         if !handled && passes {
             self.global_action(action, now);
         }
+        self.sync_music();
         self.relayout(self.layout.area);
     }
 
@@ -52,6 +55,21 @@ impl Model {
                 }
             }
             Action::Close => self.overlay = Overlay::None,
+            _ => return false,
+        }
+        true
+    }
+
+    /// The player keys (`A`): each sends its command; `esc` / `q` / `A`
+    /// leave them, `?` leaves them for the help.
+    fn player_action(&mut self, action: Action, now: Instant) -> bool {
+        match action {
+            Action::Player(key) => self.player_key(key, now),
+            Action::Close | Action::PlayerKeys => self.music.keys = false,
+            Action::Help => {
+                self.music.keys = false;
+                self.overlay = Overlay::Help { scroll: 0 };
+            }
             _ => return false,
         }
         true
@@ -86,6 +104,9 @@ impl Model {
             Action::PalettePicker => self.open_picker(PickerKind::Palette),
             Action::Place(name) => self.move_widget(name, now),
             Action::NextAnchor => self.next_anchor(now),
+            Action::PlayerKeys => self.player_keys_on(),
+            // Only while the player keys are on (`player_action`).
+            Action::Player(_) => {}
             Action::ToggleHour24 => self.toggle(now, |s| &mut s.clock.hour24, HOUR24),
             Action::PomodoroToggle => self.pomodoro_toggle(now),
             Action::PomodoroSkip => match self.pomodoro.skip(now) {
@@ -141,6 +162,7 @@ impl Model {
         let place = self.settings.dock.place(widget).next();
         self.settings.dock.set(widget, place);
         self.changed(now);
+        self.sync_music();
         self.relayout(self.layout.area);
         let note = match place {
             Place::Off => "",

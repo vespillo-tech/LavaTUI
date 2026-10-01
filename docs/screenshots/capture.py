@@ -9,6 +9,11 @@ a monospace font. Clock times are whatever the local time is.
     python3 -m venv /tmp/v && /tmp/v/bin/pip install pyte pillow
     /tmp/v/bin/python docs/screenshots/capture.py            # all
     /tmp/v/bin/python docs/screenshots/capture.py hero help  # some
+    /tmp/v/bin/python docs/screenshots/capture.py music      # needs Spotify playing
+
+`music` (the now-playing widget, beside the lamp and on the lava) is
+never part of "all": it shows whatever Spotify is playing, cover art
+included, so it's for checking the widget, not for committing.
 
 Fonts default to macOS Menlo; set LAVATUI_SHOT_FONT to a .ttf/.ttc
 elsewhere (e.g. DejaVuSansMono.ttf).
@@ -240,6 +245,11 @@ SHOTS = {
     "overlay-mix": Shot(100, 30, '[lamp];style="braille";[theme];palette="abyss";[dock];clock="overlay"', "0.5: ", "--seed 5"),
     "color16": Shot(80, 24, '[lamp];style="ascii"', args="--seed 2 --color 16"),
 }
+# Live: whatever Spotify plays (never in "all", never committed).
+LIVE = {
+    "music-side": Shot(120, 36, '[lamp];style="solid";[dock];music="side"', frames=420),
+    "music-lava": Shot(120, 36, '[lamp];style="braille";[theme];palette="abyss";[dock];music="overlay"', frames=420),
+}
 TILES = {f"style-{s}": Shot(34, 30, TILE + f'style="{s}"') for s in STYLES}
 TILES |= {f"palette-{p}": Shot(34, 30, TILE + f'style="solid";[theme];palette="{p}"') for p in PALETTES}
 
@@ -248,6 +258,8 @@ def main(names):
     tmp = tempfile.mkdtemp()
     want = names or list(SHOTS) + ["styles", "palettes"]
     jobs = {n: s for n, s in SHOTS.items() if n in want}
+    if "music" in want:
+        jobs |= LIVE
     if "styles" in want:
         jobs |= {n: s for n, s in TILES.items() if n.startswith("style-")}
     if "palettes" in want:
@@ -256,6 +268,8 @@ def main(names):
     def one(item):
         name, shot = item
         out = os.path.join(HERE if name in SHOTS else tmp, name + ".png")
+        if name in LIVE:
+            out = os.path.join(tempfile.gettempdir(), name + ".png")
         render(run(shot), out)
         return out
 

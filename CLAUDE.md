@@ -236,9 +236,27 @@ numbers); `docs/design.md` is the layout/visual contract.
                 `WidgetForm`s most preferred first, with `Needs` (huge /
                 tall terminal) and `fill`; `draw(model, form, rect, Look)`;
                 `chip(model)` → one-line fallback with a rank) + `WIDGETS`
-                registry (`clock.rs`, `pomodoro.rs`). `Place` (side /
+                registry (`clock.rs`, `pomodoro.rs`, `music.rs`). `Place` (side /
                 overlay / off), `Anchor`. Widgets are stateless views of the
                 `Model`. Seconds never on the lava; date forms need tall.
+- `media/`    — now playing (platform-neutral; backends behind `cfg`):
+                `MediaSource` (`snapshot()` a short lock, `send(Command)`
+                queued + applied optimistically, `capabilities()`),
+                `detect()` (macOS: `Polled` over the Spotify AppleScript
+                backend, which never launches Spotify and can't
+                shuffle/repeat; elsewhere `Unavailable(Unsupported)`),
+                `FakeSource` for tests, `art.rs`: `ArtLoader` (cover fetch
+                https-only on its thread, disk cache in
+                `$XDG_CACHE_HOME/lavatui/art`, decoded to 64 px `Art`,
+                `scaled(w, h)` box filter). The app holds a source only
+                while the music widget is placed: `app/model/music.rs`
+                (`Music`: source, cover loader, latest snapshot, the `A`
+                player-keys mode; `sync` once a frame and after keys;
+                `connect_with` injects a fake in tests). `spotify_web/`:
+                Web API client for the library UI to come; its Client ID
+                is `Settings::spotify_client_id` (`[spotify] client_id`,
+                else `LAVATUI_SPOTIFY_CLIENT_ID`). `lyrics/`: LRCLIB client
+                + cache for the lyrics widget to come.
 - `ui/`       — the only terminal-facing code. `layout.rs`: the pure
                 `layout(area, &LayoutInput) -> Layout` of design §1 (the lamp
                 rect, right/bottom panel = `Stack` of side widgets, `on_lava`
@@ -248,7 +266,9 @@ numbers); `docs/design.md` is the layout/visual contract.
                 room, status row, toast row). `LayoutInput.dock` is one
                 `DockItem` (place, forms, chip width/rank) per widget;
                 `first_fit` tries form combinations in hide order (last
-                widget shrinks first; date → face size → stack → chip). `keymap.rs`: the single `KEYMAP` table that drives
+                widget shrinks first; date → face size → stack → chip). `keymap.rs`: the single `KEYMAP` table (its
+                `Section::Music` rows are the player keys, a mode of their
+                own: `InputMode::Player`) that drives
                 both dispatch (`action_for(event, InputMode)`) and the help
                 overlay. `mod.rs` draws back to front; `dock.rs` (panel, widgets on the
                 lava over their soft backing: veiled 82 % to liquid, fading
@@ -295,8 +315,10 @@ never drift apart; there is no direct crossterm dependency.
   first; `WidgetForm::fixed` / `::fill`, `variant` is yours to tell them
   apart in `draw`), `draw` (inside the rect only; colours via
   `model.theme`; `look.align` for forms narrower than the rect; spaces
-  stay see-through, the ui adds the backing on the lava), `chip` (or
-  `None`). Add it to `dock::WIDGETS` (order = stacking order and shrink
+  stay see-through, the ui adds the backing on the lava; a picture —
+  album art — paints its own background, via `theme.image`), `chip` (or
+  `None`). A placed widget must always offer at least one form (an empty
+  list takes the whole panel down): show a calm one-line message instead. Add it to `dock::WIDGETS` (order = stacking order and shrink
   priority) and give it a key: one `row(Widgets, "<k>", "<name>
   side/lava/off", &[(K('<k>'), A::Place("<name>"))])` in `KEYMAP` (a test
   checks every widget has one). Config, layout, help, toasts, chip

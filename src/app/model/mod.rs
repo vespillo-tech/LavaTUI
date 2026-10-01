@@ -7,6 +7,7 @@
 //! effects the loop must perform (bell, full clear) are flags it drains.
 
 mod actions;
+mod music;
 mod pickers;
 
 use std::time::{Duration, Instant, SystemTime};
@@ -26,6 +27,7 @@ use crate::timing::{FixedStep, Quality};
 use crate::ui::keymap::InputMode;
 use crate::ui::layout::{self, DockItem, Layout, LayoutInput, SizeTier};
 
+pub use music::Music;
 pub use pickers::{Picker, PickerKind};
 
 /// Simulation rate. Fixed; unrelated to the render frame rate.
@@ -118,6 +120,9 @@ pub struct Model {
     /// Latest `r` press, to tell auto-repeat from a double press.
     last_reset_key: Option<Instant>,
 
+    /// The music widget's player, cover and keys.
+    pub music: Music,
+
     // Chrome.
     pub overlay: Overlay,
     pub toast: Option<Toast>,
@@ -184,6 +189,7 @@ impl Model {
             reset_armed: None,
             reset_pending: None,
             last_reset_key: None,
+            music: Music::default(),
             overlay: Overlay::None,
             toast: None,
             hud: false,
@@ -213,6 +219,7 @@ impl Model {
     /// Build the world at this window's lamp aspect and run it for a
     /// while, so the first frame shows a lamp that has been going.
     fn warm_up(&mut self, area: Rect, seed: u64) {
+        self.sync_music();
         self.relayout(area);
         if let Some(aspect) = self.lamp_aspect() {
             self.world = World::new(seed, aspect);
@@ -225,6 +232,7 @@ impl Model {
     /// Which key set is live.
     pub fn input_mode(&self) -> InputMode {
         match self.overlay {
+            Overlay::None if self.music.keys => InputMode::Player,
             Overlay::None => InputMode::Normal,
             Overlay::Help { .. } => InputMode::Help,
             Overlay::Picker(p) => InputMode::Picker {
@@ -292,6 +300,11 @@ impl Model {
         }
         if let Some(at) = self.save_at {
             wake = wake.min(at);
+        }
+        if self.music_on() {
+            // The player may change under us (a track ends, someone presses
+            // pause in Spotify): look each second.
+            wake = wake.min(self.now + second);
         }
         Some(wake + WAKE_SLACK)
     }
@@ -379,6 +392,7 @@ impl Model {
         if self.save_at.is_some_and(|at| now >= at) {
             self.save();
         }
+        self.sync_music();
 
         self.relayout(area);
         if let Some(aspect) = self.lamp_aspect() {
