@@ -325,7 +325,8 @@ impl Model {
         self.settings.minimal()
     }
 
-    /// What a chip would show right now, and its text.
+    /// What a chip would show right now, and its text: `14:32`,
+    /// `▸ 24:58` (focus) or `▸ break 4:58`; `‖` when paused.
     pub fn chip_text(&self) -> Option<(ChipKind, String)> {
         let glyph = match self.pomodoro.status() {
             Status::Running => '▸',
@@ -338,7 +339,14 @@ impl Model {
             Status::Idle => return None,
         };
         let remaining = format_remaining(self.pomodoro.remaining(self.now));
-        Some((ChipKind::Pomodoro, format!("{glyph} {remaining}")))
+        // A break says so: phase colours alone can be near twins (or, in
+        // 16 colours and none, the same).
+        let phase = if self.pomodoro.phase().is_break() {
+            "break "
+        } else {
+            ""
+        };
+        Some((ChipKind::Pomodoro, format!("{glyph} {phase}{remaining}")))
     }
 
     pub fn face_options(&self, seconds: bool) -> clock::FaceOptions {

@@ -126,6 +126,18 @@ fn scenarios() -> Vec<(&'static str, Setup)> {
             m.update(Action::PomodoroToggle, t);
             m.toast = None;
         }),
+        ("minimal pomodoro focus", |m, t| {
+            m.update(Action::ToggleMinimal, t);
+            m.update(Action::PomodoroToggle, t);
+            m.toast = None;
+        }),
+        ("minimal pomodoro break", |m, t| {
+            m.update(Action::ToggleMinimal, t);
+            m.update(Action::PomodoroToggle, t);
+            m.update(Action::PomodoroSkip, t);
+            m.toast = None;
+            m.flash = None;
+        }),
         ("minimal + hud", |m, t| {
             m.update(Action::ToggleMinimal, t);
             m.update(Action::DebugHud, t);
@@ -311,6 +323,120 @@ fn help_shows_every_binding() {
             );
         }
     }
+}
+
+/// lava-ebq.38: the small full-screen help leads with `m ? q`, and when
+/// keys are cut off the top row says which way they scroll.
+#[test]
+fn small_help_pins_app_keys_and_hints_scrolling() {
+    for (cols, rows) in [(20, 8), (30, 10), (40, 14), (50, 16), (60, 20)] {
+        let (mut m, t0) = model(cols, rows, 7);
+        m.update(Action::Help, t0);
+        let buf = draw(&m, cols, rows);
+        let ctx = format!("{cols}x{rows}");
+        for (y, key) in [(3, "m"), (4, "?"), (5, "q")] {
+            assert!(row(&buf, y).trim_start().starts_with(key), "{ctx}: {key}");
+        }
+        let max = super::help::sheet::max_scroll(m.layout.area);
+        assert!(max > 0, "{ctx}: the keys don't all fit");
+        let top = |m: &mut Model, scroll| {
+            m.overlay = Overlay::Help { scroll };
+            row(&draw(m, cols, rows), 0)
+        };
+        let first = top(&mut m, 0);
+        assert!(
+            first.contains('↓') && first.contains("esc close"),
+            "{ctx}: {first:?}"
+        );
+        assert!(top(&mut m, max).contains('↑'), "{ctx}");
+        if max > 1 {
+            assert!(top(&mut m, 1).contains('↕'), "{ctx}");
+        }
+    }
+    // All of it fits: no hint.
+    let (mut m, t0) = model(80, 24, 7);
+    m.update(Action::Help, t0);
+    let buf = text(&draw(&m, 80, 24));
+    assert!(!buf.contains('↓') && !buf.contains('↕'), "{buf}");
+}
+
+/// lava-ebq.43: the two-column sheet keeps a 2-col gutter, and every
+/// label in a column starts at one x.
+#[test]
+fn help_sheet_columns_have_a_gutter_and_aligned_labels() {
+    for (cols, rows) in [
+        (68, 20),
+        (80, 24),
+        (100, 30),
+        (160, 22),
+        (200, 50),
+        (300, 100),
+    ] {
+        let (mut m, t0) = model(cols, rows, 7);
+        m.update(Action::Help, t0);
+        let buf = draw(&m, cols, rows);
+        let Some((lines, inner)) = super::help::sheet::body(m.layout.area) else {
+            panic!()
+        };
+        let spans = super::help::sheet::column_spans(&lines, inner);
+        assert_eq!(spans.len(), 2, "{cols}x{rows}: two columns");
+        let (lx, lw) = spans[0];
+        let rx = spans[1].0;
+        assert!(rx >= lx + lw + super::help::sheet::GUTTER, "{cols}x{rows}");
+        for y in inner.top()..inner.bottom() {
+            for x in lx + lw..rx {
+                assert_eq!(
+                    buf[(x, y)].symbol(),
+                    " ",
+                    "{cols}x{rows}: gutter at {x},{y}"
+                );
+            }
+        }
+        for (c, &(x0, w)) in spans.iter().enumerate() {
+            // Where each key line's label (in `text`) starts.
+            let (key, label) = (m.theme.role(Role::Accent), m.theme.role(Role::Text));
+            let starts: Vec<u16> = (inner.top()..inner.bottom())
+                .filter(|&y| buf[(x0, y)].fg == key)
+                .filter_map(|y| (x0..x0 + w).find(|&x| buf[(x, y)].fg == label))
+                .collect();
+            assert!(starts.len() > 5, "{cols}x{rows}: column {c}");
+            assert!(
+                starts.iter().all(|&x| x == starts[0]),
+                "{cols}x{rows}: column {c} labels at {starts:?}"
+            );
+        }
+    }
+}
+
+/// lava-ebq.41: in minimal mode a focus chip and a break chip never look
+/// the same, at any size that shows one.
+#[test]
+fn minimal_chip_tells_focus_from_break() {
+    let setups = scenarios();
+    let find = |name| setups.iter().find(|(n, _)| *n == name).unwrap().1;
+    let (focus, rest) = (
+        find("minimal pomodoro focus"),
+        find("minimal pomodoro break"),
+    );
+    let mut seen = 0;
+    for cols in (12..=300).step_by(12) {
+        for rows in (5..=90).step_by(5) {
+            let (mf, bf) = scene(cols, rows, 7, focus);
+            let (mb, bb) = scene(cols, rows, 7, rest);
+            assert_eq!(mf.layout.chip.is_some(), mb.layout.chip.is_some());
+            if mf.layout.chip.is_none() {
+                continue;
+            }
+            seen += 1;
+            let (tf, tb) = (text(&bf), text(&bb));
+            assert!(
+                tf.contains("▸ 25:00") && !tf.contains("break"),
+                "{cols}x{rows}"
+            );
+            assert!(tb.contains("▸ break 5:00"), "{cols}x{rows}\n{tb}");
+        }
+    }
+    assert!(seen > 100, "chips seen: {seen}");
 }
 
 /// §4.1: `● style · palette` on the left (palette from 60 cols), hints on

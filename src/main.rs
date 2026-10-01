@@ -12,24 +12,39 @@ mod theme;
 mod timing;
 mod ui;
 
-use std::io;
+use std::io::{self, IsTerminal};
+use std::process::ExitCode;
 
 use clap::Parser;
 
-fn main() -> io::Result<()> {
+fn main() -> ExitCode {
     let mut cli = cli::Cli::parse();
     let panic_after = cli.panic_after.take();
     let session = cli.into_session();
 
+    // Both ends must be the terminal: without stdin there are no keys, and
+    // with stdout redirected the frames would land in a file.
+    let not_a_tty = [
+        ("stdin", io::stdin().is_terminal()),
+        ("stdout", io::stdout().is_terminal()),
+    ]
+    .into_iter()
+    .find(|(_, tty)| !tty);
+    if let Some((name, _)) = not_a_tty {
+        return fail(&format!(
+            "needs an interactive terminal ({name} is not a terminal)"
+        ));
+    }
+
     // `try_init` enters raw mode + the alternate screen and installs a panic
     // hook that restores the terminal; `restore` undoes it on normal exit.
-    let mut terminal = ratatui::try_init().map_err(|err| {
-        ratatui::restore();
-        io::Error::new(
-            err.kind(),
-            format!("lavatui needs an interactive terminal: {err}"),
-        )
-    })?;
+    let mut terminal = match ratatui::try_init() {
+        Ok(terminal) => terminal,
+        Err(err) => {
+            ratatui::restore();
+            return fail(&format!("needs an interactive terminal ({err})"));
+        }
+    };
     // Chain onto ratatui's hook: switch our extra terminal modes (focus
     // reports, mouse capture) off before it restores the screen and prints
     // the panic, so the shell never receives focus or mouse escapes.
@@ -40,5 +55,14 @@ fn main() -> io::Result<()> {
     }));
     let result = app::run(&mut terminal, &session, panic_after);
     ratatui::restore();
-    result
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => fail(&err.to_string()),
+    }
+}
+
+/// One line on stderr, exit 1: no Debug dump of the error.
+fn fail(message: &str) -> ExitCode {
+    eprintln!("lavatui: {message}");
+    ExitCode::FAILURE
 }

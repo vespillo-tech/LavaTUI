@@ -192,8 +192,11 @@ numbers); `docs/design.md` is the layout/visual contract.
                 follow symlinks and are atomic).
 - `app/`      — `mod.rs` is the loop only: poll input until the frame
                 deadline → `Model::update(action)` (any input draws at once;
-                queued events are drained first; the wait is recomputed from
-                the deadline each event) → inside `terminal.draw`:
+                queued events are drained first, as one burst that
+                `replies.rs` strips of terminal replies (DCS/OSC/APC, DA2
+                tails) crossterm reads as keys; the wait is recomputed from
+                the deadline each burst; `Events` carries the clock, so
+                tests run on a fake one) → inside `terminal.draw`:
                 `Model::tick(now, frame.area(), local_time)` → `ui::draw`
                 (tick and draw always share the drawn size; `ui::draw` also
                 relayouts if they ever differ). It owns the terminal, reads

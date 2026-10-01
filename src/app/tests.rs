@@ -273,27 +273,46 @@ fn redraw_and_resize_never_query_the_cursor() {
     }
 }
 
-/// Plays back events at a fixed rate on the real clock.
+/// Plays back events at a fixed rate on a fake clock: polling advances
+/// it instead of sleeping, so timing checks are exact under any load
+/// (lava-ebq.42).
 struct Stream {
+    now: Instant,
     every: Duration,
     next_at: Instant,
     event: Event,
 }
 
+impl Stream {
+    fn new(every: Duration, event: Event) -> Self {
+        let now = Instant::now();
+        Stream {
+            now,
+            every,
+            next_at: now,
+            event,
+        }
+    }
+}
+
 impl Events for Stream {
     fn poll(&mut self, timeout: Duration) -> io::Result<bool> {
-        let wait = self.next_at.saturating_duration_since(Instant::now());
+        let wait = self.next_at.saturating_duration_since(self.now);
         if wait > timeout {
-            std::thread::sleep(timeout);
+            self.now += timeout;
             return Ok(false);
         }
-        std::thread::sleep(wait);
+        self.now += wait;
         Ok(true)
     }
 
     fn read(&mut self) -> io::Result<Event> {
-        self.next_at = Instant::now() + self.every;
+        self.next_at = self.now + self.every;
         Ok(self.event.clone())
+    }
+
+    fn now(&self) -> Instant {
+        self.now
     }
 }
 
@@ -302,22 +321,20 @@ impl Events for Stream {
 #[test]
 fn ignored_events_dont_starve_frames() {
     let (mut m, _) = model("starve", 80, 24);
-    let mut events = Stream {
-        every: Duration::from_millis(10),
-        next_at: Instant::now(),
-        event: Event::Mouse(MouseEvent {
+    let mut events = Stream::new(
+        Duration::from_millis(10),
+        Event::Mouse(MouseEvent {
             kind: MouseEventKind::Moved,
             column: 3,
             row: 3,
             modifiers: KeyModifiers::NONE,
         }),
-    };
+    );
+    let mut replies = ReplyFilter::default();
     for _ in 0..5 {
-        let start = Instant::now();
-        let deadline = start + Duration::from_millis(50);
-        assert!(!wait_for_input(&mut events, &mut m, deadline).unwrap());
-        let late = Instant::now().saturating_duration_since(deadline);
-        assert!(late < Duration::from_millis(15), "frame held back {late:?}");
+        let deadline = events.now + Duration::from_millis(50);
+        assert!(!wait_for_input(&mut events, &mut replies, &mut m, deadline).unwrap());
+        assert_eq!(events.now, deadline, "frame held back");
     }
 }
 
@@ -326,13 +343,86 @@ fn ignored_events_dont_starve_frames() {
 #[test]
 fn a_key_flood_still_draws_by_the_deadline() {
     let (mut m, _) = model("flood", 80, 24);
-    let mut events = Stream {
-        every: Duration::from_millis(2),
-        next_at: Instant::now(),
-        event: Event::Key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE)),
+    let mut events = Stream::new(
+        Duration::from_millis(2),
+        Event::Key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE)),
+    );
+    let deadline = events.now + Duration::from_millis(40);
+    let mut replies = ReplyFilter::default();
+    assert!(wait_for_input(&mut events, &mut replies, &mut m, deadline).unwrap());
+    assert!(events.now <= deadline, "frame held back");
+}
+
+/// Events that all arrived together (one read), then nothing.
+struct Burst {
+    now: Instant,
+    events: std::collections::VecDeque<Event>,
+}
+
+impl Events for Burst {
+    fn poll(&mut self, timeout: Duration) -> io::Result<bool> {
+        if self.events.is_empty() {
+            self.now += timeout;
+        }
+        Ok(!self.events.is_empty())
+    }
+
+    fn read(&mut self) -> io::Result<Event> {
+        Ok(self.events.pop_front().expect("polled first"))
+    }
+
+    fn now(&self) -> Instant {
+        self.now
+    }
+}
+
+/// What the replies could change: everything a key in the keymap touches
+/// (heat and speed are in the settings).
+fn state(m: &Model) -> String {
+    format!(
+        "{:?} {:?} {:?} {} {} {} {} {:?}",
+        m.settings,
+        m.overlay,
+        m.pomodoro.status(),
+        m.face.name(),
+        m.frozen,
+        m.hud,
+        m.quit,
+        m.toast.as_ref().map(|t| t.text.clone()),
+    )
+}
+
+/// lava-ebq.31: DCS/OSC/APC/DA replies, as crossterm reads them, change
+/// nothing and never quit; real keys in the same burst still act.
+#[test]
+fn terminal_replies_are_not_keys() {
+    use super::replies::tests::{REPLIES, crossterm_events};
+    for reply in REPLIES {
+        let (mut m, t0) = model("replies", 80, 24);
+        let before = state(&m);
+        let mut events = Burst {
+            now: t0,
+            events: crossterm_events(reply).into(),
+        };
+        let deadline = t0 + Duration::from_millis(16);
+        let handled =
+            wait_for_input(&mut events, &mut ReplyFilter::default(), &mut m, deadline).unwrap();
+        let shown = String::from_utf8_lossy(reply);
+        assert!(!handled, "{shown:?} acted");
+        assert_eq!(state(&m), before, "{shown:?} changed state");
+    }
+    // A reply between two real keys: both keys act, the reply doesn't.
+    let (mut m, t0) = model("replies-mixed", 80, 24);
+    let mut bytes = b"]".to_vec();
+    bytes.extend_from_slice(b"\x1bP+q\x1b\\");
+    bytes.extend_from_slice(b"z");
+    let mut events = Burst {
+        now: t0,
+        events: crossterm_events(&bytes).into(),
     };
-    let deadline = Instant::now() + Duration::from_millis(40);
-    assert!(wait_for_input(&mut events, &mut m, deadline).unwrap());
-    let late = Instant::now().saturating_duration_since(deadline);
-    assert!(late < Duration::from_millis(10), "frame held back {late:?}");
+    let heat = m.settings.lamp.heat;
+    wait_for_input(&mut events, &mut ReplyFilter::default(), &mut m, t0).unwrap();
+    assert!(!m.quit);
+    assert_eq!(m.settings.lamp.heat, heat + 1);
+    assert!(m.frozen);
 }

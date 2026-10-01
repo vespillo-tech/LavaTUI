@@ -168,12 +168,18 @@ pub static KEYMAP: &[Row] = &[
         "reset pomodoro",
         &[(K('r'), A::PomodoroReset)],
     ),
+    // m ? q first: the small full-screen help leads with them (§4.3).
     row(App, "m", "minimal", &[(K('m'), A::ToggleMinimal)]),
+    row(App, "?", "this help", &[(K('?'), A::Help)]),
+    row(
+        App,
+        "q",
+        "quit · ctrl-c",
+        &[(K('q'), A::Quit), (Ctrl('c'), A::Quit)],
+    ),
     row(App, "b", "status bar", &[(K('b'), A::ToggleStatusBar)]),
     row(App, "d", "debug hud", &[(K('d'), A::DebugHud)]),
     row(App, "ctrl-l", "redraw", &[(Ctrl('l'), A::Redraw)]),
-    row(App, "?", "this help", &[(K('?'), A::Help)]),
-    row(App, "q", "quit", &[(K('q'), A::Quit), (Ctrl('c'), A::Quit)]),
 ];
 
 /// Which key set is live.

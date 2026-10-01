@@ -5,9 +5,11 @@
 //! Input is handled the moment it arrives (the loop sleeps inside
 //! `event::poll`), and any input draws a frame immediately, so a key shows
 //! up within one frame (§7). Bursts (resize storms, held keys) are drained
-//! before drawing, so only the final state is drawn.
+//! before drawing, so only the final state is drawn. Terminal replies that
+//! crossterm reads as keys are filtered out first ([`replies`]).
 
 mod model;
+mod replies;
 #[cfg(test)]
 mod tests;
 
@@ -28,6 +30,7 @@ use crate::config::store::Store;
 use crate::render::LampState;
 use crate::timing::{FpsMeter, FramePacer};
 use crate::ui::{self, keymap};
+use replies::ReplyFilter;
 
 /// Run the app. `panic_after` (hidden `--panic-after`) panics after that
 /// many frames, to check the terminal is restored on a crash.
@@ -101,11 +104,12 @@ fn run_loop(
     let mut frames = 0;
     let mut lamp = LampState::default();
     let mut events = TerminalEvents;
+    let mut replies = ReplyFilter::default();
     let mut last_drawn = None;
 
     loop {
         let deadline = model.idle_until().unwrap_or_else(|| pacer.deadline());
-        if wait_for_input(&mut events, model, deadline)? {
+        if wait_for_input(&mut events, &mut replies, model, deadline)? {
             // Input: draw now, not at the next deadline.
             pacer = FramePacer::new(fps, Instant::now());
         }
@@ -176,10 +180,12 @@ fn full_repaint<B: Backend>(terminal: &mut Terminal<B>) -> Result<(), B::Error> 
     terminal.resize(area)
 }
 
-/// Where input comes from: the terminal, or a script in tests.
+/// Where input comes from, and the clock it's timed by: the terminal and
+/// the real clock, or a script on a fake clock in tests.
 trait Events {
     fn poll(&mut self, timeout: Duration) -> io::Result<bool>;
     fn read(&mut self) -> io::Result<Event>;
+    fn now(&self) -> Instant;
 }
 
 struct TerminalEvents;
@@ -192,39 +198,61 @@ impl Events for TerminalEvents {
     fn read(&mut self) -> io::Result<Event> {
         event::read()
     }
+
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
 }
+
+/// Most events read as one burst. Far more than any terminal reply; it
+/// only bounds the work between deadline checks.
+const MAX_BURST: usize = 128;
 
 /// Handle input until `deadline`. Returns `true` as soon as anything was
 /// handled (after draining whatever else is already queued).
 ///
+/// Events are read in bursts (everything already queued) and terminal
+/// replies are dropped from each burst before any of it is dispatched.
 /// The wait is recomputed from `deadline` every time round, so a stream of
 /// events we ignore (mouse motion) can't hold the frame back, and draining
 /// stops at the deadline, so a flood of keys can't either.
 fn wait_for_input(
     events: &mut impl Events,
+    replies: &mut ReplyFilter,
     model: &mut Model,
     deadline: Instant,
 ) -> io::Result<bool> {
     let mut handled = false;
+    let mut burst = Vec::new();
     loop {
         let timeout = if handled {
             Duration::ZERO
         } else {
-            deadline.saturating_duration_since(Instant::now())
+            deadline.saturating_duration_since(events.now())
         };
         if !events.poll(timeout)? {
             return Ok(handled);
         }
-        let event = events.read()?;
-        if let Event::Resize(..) = event {
-            model.cell_aspect =
-                reported_cell_aspect().unwrap_or(model.settings.display.cell_aspect);
+        burst.push(events.read()?);
+        while burst.len() < MAX_BURST && events.poll(Duration::ZERO)? {
+            burst.push(events.read()?);
         }
-        if let Some(action) = keymap::action_for(&event, model.input_mode()) {
-            model.update(action, Instant::now());
-            handled = true;
+        let now = events.now();
+        replies.filter(&mut burst, now);
+        for event in burst.drain(..) {
+            if let Event::Resize(..) = event {
+                model.cell_aspect =
+                    reported_cell_aspect().unwrap_or(model.settings.display.cell_aspect);
+            }
+            if let Some(action) = keymap::action_for(&event, model.input_mode()) {
+                model.update(action, now);
+                handled = true;
+            }
+            if model.quit {
+                return Ok(handled);
+            }
         }
-        if model.quit || Instant::now() >= deadline {
+        if now >= deadline {
             return Ok(handled);
         }
     }

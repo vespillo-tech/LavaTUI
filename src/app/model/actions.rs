@@ -75,7 +75,7 @@ impl Model {
             Action::ToggleStatusBar if !self.minimal() => {
                 self.toggle(now, |s| &mut s.ui.status_bar, STATUS_BAR);
             }
-            Action::ToggleStatusBar => {}
+            Action::ToggleStatusBar => self.toast("no status bar in minimal · m to leave"),
             Action::NextStyle => self.cycle_pick(PickerKind::Style),
             Action::NextFace => {
                 self.face = clock::next_face(self.face.name());
@@ -148,7 +148,9 @@ impl Model {
         self.changed(now);
     }
 
-    /// Next frame mode; the toast says what auto resolved to.
+    /// Next frame mode; the toast says what it resolved to when that's
+    /// something else (`auto · glass`; forced glass too small: `glass ·
+    /// bleed`).
     fn cycle_frame(&mut self, now: Instant) {
         let frame = &mut self.settings.lamp.frame;
         *frame = frame.next();
@@ -157,7 +159,12 @@ impl Model {
             Some(LampFrame::Glass) => "glass",
             _ => "bleed",
         };
-        self.toast(format!("{} · {resolved}", self.settings.lamp.frame.name()));
+        let name = self.settings.lamp.frame.name();
+        self.toast(if name == resolved {
+            name.to_owned()
+        } else {
+            format!("{name} · {resolved}")
+        });
         self.changed(now);
     }
 

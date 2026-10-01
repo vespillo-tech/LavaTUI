@@ -18,7 +18,7 @@ use crate::app::Model;
 use crate::theme::{ColorDepth, Role, Theme};
 use crate::ui::chrome::fit_words;
 pub use sheet::footprint;
-use sheet::{Line, Mode, body, mode};
+use sheet::{Line, Mode, body, column_spans, max_scroll, mode};
 
 /// How far the lamp behind the sheet fades toward `bg` (truecolor).
 const BEHIND_FADE: f32 = 0.65;
@@ -35,9 +35,17 @@ pub fn draw(buf: &mut Buffer, area: Rect, scroll: u16, model: &Model) {
             buf.set_style(area, ink.bg);
             buf.set_string(area.x + 1, area.y, "keys", ink.accent);
             let close = "esc close";
+            let mut end = area.right() - 1;
             if area.width as usize > 6 + close.len() {
-                let x = area.right() - 1 - close.len() as u16;
-                buf.set_string(x, area.y, close, ink.dim);
+                end -= close.len() as u16;
+                buf.set_string(end, area.y, close, ink.dim);
+                end -= 2;
+            }
+            // Cut-off keys say so: `keys  ↓ j/k more   esc close`.
+            let x = area.x + 7;
+            let room = usize::from(end.saturating_sub(x));
+            if let Some(hint) = scroll_hint(scroll, max_scroll(area), room) {
+                buf.set_string(x, area.y, hint, ink.dim);
             }
         }
         Mode::Sheet(sheet) => {
@@ -49,6 +57,11 @@ pub fn draw(buf: &mut Buffer, area: Rect, scroll: u16, model: &Model) {
                 .border_style(Style::new().fg(model.theme.role(Role::Metal)))
                 .title(ratatui::text::Line::styled(" keys ", ink.accent))
                 .title_bottom(ratatui::text::Line::styled(" esc close ", ink.dim).right_aligned())
+                .title_bottom(
+                    scroll_hint(scroll, max_scroll(area), usize::from(sheet.width / 2))
+                        .map(|hint| ratatui::text::Line::styled(format!(" {hint} "), ink.dim))
+                        .unwrap_or_default(),
+                )
                 .render(sheet, buf);
         }
     }
@@ -95,9 +108,7 @@ fn draw_line(buf: &mut Buffer, area: Rect, ink: &Inks) {
 
 /// The key columns in `inner`, scrolled down `scroll` lines.
 fn draw_body(buf: &mut Buffer, cols: &[Vec<Line>], inner: Rect, scroll: u16, ink: &Inks) {
-    let col_w = inner.width / cols.len() as u16;
-    for (c, lines) in cols.iter().enumerate() {
-        let x = inner.x + c as u16 * col_w;
+    for (lines, (x, col_w)) in cols.iter().zip(column_spans(cols, inner)) {
         let shown = lines
             .iter()
             .skip(usize::from(scroll))
@@ -113,7 +124,7 @@ fn draw_body(buf: &mut Buffer, cols: &[Vec<Line>], inner: Rect, scroll: u16, ink
                     // trailing words (`frame: auto/glass/bleed` → `frame`),
                     // and a key with no room for any is left out.
                     let lx = x + key_w as u16 + 2;
-                    let room = usize::from((x + col_w).saturating_sub(lx + 1));
+                    let room = usize::from((x + col_w).saturating_sub(lx));
                     if let Some(label) = fit_words(label, room) {
                         buf.set_string(x, y, keys, ink.accent);
                         buf.set_string(lx, y, label.trim_end_matches(':'), ink.text);
@@ -123,6 +134,29 @@ fn draw_body(buf: &mut Buffer, cols: &[Vec<Line>], inner: Rect, scroll: u16, ink
             }
         }
     }
+}
+
+/// Which way the help can scroll from `scroll`: `↓`, `↑`, `↕`, or nothing
+/// when it all fits.
+fn scroll_arrows(scroll: u16, max: u16) -> Option<&'static str> {
+    match (scroll > 0, scroll < max) {
+        (false, false) => None,
+        (false, true) => Some("↓"),
+        (true, false) => Some("↑"),
+        (true, true) => Some("↕"),
+    }
+}
+
+/// The scroll hint (`↓ j/k more`, shortened to fit `room`), or nothing.
+fn scroll_hint(scroll: u16, max: u16, room: usize) -> Option<String> {
+    let arrows = scroll_arrows(scroll, max)?;
+    [
+        format!("{arrows} j/k more"),
+        format!("{arrows} more"),
+        arrows.to_owned(),
+    ]
+    .into_iter()
+    .find(|s| s.chars().count() <= room)
 }
 
 /// Fade everything outside `keep` toward the background (truecolor only).

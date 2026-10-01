@@ -35,7 +35,7 @@ pub struct Cli {
 
     /// Seed the wax simulation: the same seed always plays out the same lamp
     /// (default: a new seed every launch).
-    #[arg(long, value_name = "U64")]
+    #[arg(long, value_name = "U64", allow_hyphen_values = true)]
     pub seed: Option<u64>,
 
     /// Read and write settings here instead of the XDG config dir.
@@ -51,19 +51,22 @@ pub struct Cli {
     pub panic_after: Option<u64>,
 }
 
-/// `--style`: a style name (or an old alias of one), else clap's usage
-/// error (exit 2) listing them.
+/// `--style`: a style name (or an old alias of one), any case, else
+/// clap's usage error (exit 2) listing them.
 fn style_name(name: &str) -> Result<String, String> {
-    match StyleId::by_name(name) {
-        Some(_) => Ok(name.to_owned()),
+    let name = name.to_lowercase();
+    match StyleId::by_name(&name) {
+        Some(_) => Ok(name),
         None => Err(unknown("style", StyleId::all().map(|id| id.style().name()))),
     }
 }
 
-/// `--palette`: a palette name, else clap's usage error listing them.
+/// `--palette`: a palette name, any case, else clap's usage error
+/// listing them.
 fn palette_name(name: &str) -> Result<String, String> {
-    match Palette::by_name(name) {
-        Some(_) => Ok(name.to_owned()),
+    let name = name.to_lowercase();
+    match Palette::by_name(&name) {
+        Some(_) => Ok(name),
         None => Err(unknown("palette", Palette::all().iter().map(|p| p.name))),
     }
 }
@@ -112,7 +115,9 @@ mod tests {
     fn parses_seed() {
         let session = Cli::parse_from(["lavatui", "--seed", "18446744073709551615"]).into_session();
         assert_eq!(session.seed, Some(u64::MAX));
-        assert!(Cli::try_parse_from(["lavatui", "--seed", "-1"]).is_err());
+        // A negative seed is a bad value, not an unknown flag.
+        let err = Cli::try_parse_from(["lavatui", "--seed", "-1"]).unwrap_err();
+        assert!(err.to_string().contains("invalid value '-1'"), "{err}");
     }
 
     #[test]
@@ -153,6 +158,11 @@ mod tests {
             err.to_string().contains("one of: lava, ultraviolet"),
             "{err}"
         );
+        // Any case, like `--color`.
+        let session =
+            Cli::parse_from(["lavatui", "--style", "CHROME", "--palette", "Lava"]).into_session();
+        assert_eq!(session.style.as_deref(), Some("chrome"));
+        assert_eq!(session.palette.as_deref(), Some("lava"));
         // Old style names still work.
         let session = Cli::parse_from(["lavatui", "--style", "glass"]).into_session();
         assert_eq!(session.style.as_deref(), Some("glass"));

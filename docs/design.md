@@ -75,7 +75,7 @@ the lamp (§1.4).
 | **Lamp** | always (if `cols < 4` or `rows < 2`, the screen is painted `bg`, nothing else) | frame per §2.1 |
 | **Status bar** | `rows ≥ 14 && cols ≥ 30 && status_bar_on` and not minimal mode | segments drop per §4.1 |
 | **Panel** | the placement algorithm (§1.4) finds a slot | face variant = largest that fits the panel's inner rect |
-| **Chip** | no panel, clock or pomodoro enabled, `cols ≥ 20 && rows ≥ 8` | shows the pomodoro while one is running (`▸`) or paused (`‖`), else the clock |
+| **Chip** | no panel, clock or pomodoro enabled, `cols ≥ 20 && rows ≥ 8` | shows the pomodoro while one is running (`▸`) or paused (`‖`), `break` before a break's time, else the clock |
 | **Date line** | in panel, `rows ≥ 36`, and the panel still fits | `thu 1 oct`, dim, lowercase |
 | **Pomodoro label** `focus` / `break` | panel inner width ≥ 18 | — |
 | **Cycle dots** `●●○○` | panel inner width ≥ 22 | right-aligned on the label line |
@@ -545,7 +545,8 @@ untouched (same blobs, same phase).
   default `under`): `14:32` in `dim`, centred on the last row under the
   lamp base. In bleed, or when there's no spare row, it becomes the
   corner chip. A running pomodoro replaces it with `▸ 18:24` in the phase
-  colour.
+  colour; a break also says so, `▸ break 4:12`, since phase colours can
+  be near twins (and are one colour in 16 / none).
 * Every key still works. Toasts still appear (that's the only feedback
   minimal mode gives). `?` still opens help, and the pickers still open:
   minimal mode drops the resting chrome, not the overlays.
@@ -630,14 +631,19 @@ The form depends on the terminal size (`ui/help/sheet.rs`):
   and `esc close` in the bottom-right border in `dim`. The sheet always
   has two columns: *lamp* | *clock & pomodoro* then *app*, with section
   headers in `dim`, keys in `accent` and labels in `text`. Labels line up
-  at each section's widest key + 2. The rows come straight from the
-  keymap table (§6), so help can't drift from dispatch.
+  per column at its widest key + 2; the left column takes its natural
+  width (at least half) and a 2-col gutter separates them. The rows come
+  straight from the keymap table (§6), so help can't drift from dispatch.
 * The lamp keeps animating behind it, dimmed to 35 % (truecolor: lerp
   toward `bg`; 256/16: the sheet's rect is cleared to `bg`, the rest
   isn't dimmed).
 * **Smaller (not Micro): a full-screen sheet**, one column, scrollable
   with `j/k/↑/↓`, no border: `keys` (accent) top-left and `esc close`
-  (dim) top-right on the first row, the body from the third row.
+  (dim) top-right on the first row, the body from the third row. The
+  *app* section comes first (`m ? q` lead it), then lamp, then clock;
+  labels line up per section. When keys are cut off, a dim scroll hint
+  sits after `keys`: `↓ j/k more` (`↑` at the end, `↕` between),
+  shortened to `↓ more` or `↓` to fit.
 * **Micro:** the single line `? close · too small for keys` in the top row
   (only help's own keys act while it's open, so it names no others),
   clipped by dropping items from the end.
@@ -651,22 +657,22 @@ The form depends on the terminal size (`ui/help/sheet.rs`):
                        ▐███▌
                        █████
         ╭ keys ────────────────────────────────────────────────────────╮
-        │  lamp                         clock & pomodoro               │
-        │  s    next style              c    next face                 │
-        │  S    style picker            C    face picker               │
-        │  p    next palette            t    show/hide clock           │
-        │  P    palette picker          T    12h / 24h                 │
-        │  f    frame: auto/glass/bleed ␣    start / pause             │
-        │  l    lighting                n    skip phase                │
-        │  [ ]  heat − +                r r  reset pomodoro            │
+        │  lamp                          clock & pomodoro              │
+        │  s    next style               c       next face             │
+        │  S    style picker             C       face picker           │
+        │  p    next palette             t       show/hide clock       │
+        │  P    palette picker           T       12h / 24h             │
+        │  f    frame: auto/glass/bleed  ␣       start / pause         │
+        │  l    lighting                 n       skip phase            │
+        │  [ ]  heat − +                 r r     reset pomodoro        │
         │  - +  speed                                                  │
-        │  z    freeze                  app                            │
-        │  0    reset heat & speed      m       minimal                │
-        │  R    reseed wax              b       status bar             │
-        │                               d       debug hud              │
-        │                               ctrl-l  redraw                 │
-        │                               ?       this help              │
-        │                               q       quit                   │
+        │  z    freeze                   app                           │
+        │  0    reset heat & speed       m       minimal               │
+        │  R    reseed wax               ?       this help             │
+        │                                q       quit · ctrl-c         │
+        │                                b       status bar            │
+        │                                d       debug hud             │
+        │                                ctrl-l  redraw                │
         ╰─────────────────────────────────────────────────── esc close ╯
                  ▐███████████████▌
 
@@ -955,11 +961,11 @@ so they can't drift.
 | `ctrl-c` | quit | always, from anywhere |
 | `esc` | close overlay / cancel picker | no-op otherwise: **esc never quits** (esc is muscle memory for "close this"; an accidental quit loses pomodoro state) |
 | `m` | minimal mode on/off | also `--minimal` / `-m` |
-| `b` | status bar on/off | full mode only |
+| `b` | status bar on/off | full mode only (minimal toasts `no status bar in minimal · m to leave`) |
 | `s` / `S` | next style / style picker | toast shows `name  i/n` |
 | `c` / `C` | next clock face / face picker | |
 | `p` / `P` | next palette / palette picker | |
-| `f` | frame: auto → glass → bleed | toast shows the *resolved* frame (`auto · glass`) |
+| `f` | frame: auto → glass → bleed | toast shows the *resolved* frame when it differs (`auto · glass`, forced glass too small: `glass · bleed`; else just `glass`) |
 | `l` | lighting on/off | |
 | `t` | clock shown/hidden | hides the face in the panel/chip; the pomodoro stays |
 | `T` | 12h / 24h | |

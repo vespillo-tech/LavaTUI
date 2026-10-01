@@ -28,22 +28,22 @@
                        ▐███▌
                        █████
         ╭ keys ────────────────────────────────────────────────────────╮
-        │  lamp                         clock & pomodoro               │
-        │  s    next style              c    next face                 │
-        │  S    style picker            C    face picker               │
-        │  p    next palette            t    show/hide clock           │
-        │  P    palette picker          T    12h / 24h                 │
-        │  f    frame: auto/glass/bleed ␣    start / pause             │
-        │  l    lighting                n    skip phase                │
-        │  [ ]  heat − +                r r  reset pomodoro            │
+        │  lamp                          clock & pomodoro              │
+        │  s    next style               c       next face             │
+        │  S    style picker             C       face picker           │
+        │  p    next palette             t       show/hide clock       │
+        │  P    palette picker           T       12h / 24h             │
+        │  f    frame: auto/glass/bleed  ␣       start / pause         │
+        │  l    lighting                 n       skip phase            │
+        │  [ ]  heat − +                 r r     reset pomodoro        │
         │  - +  speed                                                  │
-        │  z    freeze                  app                            │
-        │  0    reset heat & speed      m       minimal                │
-        │  R    reseed wax              b       status bar             │
-        │                               d       debug hud              │
-        │                               ctrl-l  redraw                 │
-        │                               ?       this help              │
-        │                               q       quit                   │
+        │  z    freeze                   app                           │
+        │  0    reset heat & speed       m       minimal               │
+        │  R    reseed wax               ?       this help             │
+        │                                q       quit · ctrl-c         │
+        │                                b       status bar            │
+        │                                d       debug hud             │
+        │                                ctrl-l  redraw                │
         ╰─────────────────────────────────────────────────── esc close ╯
                  ▐███████████████▌
 
@@ -173,6 +173,56 @@
                  ▐███████████████▌
 
   ● solid · lava          s style  c clock  p palette  f frame  ␣ pomo  ? help
+── minimal pomodoro focus ──
+
+                                      ▐██▌
+                                     ▐████▌
+                                     ██████
+                                  ██▗~~~~~~▖██
+                                  ██▐~~~~~~▌██
+                                  ██~~~~~~~~██
+                                  ██~~~~~~~~██
+                                  █▐~~~~~~~~▌█
+                                  █▟~~~~~~~~▙█
+                                  █~~~~~~~~~~█
+                                  ▐~~~~~~~~~~▌
+                                  ▟~~~~~~~~~~▙
+                                  ~~~~~~~~~~~~
+                                  ▐~~~~~~~~~~▌
+                                  █~~~~~~~~~~█
+                                  █▐~~~~~~~~▌█
+                                   ██████████
+                                  ████████████
+                                 ▐████████████▌
+                                ▐██████████████▌
+
+                                     ▸ 25:00
+
+── minimal pomodoro break ──
+
+                                      ▐██▌
+                                     ▐████▌
+                                     ██████
+                                  ██▗~~~~~~▖██
+                                  ██▐~~~~~~▌██
+                                  ██~~~~~~~~██
+                                  ██~~~~~~~~██
+                                  █▐~~~~~~~~▌█
+                                  █▟~~~~~~~~▙█
+                                  █~~~~~~~~~~█
+                                  ▐~~~~~~~~~~▌
+                                  ▟~~~~~~~~~~▙
+                                  ~~~~~~~~~~~~
+                                  ▐~~~~~~~~~~▌
+                                  █~~~~~~~~~~█
+                                  █▐~~~~~~~~▌█
+                                   ██████████
+                                  ████████████
+                                 ▐████████████▌
+                                ▐██████████████▌
+
+                                  ▸ break 5:00
+
 ── minimal + hud ──
  60 fps · 2.1 ms · 1k px
                                       ▐██▌

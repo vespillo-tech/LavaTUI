@@ -128,7 +128,15 @@ fn minimal_toggle_is_instant() {
     assert!(m.layout.status.is_none() && m.layout.panel.is_none());
     assert!(m.minimal());
     m.update(Action::ToggleStatusBar, t0);
-    assert!(m.settings.ui.status_bar, "b does nothing in minimal mode");
+    assert!(
+        m.settings.ui.status_bar,
+        "b changes nothing in minimal mode"
+    );
+    assert_eq!(
+        m.toast.as_ref().unwrap().text,
+        "no status bar in minimal · m to leave",
+        "but says why"
+    );
     m.update(Action::ToggleMinimal, t0);
     assert!(m.layout.status.is_some());
 }
@@ -295,12 +303,36 @@ fn heat_and_speed_clamp_and_reset() {
 fn frame_toast_shows_the_resolved_frame() {
     let (mut m, t0) = model("frame");
     m.update(Action::CycleFrame, t0);
-    assert_eq!(m.toast.as_ref().unwrap().text, "glass · glass");
+    assert_eq!(
+        m.toast.as_ref().unwrap().text,
+        "glass",
+        "no `glass · glass`"
+    );
     m.update(Action::CycleFrame, t0);
-    assert_eq!(m.toast.as_ref().unwrap().text, "bleed · bleed");
+    assert_eq!(m.toast.as_ref().unwrap().text, "bleed");
     assert_eq!(m.layout.lamp.unwrap().frame, LampFrame::Bleed);
     m.update(Action::CycleFrame, t0);
     assert_eq!(m.toast.as_ref().unwrap().text, "auto · glass");
+
+    // Forced glass with no room for it says what it got instead.
+    let (mut m, t0) = model_with(Session::default(), temp_config("frame-small"), 40, 10);
+    m.update(Action::CycleFrame, t0);
+    assert_eq!(m.toast.as_ref().unwrap().text, "glass · bleed");
+}
+
+/// lava-ebq.41: the chip names a break, so focus and break differ without
+/// colour, running or paused.
+#[test]
+fn chip_tells_focus_from_break() {
+    let (mut m, t0) = model("chip-phase");
+    m.update(Action::PomodoroToggle, t0);
+    assert_eq!(m.chip_text().unwrap().1, "▸ 25:00");
+    m.update(Action::PomodoroSkip, t0);
+    let (kind, text) = m.chip_text().unwrap();
+    assert_eq!(kind, ChipKind::Pomodoro);
+    assert!(text.starts_with("▸ break "), "{text}");
+    m.update(Action::PomodoroToggle, t0);
+    assert!(m.chip_text().unwrap().1.starts_with("‖ break "));
 }
 
 #[test]
