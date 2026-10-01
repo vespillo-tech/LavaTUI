@@ -9,6 +9,8 @@ pub struct Config {
     pub fps: u32,
     /// Quit after this many rendered frames (`None` = run until the user quits).
     pub max_frames: Option<u64>,
+    /// Simulation seed (`None` = a new one every launch, from the clock).
+    pub seed: Option<u64>,
 }
 
 impl Default for Config {
@@ -17,6 +19,7 @@ impl Default for Config {
             minimal: false,
             fps: 60,
             max_frames: None,
+            seed: None,
         }
     }
 }

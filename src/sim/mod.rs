@@ -26,16 +26,26 @@
 //! - Total wax area is conserved by every step (pool + blobs). Only a width
 //!   change adjusts it, slowly, through the pool.
 //!
+//! User controls (heat, reseed, heat pulse, speed) live in `controls.rs`.
+//!
 //! Rendering goes through [`Field`]: `prepare` it from the world once per
 //! frame (with the fixed-step `alpha` for smooth interpolation), then sample.
 
 mod blob;
+mod controls;
 mod field;
 mod rng;
 
 use std::f64::consts::PI;
 
 pub use blob::{Blob, Phase};
+pub use controls::SimSpeed;
+#[cfg_attr(
+    not(test),
+    expect(unused_imports, reason = "bound to keys by lava-xxx")
+)]
+pub use controls::{DEFAULT_HEAT, HEAT_LEVELS};
+use controls::{Pulse, Reseed};
 pub use field::{Field, SURFACE, Sample};
 use rng::Rng;
 
@@ -219,6 +229,12 @@ pub struct World {
     next_id: u64,
     spawn_timer: f64,
     stats: Stats,
+    /// Chosen heat level, and the continuous level the sim uses (eases
+    /// toward the chosen one).
+    heat_target: u8,
+    heat_level: f64,
+    pulses: Vec<Pulse>,
+    reseed: Option<Reseed>,
 }
 
 impl World {
@@ -242,6 +258,10 @@ impl World {
             next_id: 0,
             spawn_timer: 0.0,
             stats: Stats::default(),
+            heat_target: DEFAULT_HEAT,
+            heat_level: f64::from(DEFAULT_HEAT),
+            pulses: Vec::new(),
+            reseed: None,
         };
         world.scatter_initial_blobs();
         world.prev_pool_level = world.pool_level();
@@ -317,6 +337,7 @@ impl World {
         }
         self.time += dt;
 
+        self.update_controls(dt);
         self.ease_walls(dt);
         self.move_free(dt);
         self.move_attached(dt);
@@ -348,11 +369,13 @@ impl World {
     }
 
     /// How many blobs the world aims for (docs/design.md §2.4).
+    /// Scales with heat, which eases, so the count changes gradually.
     fn target_blobs(&self) -> usize {
-        match self.shape {
-            Shape::Tank => ((5.0 * self.wall_width).round() as usize).clamp(4, 28),
-            Shape::Bottle => 8,
-        }
+        let base = match self.shape {
+            Shape::Tank => (5.0 * self.wall_width).clamp(4.0, 28.0),
+            Shape::Bottle => 8.0,
+        };
+        ((base * self.heat_blobs()).round() as usize).clamp(2, MAX_BLOBS)
     }
 
     /// Typical blob radius: the wax not in a full-depth pool, shared out.
@@ -427,6 +450,7 @@ impl World {
 
         let damp = 1.0 / (1.0 + DRAG * dt);
         let level = self.pool_level();
+        let buoyancy = BUOYANCY * self.heat_buoyancy();
         for i in 0..self.blobs.len() {
             let blob = &self.blobs[i];
             if blob.phase != Phase::Free {
@@ -436,7 +460,7 @@ impl World {
             let (hx, hy) = blob.half_extents();
             // Stokes-ish: bigger blobs rise and sink a little faster.
             let size = (blob.radius / REF_RADIUS).sqrt().clamp(0.6, 1.4);
-            ay += BUOYANCY * size * (blob.temp - NEUTRAL_TEMP);
+            ay += buoyancy * size * (blob.temp - NEUTRAL_TEMP);
             ax += WANDER * (blob.wander_freq * self.time + blob.wander_phase).sin();
 
             let half = self.half_width_at(blob.y);
@@ -467,6 +491,11 @@ impl World {
     fn move_attached(&mut self, dt: f64) {
         let level = self.pool_level();
         let min_pool = self.min_pool_area();
+        let (melt_rate, bud_time) = match self.reseed {
+            Some(Reseed::Melting) => (controls::RESEED_MELT_RATE, BUD_TIME),
+            Some(Reseed::Refill { .. }) => (MELT_RATE, BUD_TIME / controls::REFILL_BUD_SPEEDUP),
+            None => (MELT_RATE, BUD_TIME),
+        };
         for blob in &mut self.blobs {
             if blob.phase == Phase::Free {
                 continue;
@@ -484,7 +513,7 @@ impl World {
                 Phase::Free => unreachable!("skipped above"),
                 Phase::Budding { target } => {
                     let full = PI * target * target;
-                    let grow = (full / BUD_TIME * dt).min(self.pool_area - min_pool);
+                    let grow = (full / bud_time * dt).min(self.pool_area - min_pool);
                     if grow <= 0.0 {
                         // The pool ran dry: let go if it's worth it, else sink back.
                         blob.phase = if blob.radius > 0.5 * target {
@@ -508,7 +537,7 @@ impl World {
                     }
                 }
                 Phase::Melting => {
-                    let drain = blob.area() * MELT_RATE * dt;
+                    let drain = blob.area() * melt_rate * dt;
                     blob.set_area(blob.area() - drain);
                     self.pool_area += drain;
                     let rest = surface - 0.4 * blob.radius;
@@ -530,19 +559,24 @@ impl World {
 
     fn exchange_heat(&mut self, dt: f64) {
         let level = self.pool_level();
-        for blob in &mut self.blobs {
+        for i in 0..self.blobs.len() {
+            let blob = &self.blobs[i];
             let (target, rate) = match blob.phase {
                 Phase::Free => {
                     let bottom = blob.y - blob.radius * blob.stretch;
                     let near = 1.0 - ((bottom - level) / HEATER_BAND).clamp(0.0, 1.0);
                     let cool = COOL_RATE * (REF_RADIUS / blob.radius.max(0.01)).min(4.0);
-                    // Blend the liquid's pull with the heater's below the band.
+                    // Blend the liquid's pull with the heater's below the band
+                    // and any heat pulses (which heat toward fully hot).
                     let heat = HEATER_RATE * near;
-                    let target = (cool * ambient_temp(blob.y) + heat * POOL_TEMP) / (cool + heat);
-                    (target, cool + heat)
+                    let pulse = self.pulse_heat(blob.x, blob.y, blob.radius);
+                    let rate = cool + heat + pulse;
+                    let target = (cool * ambient_temp(blob.y) + heat * POOL_TEMP + pulse) / rate;
+                    (target, rate)
                 }
                 Phase::Budding { .. } | Phase::Melting => (POOL_TEMP, POOL_HEAT_RATE),
             };
+            let blob = &mut self.blobs[i];
             blob.temp += (target - blob.temp) * (1.0 - (-rate * dt).exp());
         }
     }
@@ -618,11 +652,16 @@ impl World {
     }
 
     fn spawn(&mut self, dt: f64) {
+        let gap_scale = match self.reseed {
+            Some(Reseed::Melting) => return,
+            Some(Reseed::Refill { .. }) => 1.0 / controls::REFILL_SPAWN_SPEEDUP,
+            None => self.heat_spawn_gap(),
+        };
         self.spawn_timer -= dt;
         if self.spawn_timer > 0.0 {
             return;
         }
-        self.spawn_timer = self.rng.range(SPAWN_GAP.0, SPAWN_GAP.1);
+        self.spawn_timer = self.rng.range(SPAWN_GAP.0, SPAWN_GAP.1) * gap_scale;
 
         let buds = self
             .blobs
@@ -630,7 +669,16 @@ impl World {
             .filter(|b| matches!(b.phase, Phase::Budding { .. }))
             .count();
         let max_buds = (1.5 * self.wall_width).round().max(1.0) as usize;
-        if self.blobs.len() >= self.target_blobs().min(MAX_BLOBS) || buds >= max_buds {
+        if self.blobs.len() >= self.target_blobs() || buds >= max_buds {
+            return;
+        }
+        self.bud_at(None);
+    }
+
+    /// Start a bud on the pool, near `x` or anywhere, if there's room and
+    /// wax for it.
+    fn bud_at(&mut self, x: Option<f64>) {
+        if self.blobs.len() >= MAX_BLOBS {
             return;
         }
         let target = (self.typical_radius() * self.rng.range(0.75, 1.2))
@@ -640,7 +688,10 @@ impl World {
             return;
         }
         let half = (self.half_width_at(0.0) - target).max(0.0);
-        let x = self.rng.range(-half, half);
+        let x = match x {
+            Some(x) => x.clamp(-half, half),
+            None => self.rng.range(-half, half),
+        };
         let level = self.pool_level();
         let blob = self.new_blob(
             x,
