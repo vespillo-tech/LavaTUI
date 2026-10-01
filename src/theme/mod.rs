@@ -23,6 +23,10 @@ mod xterm;
 
 use ratatui::style::{Color, Modifier, Style};
 
+/// The terminal's own default colour, as a foreground or a background:
+/// what NO_COLOR draws everything in, and what `transparent` leaves.
+pub const TERMINAL_DEFAULT: Color = Color::Reset;
+
 /// The nine colour roles every palette defines (docs/design.md §5.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
@@ -358,7 +362,7 @@ impl Theme {
     /// The colour used when blending is off.
     fn fallback(&self, ink: Ink) -> Color {
         if self.depth == ColorDepth::None {
-            return Color::Reset;
+            return TERMINAL_DEFAULT;
         }
         let role = match ink {
             Ink::Role(role) => role,

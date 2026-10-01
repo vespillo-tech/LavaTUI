@@ -20,11 +20,43 @@ pub fn half_block(cell: &mut Cell, top: Option<Color>, bottom: Option<Color>, ba
     cell.set_char(ch).set_fg(fg).set_bg(bg);
 }
 
-/// Braille dot bit for sub-pixel (`x` 0..2, `y` 0..4) of a cell.
+/// An empty cell: a space on `bg`. The foreground is left as it was.
 #[inline]
-pub fn braille_bit(x: usize, y: usize) -> u8 {
-    const BITS: [[u8; 4]; 2] = [[0x01, 0x02, 0x04, 0x40], [0x08, 0x10, 0x20, 0x80]];
-    BITS[x][y]
+pub fn blank(cell: &mut Cell, bg: Color) {
+    cell.set_char(' ').set_bg(bg);
+}
+
+/// `ch` in `fg` on `bg`.
+#[inline]
+pub fn glyph(cell: &mut Cell, ch: char, fg: Color, bg: Color) {
+    cell.set_char(ch).set_fg(fg).set_bg(bg);
+}
+
+/// `Some((ch, fg))` as a [`glyph`] on `bg`, `None` as a [`blank`].
+#[inline]
+pub fn mark(cell: &mut Cell, mark: Option<(char, Color)>, bg: Color) {
+    match mark {
+        Some((ch, fg)) => glyph(cell, ch, fg, bg),
+        None => blank(cell, bg),
+    }
+}
+
+/// The braille dots of cell (`cx`, `cy`) on a 2×4 grid: one per sample
+/// pixel for which `dot(x, y)` holds. Pixels are visited row by row, left
+/// to right, so anything `dot` accumulates adds up in a fixed order.
+#[inline]
+pub fn braille_dots(cx: usize, cy: usize, mut dot: impl FnMut(usize, usize) -> bool) -> u8 {
+    /// Dot bit per sub-pixel, by row then column.
+    const BITS: [[u8; 2]; 4] = [[0x01, 0x08], [0x02, 0x10], [0x04, 0x20], [0x40, 0x80]];
+    let mut bits = 0;
+    for (dy, row) in BITS.iter().enumerate() {
+        for (dx, bit) in row.iter().enumerate() {
+            if dot(2 * cx + dx, 4 * cy + dy) {
+                bits |= bit;
+            }
+        }
+    }
+    bits
 }
 
 /// The braille glyph with dots `bits` set (blank braille for 0).

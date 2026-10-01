@@ -62,12 +62,12 @@ fn synthetic(width: usize, height: usize, aspect: f32) -> Vec<Sample> {
 }
 
 /// Draw `style` from the synthetic field into a fresh buffer of `area`.
-fn draw_synthetic(style: &dyn Style, theme: &Theme, area: Rect) -> Buffer {
+fn draw_synthetic(style: &StyleEntry, theme: &Theme, area: Rect) -> Buffer {
     draw_synthetic_at(style, theme, area, 0.0, None)
 }
 
 fn draw_synthetic_lit(
-    style: &dyn Style,
+    style: &StyleEntry,
     theme: &Theme,
     area: Rect,
     lighting: &dyn Lighting,
@@ -76,7 +76,7 @@ fn draw_synthetic_lit(
 }
 
 fn draw_synthetic_at(
-    style: &dyn Style,
+    style: &StyleEntry,
     theme: &Theme,
     area: Rect,
     time: f64,
@@ -94,6 +94,7 @@ fn draw_synthetic_at(
         light
     });
     let canvas = Canvas {
+        area,
         samples: &samples,
         light: light.as_deref(),
         mask: &mask,
@@ -103,7 +104,7 @@ fn draw_synthetic_at(
         time,
     };
     let mut buf = Buffer::empty(area);
-    style.draw(&canvas, area, &mut buf);
+    style.draw(&canvas, &mut buf);
     buf
 }
 
@@ -207,7 +208,8 @@ fn every_style_shows_the_wax_at_every_depth() {
 fn animation_is_a_pure_function_of_time() {
     let area = Rect::new(0, 0, 36, 14);
     let theme = theme(ColorDepth::TrueColor);
-    let draw_at = |style: &dyn Style, time: f64| draw_synthetic_at(style, &theme, area, time, None);
+    let draw_at =
+        |style: &StyleEntry, time: f64| draw_synthetic_at(style, &theme, area, time, None);
     for id in StyleId::all() {
         let style = id.style();
         assert_eq!(
@@ -422,6 +424,7 @@ fn unlit_canvas_is_exactly_one() {
     let mask = vec![(0, 8); 8];
     let theme = theme(ColorDepth::TrueColor);
     let canvas = Canvas {
+        area: Rect::new(0, 0, 8, 4),
         samples: &samples,
         light: None,
         mask: &mask,
@@ -688,7 +691,7 @@ fn bottle_walls_are_half_cells_and_mirrored() {
 
 /// The synthetic field drawn as `LampView` draws a bottle: mask from the
 /// walls, then the half-cell edge pass.
-fn draw_synthetic_bottle(style: &dyn Style, theme: &Theme, area: Rect) -> Buffer {
+fn draw_synthetic_bottle(style: &StyleEntry, theme: &Theme, area: Rect) -> Buffer {
     let grid = style.grid();
     let width = usize::from(area.width * grid.x);
     let height = usize::from(area.height * grid.y);
@@ -705,6 +708,7 @@ fn draw_synthetic_bottle(style: &dyn Style, theme: &Theme, area: Rect) -> Buffer
         }
     }
     let canvas = Canvas {
+        area,
         samples: &samples,
         light: None,
         mask: &mask,
@@ -714,7 +718,7 @@ fn draw_synthetic_bottle(style: &dyn Style, theme: &Theme, area: Rect) -> Buffer
         time: 0.0,
     };
     let mut buf = Buffer::empty(area);
-    style.draw(&canvas, area, &mut buf);
+    style.draw(&canvas, &mut buf);
     if theme.blends() {
         walls::smooth(Shape::Bottle, theme, theme.role(Role::Bg), area, &mut buf);
     }
@@ -778,7 +782,9 @@ fn topo_left_wall_has_no_wrapped_contours() {
         .collect();
     let mask = vec![(0, width); height];
     let theme = theme(ColorDepth::TrueColor);
+    let area = Rect::new(0, 0, cols, rows);
     let canvas = Canvas {
+        area,
         samples: &samples,
         light: None,
         mask: &mask,
@@ -787,12 +793,11 @@ fn topo_left_wall_has_no_wrapped_contours() {
         theme: &theme,
         time: 0.0,
     };
-    let area = Rect::new(0, 0, cols, rows);
     let mut buf = Buffer::empty(area);
     StyleId::by_name("topo")
         .unwrap()
         .style()
-        .draw(&canvas, area, &mut buf);
+        .draw(&canvas, &mut buf);
     for y in 0..rows {
         assert_eq!(buf[(0, y)].symbol(), " ", "row {y}: column 0 has dots");
         // The real surface crossing (x = 2) is still traced.

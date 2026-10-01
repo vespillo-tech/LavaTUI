@@ -5,33 +5,19 @@
 //! NO_COLOR, just the silhouette).
 
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
 use ratatui::style::Color;
 
-use crate::render::cell::half_block;
-use crate::render::{Canvas, Grid, Style, coverage, wax_heat};
+use crate::render::{Canvas, Grid, LampStyle, coverage, wax_heat};
 use crate::theme::Ink;
 
 pub struct Solid;
 
-impl Style for Solid {
-    fn name(&self) -> &'static str {
-        "solid"
-    }
+impl LampStyle for Solid {
+    const NAME: &'static str = "solid";
+    const GRID: Grid = Grid::HALF_BLOCK;
 
-    fn grid(&self) -> Grid {
-        Grid::HALF_BLOCK
-    }
-
-    fn draw(&self, c: &Canvas, area: Rect, buf: &mut Buffer) {
-        for cy in 0..usize::from(area.height) {
-            for cx in 0..usize::from(area.width) {
-                let (top, bottom) = (pixel(c, cx, 2 * cy), pixel(c, cx, 2 * cy + 1));
-                let base = c.theme.color(c.backdrop(cx, 2 * cy));
-                let pos = (area.x + cx as u16, area.y + cy as u16);
-                half_block(&mut buf[pos], top, bottom, base);
-            }
-        }
+    fn draw(c: &Canvas, buf: &mut Buffer) {
+        c.draw_half_blocks(buf, |x, y| pixel(c, x, y));
     }
 }
 

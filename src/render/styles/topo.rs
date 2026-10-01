@@ -7,11 +7,10 @@
 //! map needs.
 
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
 
-use super::quantise;
-use crate::render::cell::{braille, braille_bit};
-use crate::render::{Canvas, Grid, Style, wax_heat};
+use super::{quantise, stepped_heat};
+use crate::render::cell::{braille, braille_dots, mark};
+use crate::render::{Canvas, Grid, LampStyle, wax_heat};
 use crate::theme::{Ink, Role};
 
 pub struct Topo;
@@ -20,56 +19,39 @@ pub struct Topo;
 const LEVELS: [f32; 6] = [0.25, 0.5, 0.68, 0.86, 1.06, 1.4];
 const SURFACE_BAND: u8 = 2;
 
-impl Style for Topo {
-    fn name(&self) -> &'static str {
-        "topo"
-    }
+impl LampStyle for Topo {
+    const NAME: &'static str = "topo";
+    const GRID: Grid = Grid::BRAILLE;
 
-    fn grid(&self) -> Grid {
-        Grid::BRAILLE
-    }
-
-    fn draw(&self, c: &Canvas, area: Rect, buf: &mut Buffer) {
-        for cy in 0..usize::from(area.height) {
-            for cx in 0..usize::from(area.width) {
-                let (mut bits, mut top_line, mut heat, mut density, mut light) =
-                    (0u8, 0u8, 0.0, 0.0, 0.0);
-                for dy in 0..4 {
-                    for dx in 0..2 {
-                        let (x, y) = (2 * cx + dx, 4 * cy + dy);
-                        let b = band(c, x, y);
-                        let s = c.at(x, y);
-                        heat += wax_heat(s.temp);
-                        density += s.density;
-                        light += c.light(x, y);
-                        // A line pixel sits on the high side of a level crossing.
-                        let low = band(c, x + 1, y).min(band(c, x, y + 1));
-                        let low = low.min(band(c, x.saturating_sub(1), y));
-                        let low = low.min(band(c, x, y.saturating_sub(1)));
-                        if low < b {
-                            bits |= braille_bit(dx, dy);
-                            top_line = top_line.max(b);
-                        }
-                    }
+    fn draw(c: &Canvas, buf: &mut Buffer) {
+        c.for_each_cell(buf, |at, cell| {
+            let (mut top_line, mut heat, mut density, mut light) = (0u8, 0.0, 0.0, 0.0);
+            let bits = braille_dots(at.cx, at.cy, |x, y| {
+                let b = band(c, x, y);
+                let s = c.at(x, y);
+                heat += wax_heat(s.temp);
+                density += s.density;
+                light += c.light(x, y);
+                // A line pixel sits on the high side of a level crossing.
+                let low = band(c, x + 1, y).min(band(c, x, y + 1));
+                let low = low.min(band(c, x.saturating_sub(1), y));
+                let low = low.min(band(c, x, y.saturating_sub(1)));
+                if low < b {
+                    top_line = top_line.max(b);
                 }
-                let heat = quantise(heat / 8.0, 16.0);
+                low < b
+            });
+            let heat = stepped_heat(heat / 8.0);
+            let bg = if c.theme.blends() {
+                // Hillshade: the bands take the light, in a few steps.
                 let fill = level(density / 8.0);
-                let backdrop = c.backdrop(2 * cx, 4 * cy);
-                let bg = if c.theme.blends() {
-                    // Hillshade: the bands take the light, in a few steps.
-                    tint(c, backdrop, fill, heat, quantise(light / 8.0, 8.0))
-                } else {
-                    c.theme.color(backdrop)
-                };
-                let cell = &mut buf[(area.x + cx as u16, area.y + cy as u16)];
-                if bits == 0 {
-                    cell.set_char(' ').set_bg(bg);
-                    continue;
-                }
-                let fg = line(c, backdrop, top_line, heat);
-                cell.set_char(braille(bits)).set_fg(fg).set_bg(bg);
-            }
-        }
+                tint(c, at.backdrop, fill, heat, quantise(light / 8.0, 8.0))
+            } else {
+                at.base
+            };
+            let lines = (bits != 0).then(|| (braille(bits), line(c, at.backdrop, top_line, heat)));
+            mark(cell, lines, bg);
+        });
     }
 }
 

@@ -4,9 +4,9 @@
 //! with heat, so shape and temperature both read even with no colour.
 
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
 
-use crate::render::{Canvas, Grid, Style, coverage, lit, wax_heat};
+use crate::render::cell::{blank, glyph as set_glyph};
+use crate::render::{Canvas, Grid, LampStyle, coverage, lit, wax_heat};
 use crate::sim::SURFACE;
 use crate::theme::{Ink, Role};
 
@@ -17,45 +17,34 @@ const BODY: [char; 6] = ['=', '+', '*', '#', '%', '@'];
 /// Density where the rim glyphs start, below the surface.
 const RIM_FROM: f32 = 0.3;
 
-impl Style for Ascii {
-    fn name(&self) -> &'static str {
-        "ascii"
-    }
+impl LampStyle for Ascii {
+    const NAME: &'static str = "ascii";
+    const GRID: Grid = Grid::HALF_BLOCK;
 
-    fn grid(&self) -> Grid {
-        Grid::HALF_BLOCK
-    }
-
-    fn draw(&self, c: &Canvas, area: Rect, buf: &mut Buffer) {
-        for cy in 0..usize::from(area.height) {
-            for cx in 0..usize::from(area.width) {
-                let (a, b) = (c.at(cx, 2 * cy), c.at(cx, 2 * cy + 1));
-                let density = 0.5 * (a.density + b.density);
-                let heat = wax_heat(0.5 * (a.temp + b.temp));
-                let backdrop = c.backdrop(cx, 2 * cy);
-                let base = c.theme.color(backdrop);
-
-                let light = 0.5 * (c.light(cx, 2 * cy) + c.light(cx, 2 * cy + 1));
-                let ch = glyph(density, heat, light);
-                let cell = &mut buf[(area.x + cx as u16, area.y + cy as u16)];
-                if ch == ' ' {
-                    cell.set_char(' ').set_bg(base);
-                    continue;
-                }
-                let wax = Ink::Wax(heat);
-                let fg = if c.theme.blends() {
-                    // Rim glyphs fade from the liquid into the wax colour.
-                    let paint = c.theme.paint(backdrop);
-                    let paint = paint.mix(wax, 0.35 + 0.65 * coverage(density));
-                    paint.shade(light).color()
-                } else if density < SURFACE {
-                    c.theme.role(Role::Dim)
-                } else {
-                    c.theme.color(wax)
-                };
-                cell.set_char(ch).set_fg(fg).set_bg(base);
+    fn draw(c: &Canvas, buf: &mut Buffer) {
+        c.for_each_cell(buf, |at, cell| {
+            let (a, b) = (c.at(at.x, at.y), c.at(at.x, at.y + 1));
+            let density = 0.5 * (a.density + b.density);
+            let heat = wax_heat(0.5 * (a.temp + b.temp));
+            let light = 0.5 * (c.light(at.x, at.y) + c.light(at.x, at.y + 1));
+            let ch = glyph(density, heat, light);
+            if ch == ' ' {
+                blank(cell, at.base);
+                return;
             }
-        }
+            let wax = Ink::Wax(heat);
+            let fg = if c.theme.blends() {
+                // Rim glyphs fade from the liquid into the wax colour.
+                let paint = c.theme.paint(at.backdrop);
+                let paint = paint.mix(wax, 0.35 + 0.65 * coverage(density));
+                paint.shade(light).color()
+            } else if density < SURFACE {
+                c.theme.role(Role::Dim)
+            } else {
+                c.theme.color(wax)
+            };
+            set_glyph(cell, ch, fg, at.base);
+        });
     }
 }
 

@@ -2,7 +2,7 @@
 //!
 //! The pipeline, once per frame, all inside [`LampView`]:
 //!
-//! 1. The active [`Style`] says how many square sample pixels it wants per
+//! 1. The active [`LampStyle`] says how many square sample pixels it wants per
 //!    cell ([`Grid`]: half-block 1×2, braille 2×4, …).
 //! 2. The field is sampled at that grid into a reused buffer (or at a
 //!    reduced grid and upsampled, above [`SAMPLE_BUDGET`]).
@@ -12,15 +12,17 @@
 //! 5. Cells the container's walls cut through are reshaped to half / quarter
 //!    cells (`walls`), so the bottle's silhouette is smooth.
 //!
-//! Adding a style: one file in `styles/` implementing [`Style`], plus one
-//! line in the `styles::ALL` registry.
+//! Adding a style: one file in `styles/` implementing [`LampStyle`], plus
+//! one line in the `styles::ALL` registry.
 
+mod canvas;
 mod cell;
 mod styles;
 #[cfg(test)]
 mod tests;
 mod walls;
 
+pub use canvas::Canvas;
 pub use walls::wall;
 
 use ratatui::buffer::Buffer;
@@ -29,7 +31,7 @@ use ratatui::widgets::StatefulWidget;
 
 use crate::light::Lighting;
 use crate::sim::{Field, SURFACE, Sample};
-use crate::theme::{Ink, Role, Theme};
+use crate::theme::{Role, Theme};
 
 /// Most samples a frame may take (docs/design.md §2.4). Above it the field
 /// is sampled coarser and upsampled bilinearly.
@@ -48,19 +50,48 @@ impl Grid {
     pub const BRAILLE: Grid = Grid { x: 2, y: 4 };
 }
 
-/// A way of drawing the lamp.
-///
-/// Implementations are stateless unit structs (any per-frame scratch lives
-/// in [`LampState`]), registered once in `styles::ALL`.
-pub trait Style: Sync {
+/// A way of drawing the lamp: implemented by a unit struct per style
+/// (stateless; any per-frame scratch lives in [`LampState`]) and listed
+/// once in `styles::ALL`.
+pub trait LampStyle {
     /// Lowercase name, shown in the UI and used in config.
-    fn name(&self) -> &'static str;
+    const NAME: &'static str;
     /// Sample pixels per cell. The canvas passed to [`draw`](Self::draw)
     /// is exactly `area.width × grid.x` by `area.height × grid.y`.
-    fn grid(&self) -> Grid;
-    /// Draw `canvas` into `area` of `buf`. Must write every cell of `area`
-    /// and nothing outside it.
-    fn draw(&self, canvas: &Canvas, area: Rect, buf: &mut Buffer);
+    const GRID: Grid;
+    /// Draw `canvas` into its `area` of `buf`. Must write every cell of the
+    /// area and nothing outside it.
+    fn draw(canvas: &Canvas, buf: &mut Buffer);
+}
+
+/// A registered [`LampStyle`], as the app holds it.
+#[derive(Debug)]
+pub struct StyleEntry {
+    name: &'static str,
+    grid: Grid,
+    draw: fn(&Canvas, &mut Buffer),
+}
+
+impl StyleEntry {
+    pub const fn of<S: LampStyle>() -> Self {
+        StyleEntry {
+            name: S::NAME,
+            grid: S::GRID,
+            draw: S::draw,
+        }
+    }
+
+    pub fn name(&self) -> &'static str {
+        self.name
+    }
+
+    pub fn grid(&self) -> Grid {
+        self.grid
+    }
+
+    pub fn draw(&self, canvas: &Canvas, buf: &mut Buffer) {
+        (self.draw)(canvas, buf);
+    }
 }
 
 /// A handle to a registered style; cheap to copy and store in app state.
@@ -76,8 +107,8 @@ impl StyleId {
         Self::all().find(|id| id.style().name() == name)
     }
 
-    pub fn style(self) -> &'static dyn Style {
-        styles::ALL[self.0]
+    pub fn style(self) -> &'static StyleEntry {
+        &styles::ALL[self.0]
     }
 
     /// Position in the cycle (0-based), for `name  i/n` toasts.
@@ -95,52 +126,6 @@ impl StyleId {
     }
 }
 
-/// What a style draws from: the sampled field at its grid, plus everything
-/// it needs to colour it.
-pub struct Canvas<'a> {
-    samples: &'a [Sample],
-    light: Option<&'a [f32]>,
-    /// Per sample row: the container's `[lo, hi)` sample columns.
-    mask: &'a [(usize, usize)],
-    pub width: usize,
-    pub height: usize,
-    pub theme: &'a Theme,
-    /// Seconds since launch, for styles that animate on their own.
-    pub time: f64,
-}
-
-impl Canvas<'_> {
-    /// Sample at pixel (`x`, `y`); `y` runs down.
-    #[inline]
-    pub fn at(&self, x: usize, y: usize) -> Sample {
-        self.samples[y * self.width + x]
-    }
-
-    /// Brightness factor at a pixel: 1.0 unless a lighting pass ran.
-    #[inline]
-    pub fn light(&self, x: usize, y: usize) -> f32 {
-        self.light.map_or(1.0, |l| l[y * self.width + x])
-    }
-
-    /// Whether the pixel is inside the container (always, in bleed).
-    #[inline]
-    pub fn inside(&self, x: usize, y: usize) -> bool {
-        let (lo, hi) = self.mask[y];
-        (lo..hi).contains(&x)
-    }
-
-    /// What shows where there's no wax: `liquid` inside the container,
-    /// `bg` outside it.
-    #[inline]
-    pub fn backdrop(&self, x: usize, y: usize) -> Ink {
-        Ink::Role(if self.inside(x, y) {
-            Role::Liquid
-        } else {
-            Role::Bg
-        })
-    }
-}
-
 /// Smooth 0 → 1 wax coverage across the surface, for anti-aliasing: half
 /// of `EDGE` either side of [`SURFACE`].
 #[inline]
@@ -149,7 +134,14 @@ pub fn coverage(density: f32) -> f32 {
     // Quantised: an edge pixel changes colour only every 1/STEPS of a
     // pixel of movement, not every frame (bandwidth, §7).
     const STEPS: f32 = 6.0;
-    (smoothstep((density - (SURFACE - EDGE / 2.0)) / EDGE) * STEPS).round() / STEPS
+    (soft_edge(density, EDGE) * STEPS).round() / STEPS
+}
+
+/// Smooth, unquantised 0 → 1 across a band `edge` wide centred on
+/// [`SURFACE`].
+#[inline]
+pub fn soft_edge(density: f32, edge: f32) -> f32 {
+    smoothstep((density - (SURFACE - edge / 2.0)) / edge)
 }
 
 /// Where a wax temperature sits on the wax gradient (0 cool … 1 hot).
@@ -214,7 +206,7 @@ pub struct LampState {
 /// ```
 pub struct LampView<'a> {
     pub field: &'a Field,
-    pub style: &'a dyn Style,
+    pub style: &'a StyleEntry,
     pub theme: &'a Theme,
     pub time: f64,
     /// Optional lighting pass (lava-5ak).
@@ -293,6 +285,7 @@ impl StatefulWidget for LampView<'_> {
         };
 
         let canvas = Canvas {
+            area,
             samples: &state.samples,
             light,
             mask: &state.mask,
@@ -301,7 +294,7 @@ impl StatefulWidget for LampView<'_> {
             theme: self.theme,
             time: self.time,
         };
-        self.style.draw(&canvas, area, buf);
+        self.style.draw(&canvas, buf);
         let outside = if self.options.transparent {
             walls::clear_outside(shape, area, buf);
             ratatui::style::Color::Reset

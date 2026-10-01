@@ -5,13 +5,12 @@
 //! blending it becomes a shade ramp (`░▒▓█`), one level per cell.
 
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
 use ratatui::style::Color;
 
-use crate::render::cell::half_block;
-use crate::render::{Canvas, Grid, Style, bayer, coverage, lit, smoothstep};
+use crate::render::cell::glyph;
+use crate::render::{Canvas, Grid, LampStyle, bayer, coverage, lit, smoothstep};
 use crate::sim::{SURFACE, ambient_temp};
-use crate::theme::{Ink, Role};
+use crate::theme::{Ink, Role, TERMINAL_DEFAULT};
 
 pub struct Heatmap;
 
@@ -20,42 +19,33 @@ const HEAT_BANDS: f32 = 32.0;
 /// Where [`shade`] reaches the wax colours.
 const WAX_BAND: f32 = 0.36;
 
-impl Style for Heatmap {
-    fn name(&self) -> &'static str {
-        "heatmap"
-    }
+impl LampStyle for Heatmap {
+    const NAME: &'static str = "heatmap";
+    const GRID: Grid = Grid::HALF_BLOCK;
 
-    fn grid(&self) -> Grid {
-        Grid::HALF_BLOCK
-    }
-
-    fn draw(&self, c: &Canvas, area: Rect, buf: &mut Buffer) {
-        for cy in 0..usize::from(area.height) {
-            for cx in 0..usize::from(area.width) {
-                let (yt, yb) = (2 * cy, 2 * cy + 1);
-                let base = c.theme.color(c.backdrop(cx, yt));
-                let cell = &mut buf[(area.x + cx as u16, area.y + cy as u16)];
-                if c.theme.blends() {
-                    half_block(cell, pixel(c, cx, yt), pixel(c, cx, yb), base);
-                } else {
-                    let h = 0.5 * (heat(c, cx, yt) + heat(c, cx, yb));
-                    // Light shades the wax bands only: on the liquid it
-                    // would draw the base glow as hard `░` stripes.
-                    let h = if h >= WAX_BAND {
-                        lit(h, 0.5 * (c.light(cx, yt) + c.light(cx, yb))).max(WAX_BAND)
-                    } else {
-                        h
-                    };
-                    let (ch, ink) = shade(h);
-                    let fg = if ch == ' ' {
-                        Color::Reset
-                    } else {
-                        c.theme.color(ink)
-                    };
-                    cell.set_char(ch).set_fg(fg).set_bg(base);
-                }
-            }
+    fn draw(c: &Canvas, buf: &mut Buffer) {
+        if c.theme.blends() {
+            c.draw_half_blocks(buf, |x, y| Some(pixel(c, x, y)));
+            return;
         }
+        c.for_each_cell(buf, |at, cell| {
+            let (x, yt, yb) = (at.x, at.y, at.y + 1);
+            let h = 0.5 * (heat(c, x, yt) + heat(c, x, yb));
+            // Light shades the wax bands only: on the liquid it would draw
+            // the base glow as hard `░` stripes.
+            let h = if h >= WAX_BAND {
+                lit(h, 0.5 * (c.light(x, yt) + c.light(x, yb))).max(WAX_BAND)
+            } else {
+                h
+            };
+            let (ch, ink) = shade(h);
+            let fg = if ch == ' ' {
+                TERMINAL_DEFAULT
+            } else {
+                c.theme.color(ink)
+            };
+            glyph(cell, ch, fg, at.base);
+        });
     }
 }
 
@@ -77,12 +67,12 @@ fn heat(c: &Canvas, x: usize, y: usize) -> f32 {
     (h * HEAT_BANDS + bayer(x, y) - 0.5).round() / HEAT_BANDS
 }
 
-fn pixel(c: &Canvas, x: usize, y: usize) -> Option<Color> {
+fn pixel(c: &Canvas, x: usize, y: usize) -> Color {
     if !c.inside(x, y) {
-        return Some(c.theme.color(c.backdrop(x, y)));
+        return c.theme.color(c.backdrop(x, y));
     }
     let paint = c.theme.paint(Ink::Heat(heat(c, x, y)));
-    Some(paint.shade(c.light(x, y)).color())
+    paint.shade(c.light(x, y)).color()
 }
 
 /// Discrete thermal bands: cold liquid blank, warm liquid `░` in `dim`,

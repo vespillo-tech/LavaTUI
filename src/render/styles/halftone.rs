@@ -6,10 +6,10 @@
 //! grow and shrink in place as the wax drifts beneath them.
 
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
 
-use super::quantise;
-use crate::render::{Canvas, Grid, Style, smoothstep, wax_heat};
+use super::stepped_heat;
+use crate::render::cell::mark;
+use crate::render::{Canvas, Grid, LampStyle, smoothstep, wax_heat};
 use crate::sim::SURFACE;
 use crate::theme::Ink;
 
@@ -22,36 +22,28 @@ const DOTS: [char; 3] = ['·', '•', '●'];
 const SCREEN: [f32; 3] = [0.12, 0.34, 0.58];
 const GAPS: [f32; 3] = [0.6, 0.78, 0.92];
 
-impl Style for Halftone {
-    fn name(&self) -> &'static str {
-        "halftone"
-    }
+impl LampStyle for Halftone {
+    const NAME: &'static str = "halftone";
+    const GRID: Grid = Grid::HALF_BLOCK;
 
-    fn grid(&self) -> Grid {
-        Grid::HALF_BLOCK
-    }
-
-    fn draw(&self, c: &Canvas, area: Rect, buf: &mut Buffer) {
-        for cy in 0..usize::from(area.height) {
-            for cx in 0..usize::from(area.width) {
-                let (yt, yb) = (2 * cy, 2 * cy + 1);
-                let (a, b) = (c.at(cx, yt), c.at(cx, yb));
-                let heat = wax_heat(0.5 * (a.temp + b.temp));
-                let light = 0.5 * (c.light(cx, yt) + c.light(cx, yb));
-                let ink = ink(0.5 * (a.density + b.density), heat, light);
-                let steps = if (cx + cy) % 2 == 0 { SCREEN } else { GAPS };
-                let size = steps.iter().take_while(|&&t| ink >= t).count();
-
-                let base = c.theme.color(c.backdrop(cx, yt));
-                let cell = &mut buf[(area.x + cx as u16, area.y + cy as u16)];
-                if size == 0 {
-                    cell.set_char(' ').set_bg(base);
-                } else {
-                    let fg = c.theme.color(Ink::Wax(quantise(heat, 16.0)));
-                    cell.set_char(DOTS[size - 1]).set_fg(fg).set_bg(base);
-                }
-            }
-        }
+    fn draw(c: &Canvas, buf: &mut Buffer) {
+        c.for_each_cell(buf, |at, cell| {
+            let (a, b) = (c.at(at.x, at.y), c.at(at.x, at.y + 1));
+            let heat = wax_heat(0.5 * (a.temp + b.temp));
+            let light = 0.5 * (c.light(at.x, at.y) + c.light(at.x, at.y + 1));
+            let ink = ink(0.5 * (a.density + b.density), heat, light);
+            let steps = if (at.cx + at.cy) % 2 == 0 {
+                SCREEN
+            } else {
+                GAPS
+            };
+            let size = steps.iter().take_while(|&&t| ink >= t).count();
+            let dot = (size > 0).then(|| {
+                let fg = c.theme.color(Ink::Wax(stepped_heat(heat)));
+                (DOTS[size - 1], fg)
+            });
+            mark(cell, dot, at.base);
+        });
     }
 }
 

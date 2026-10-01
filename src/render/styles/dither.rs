@@ -5,12 +5,9 @@
 //! never flicker. In NO_COLOR it dithers ink on/off by heat instead.
 
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
 use ratatui::style::Color;
 
-use crate::render::cell::half_block;
-use crate::render::{Canvas, Grid, Style, bayer, lit, smoothstep, wax_heat};
-use crate::sim::SURFACE;
+use crate::render::{Canvas, Grid, LampStyle, bayer, lit, soft_edge, wax_heat};
 use crate::theme::{Ink, Role};
 
 pub struct Dither;
@@ -19,34 +16,18 @@ const INKS: [Role; 3] = [Role::WaxCool, Role::WaxMid, Role::WaxHot];
 /// Edge softness: density range dithered between liquid and wax.
 const EDGE: f32 = 0.3;
 
-impl Style for Dither {
-    fn name(&self) -> &'static str {
-        "dither"
-    }
+impl LampStyle for Dither {
+    const NAME: &'static str = "dither";
+    const GRID: Grid = Grid::HALF_BLOCK;
 
-    fn grid(&self) -> Grid {
-        Grid::HALF_BLOCK
-    }
-
-    fn draw(&self, c: &Canvas, area: Rect, buf: &mut Buffer) {
-        for cy in 0..usize::from(area.height) {
-            for cx in 0..usize::from(area.width) {
-                let base = c.theme.color(c.backdrop(cx, 2 * cy));
-                let (top, bottom) = (pixel(c, cx, 2 * cy), pixel(c, cx, 2 * cy + 1));
-                half_block(
-                    &mut buf[(area.x + cx as u16, area.y + cy as u16)],
-                    top,
-                    bottom,
-                    base,
-                );
-            }
-        }
+    fn draw(c: &Canvas, buf: &mut Buffer) {
+        c.draw_half_blocks(buf, |x, y| pixel(c, x, y));
     }
 }
 
 fn pixel(c: &Canvas, x: usize, y: usize) -> Option<Color> {
     let s = c.at(x, y);
-    let cover = smoothstep((s.density - (SURFACE - EDGE / 2.0)) / EDGE);
+    let cover = soft_edge(s.density, EDGE);
     // Light shifts the dithered ink level: shadows cooler, highlights hotter.
     let light = c.light(x, y);
     let heat = lit(wax_heat(s.temp), light);
@@ -55,7 +36,7 @@ fn pixel(c: &Canvas, x: usize, y: usize) -> Option<Color> {
     if !c.theme.has_color() {
         // Ink density = heat: cool wax is a light stipple, hot wax solid.
         let v = cover * (0.3 + 0.7 * heat);
-        return (v > threshold).then_some(Color::Reset);
+        return (v > threshold).then(|| c.theme.color(Ink::Wax(heat)));
     }
     // 0 = liquid, 1..=3 = cool/mid/hot wax; dither between neighbours.
     let v = cover * (1.0 + 2.0 * heat);

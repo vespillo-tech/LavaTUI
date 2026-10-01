@@ -7,11 +7,11 @@
 //! wax, solid `█` for hot.
 
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 use super::quantise;
-use crate::render::{Canvas, Grid, Style, coverage, smoothstep, wax_heat};
+use crate::render::cell::{blank, glyph, mark};
+use crate::render::{Canvas, Grid, LampStyle, coverage, smoothstep, wax_heat};
 use crate::sim::SURFACE;
 use crate::theme::Ink;
 
@@ -27,52 +27,43 @@ const ROLL_SECS: f64 = 9.0;
 const BAR_ROWS: f64 = 4.0;
 const BAR_GAIN: f32 = 0.07;
 
-impl Style for Crt {
-    fn name(&self) -> &'static str {
-        "crt"
-    }
+impl LampStyle for Crt {
+    const NAME: &'static str = "crt";
+    const GRID: Grid = Grid::HALF_BLOCK;
 
-    fn grid(&self) -> Grid {
-        Grid::HALF_BLOCK
-    }
-
-    fn draw(&self, c: &Canvas, area: Rect, buf: &mut Buffer) {
-        let rows = usize::from(area.height);
-        for cy in 0..rows {
-            let bar = hum_bar(c.time, cy, rows);
-            for cx in 0..usize::from(area.width) {
-                let (yt, yb) = (2 * cy, 2 * cy + 1);
-                let base = c.theme.color(c.backdrop(cx, yt));
-                let cell = &mut buf[(area.x + cx as u16, area.y + cy as u16)];
-                if !c.inside(cx, yt) {
-                    cell.set_char(' ').set_bg(base);
-                    continue;
-                }
-                if !c.theme.blends() {
-                    let (t, b) = (c.at(cx, yt), c.at(cx, yb));
-                    let wax = [t, b].map(|s| s.density >= SURFACE);
-                    if wax == [false, false] {
-                        cell.set_char(' ').set_bg(base);
-                    } else {
-                        let s = if wax[0] { t } else { b };
-                        let heat = wax_heat(s.temp);
-                        let ch = match wax {
-                            [true, true] if heat >= 0.5 => '█',
-                            [false, true] => '▄',
-                            _ => '▀',
-                        };
-                        let fg = c.theme.color(Ink::Wax(heat));
-                        cell.set_char(ch).set_fg(fg).set_bg(base);
-                    }
-                    continue;
-                }
-                let beam = vignette(c, cx, yt) * bar;
-                let top = pixel(c, cx, yt, beam);
-                let bottom = pixel(c, cx, yb, beam * GAP);
-                cell.set_char('▀').set_fg(top).set_bg(bottom);
+    fn draw(c: &Canvas, buf: &mut Buffer) {
+        let rows = usize::from(c.area.height);
+        c.for_each_cell(buf, |at, cell| {
+            let (x, y) = (at.x, at.y);
+            if !c.inside(x, y) {
+                blank(cell, at.base);
+            } else if !c.theme.blends() {
+                mark(cell, block(c, x, y), at.base);
+            } else {
+                let beam = vignette(c, x, y) * hum_bar(c.time, at.cy, rows);
+                let top = pixel(c, x, y, beam);
+                let bottom = pixel(c, x, y + 1, beam * GAP);
+                glyph(cell, '▀', top, bottom);
             }
-        }
+        });
     }
+}
+
+/// Without blending: the wax as flat half blocks in the wax steps.
+fn block(c: &Canvas, x: usize, y: usize) -> Option<(char, Color)> {
+    let (t, b) = (c.at(x, y), c.at(x, y + 1));
+    let wax = [t, b].map(|s| s.density >= SURFACE);
+    if wax == [false, false] {
+        return None;
+    }
+    let s = if wax[0] { t } else { b };
+    let heat = wax_heat(s.temp);
+    let ch = match wax {
+        [true, true] if heat >= 0.5 => '█',
+        [false, true] => '▄',
+        _ => '▀',
+    };
+    Some((ch, c.theme.color(Ink::Wax(heat))))
 }
 
 fn pixel(c: &Canvas, x: usize, y: usize, gain: f32) -> Color {

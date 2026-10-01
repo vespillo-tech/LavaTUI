@@ -4,50 +4,39 @@
 //! it. Reads the same in every colour depth, since it's all shape.
 
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
 
 use super::is_edge;
-use crate::render::cell::{braille, braille_bit};
-use crate::render::{Canvas, Grid, Style, wax_heat};
+use crate::render::cell::{braille, braille_dots, mark};
+use crate::render::{Canvas, Grid, LampStyle, wax_heat};
 use crate::theme::Ink;
 
 pub struct Outline;
 
-impl Style for Outline {
-    fn name(&self) -> &'static str {
-        "outline"
-    }
+impl LampStyle for Outline {
+    const NAME: &'static str = "outline";
+    const GRID: Grid = Grid::BRAILLE;
 
-    fn grid(&self) -> Grid {
-        Grid::BRAILLE
-    }
-
-    fn draw(&self, c: &Canvas, area: Rect, buf: &mut Buffer) {
-        for cy in 0..usize::from(area.height) {
-            for cx in 0..usize::from(area.width) {
-                let (mut bits, mut heat, mut light, mut dots) = (0u8, 0.0, 0.0, 0.0);
-                for dy in 0..4 {
-                    for dx in 0..2 {
-                        let (x, y) = (2 * cx + dx, 4 * cy + dy);
-                        if is_edge(c, x, y) {
-                            bits |= braille_bit(dx, dy);
-                            heat += wax_heat(c.at(x, y).temp);
-                            light += c.light(x, y);
-                            dots += 1.0;
-                        }
-                    }
+    fn draw(c: &Canvas, buf: &mut Buffer) {
+        c.for_each_cell(buf, |at, cell| {
+            let (mut heat, mut light, mut dots) = (0.0, 0.0, 0.0);
+            let bits = braille_dots(at.cx, at.cy, |x, y| {
+                let edge = is_edge(c, x, y);
+                if edge {
+                    heat += wax_heat(c.at(x, y).temp);
+                    light += c.light(x, y);
+                    dots += 1.0;
                 }
-                let base = c.theme.color(c.backdrop(2 * cx, 4 * cy));
-                let cell = &mut buf[(area.x + cx as u16, area.y + cy as u16)];
-                if bits == 0 {
-                    cell.set_char(' ').set_bg(base);
-                } else {
-                    // Lifted toward hot so a thin line holds its own against the liquid.
-                    let wax = Ink::Wax(0.3 + 0.7 * heat / dots);
-                    let fg = c.theme.paint(wax).shade(light / dots).color();
-                    cell.set_char(braille(bits)).set_fg(fg).set_bg(base);
-                }
-            }
-        }
+                edge
+            });
+            let line = (bits != 0).then(|| {
+                // Lifted toward hot so a thin line holds its own against the liquid.
+                let wax = Ink::Wax(0.3 + 0.7 * heat / dots);
+                (
+                    braille(bits),
+                    c.theme.paint(wax).shade(light / dots).color(),
+                )
+            });
+            mark(cell, line, at.base);
+        });
     }
 }

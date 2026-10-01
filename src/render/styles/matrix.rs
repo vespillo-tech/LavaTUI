@@ -6,10 +6,12 @@
 //! NO_COLOR idle wax becomes quiet dots and the streams stay legible.
 
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
+
+use ratatui::style::Color;
 
 use super::{hash, quantise};
-use crate::render::{Canvas, Grid, Style, wax_heat};
+use crate::render::cell::mark;
+use crate::render::{Canvas, Grid, LampStyle, wax_heat};
 use crate::sim::SURFACE;
 use crate::theme::{Ink, Role};
 
@@ -27,68 +29,52 @@ const MUTATE_HZ: f64 = 0.6;
 /// Streams per column.
 const STREAMS: u32 = 3;
 
-impl Style for Matrix {
-    fn name(&self) -> &'static str {
-        "matrix"
-    }
+impl LampStyle for Matrix {
+    const NAME: &'static str = "matrix";
+    const GRID: Grid = Grid::CELL;
 
-    fn grid(&self) -> Grid {
-        Grid::CELL
+    fn draw(c: &Canvas, buf: &mut Buffer) {
+        let rows = usize::from(c.area.height);
+        c.for_each_cell(buf, |at, cell| {
+            let s = c.at(at.cx, at.cy);
+            let rain =
+                (s.density >= SURFACE).then(|| rain(c, at.cx, at.cy, rows, wax_heat(s.temp)));
+            mark(cell, rain, at.base);
+        });
     }
+}
 
-    fn draw(&self, c: &Canvas, area: Rect, buf: &mut Buffer) {
-        let rows = usize::from(area.height);
-        for cx in 0..usize::from(area.width) {
-            for cy in 0..rows {
-                let s = c.at(cx, cy);
-                let base = c.theme.color(c.backdrop(cx, cy));
-                let cell = &mut buf[(area.x + cx as u16, area.y + cy as u16)];
-                if s.density < SURFACE {
-                    cell.set_char(' ').set_bg(base);
-                    continue;
-                }
-                let heat = wax_heat(s.temp);
-                let (glyph, fg) = match stream(cx, cy, rows, c.time) {
-                    // The head: brightest, freshly changing glyph.
-                    Some(0.0) => {
-                        let fg = if c.theme.blends() {
-                            c.theme
-                                .paint(Ink::Wax(heat))
-                                .mix(Ink::Role(Role::Text), 0.7)
-                                .color()
-                        } else {
-                            c.theme.color(Ink::Role(Role::Text))
-                        };
-                        (glyph(cx, cy, c.time * 12.0), fg)
-                    }
-                    Some(fade) => {
-                        let fg = c
-                            .theme
-                            .paint(Ink::Wax(heat))
-                            .mix(Ink::Role(Role::Liquid), 0.6 * fade)
-                            .scale(1.2)
-                            .shade(c.light(cx, cy))
-                            .color();
-                        (glyph(cx, cy, c.time * MUTATE_HZ), fg)
-                    }
-                    None if !c.theme.has_color() => (
-                        QUIET[(hash(cell_seed(cx, cy)) & 1) as usize],
-                        c.theme.color(Ink::Wax(heat)),
-                    ),
-                    None => {
-                        let fg = if c.theme.blends() {
-                            c.theme
-                                .paint(Ink::Wax(heat))
-                                .mix(Ink::Role(Role::Liquid), 0.7)
-                                .color()
-                        } else {
-                            c.theme.color(Ink::Role(Role::Dim))
-                        };
-                        (glyph(cx, cy, c.time * MUTATE_HZ), fg)
-                    }
-                };
-                cell.set_char(glyph).set_fg(fg).set_bg(base);
-            }
+/// The glyph and colour of wax cell (`cx`, `cy`) at `heat`.
+fn rain(c: &Canvas, cx: usize, cy: usize, rows: usize, heat: f32) -> (char, Color) {
+    let wax = c.theme.paint(Ink::Wax(heat));
+    match stream(cx, cy, rows, c.time) {
+        // The head: brightest, freshly changing glyph.
+        Some(0.0) => {
+            let fg = if c.theme.blends() {
+                wax.mix(Ink::Role(Role::Text), 0.7).color()
+            } else {
+                c.theme.color(Ink::Role(Role::Text))
+            };
+            (glyph(cx, cy, c.time * 12.0), fg)
+        }
+        Some(fade) => {
+            let fg = wax
+                .mix(Ink::Role(Role::Liquid), 0.6 * fade)
+                .scale(1.2)
+                .shade(c.light(cx, cy))
+                .color();
+            (glyph(cx, cy, c.time * MUTATE_HZ), fg)
+        }
+        None if !c.theme.has_color() => {
+            (QUIET[(hash(cell_seed(cx, cy)) & 1) as usize], wax.color())
+        }
+        None => {
+            let fg = if c.theme.blends() {
+                wax.mix(Ink::Role(Role::Liquid), 0.7).color()
+            } else {
+                c.theme.color(Ink::Role(Role::Dim))
+            };
+            (glyph(cx, cy, c.time * MUTATE_HZ), fg)
         }
     }
 }

@@ -5,11 +5,10 @@
 //! colour depth. Colour follows the wax temperature.
 
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
 
-use super::{is_edge, quantise};
-use crate::render::cell::{braille, braille_bit};
-use crate::render::{Canvas, Grid, Style, bayer, smoothstep, wax_heat};
+use super::{is_edge, quantise, stepped_heat};
+use crate::render::cell::{braille, braille_dots, mark};
+use crate::render::{Canvas, Grid, LampStyle, bayer, smoothstep, wax_heat};
 use crate::sim::SURFACE;
 use crate::theme::Ink;
 
@@ -19,44 +18,29 @@ pub struct Braille;
 /// re-stipples now and then.
 const TONES: f32 = 6.0;
 
-impl Style for Braille {
-    fn name(&self) -> &'static str {
-        "braille"
-    }
+impl LampStyle for Braille {
+    const NAME: &'static str = "braille";
+    const GRID: Grid = Grid::BRAILLE;
 
-    fn grid(&self) -> Grid {
-        Grid::BRAILLE
-    }
-
-    fn draw(&self, c: &Canvas, area: Rect, buf: &mut Buffer) {
-        for cy in 0..usize::from(area.height) {
-            for cx in 0..usize::from(area.width) {
-                let (mut bits, mut heat, mut wax) = (0u8, 0.0, 0.0);
-                for dy in 0..4 {
-                    for dx in 0..2 {
-                        let (x, y) = (2 * cx + dx, 4 * cy + dy);
-                        let s = c.at(x, y);
-                        if s.density < SURFACE {
-                            continue;
-                        }
-                        let h = wax_heat(s.temp);
-                        heat += h;
-                        wax += 1.0;
-                        if is_edge(c, x, y) || tone(s.density, h, c.light(x, y)) > bayer(x, y) {
-                            bits |= braille_bit(dx, dy);
-                        }
-                    }
+    fn draw(c: &Canvas, buf: &mut Buffer) {
+        c.for_each_cell(buf, |at, cell| {
+            let (mut heat, mut wax) = (0.0, 0.0);
+            let bits = braille_dots(at.cx, at.cy, |x, y| {
+                let s = c.at(x, y);
+                if s.density < SURFACE {
+                    return false;
                 }
-                let base = c.theme.color(c.backdrop(2 * cx, 4 * cy));
-                let cell = &mut buf[(area.x + cx as u16, area.y + cy as u16)];
-                if bits == 0 {
-                    cell.set_char(' ').set_bg(base);
-                } else {
-                    let fg = c.theme.color(Ink::Wax(quantise(heat / wax, 16.0)));
-                    cell.set_char(braille(bits)).set_fg(fg).set_bg(base);
-                }
-            }
-        }
+                let h = wax_heat(s.temp);
+                heat += h;
+                wax += 1.0;
+                is_edge(c, x, y) || tone(s.density, h, c.light(x, y)) > bayer(x, y)
+            });
+            let dots = (bits != 0).then(|| {
+                let fg = c.theme.color(Ink::Wax(stepped_heat(heat / wax)));
+                (braille(bits), fg)
+            });
+            mark(cell, dots, at.base);
+        });
     }
 }
 

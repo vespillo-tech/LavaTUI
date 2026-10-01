@@ -6,12 +6,11 @@
 //! shade glyphs (`░▒▓█`) with the glint in the text colour.
 
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
 use ratatui::style::Color;
 
-use super::quantise;
-use crate::render::cell::half_block;
-use crate::render::{Canvas, Grid, Style, coverage, wax_heat};
+use super::{quantise, stepped_heat};
+use crate::render::cell::mark as mark_cell;
+use crate::render::{Canvas, Grid, LampStyle, coverage, wax_heat};
 use crate::sim::SURFACE;
 use crate::theme::{Ink, Role};
 
@@ -23,47 +22,40 @@ const LIGHT: [f32; 3] = [-0.48, -0.62, 0.62];
 const RELIEF: f32 = 2.6;
 const SHINE: i32 = 24;
 
-impl Style for Glass {
-    fn name(&self) -> &'static str {
-        "glass"
-    }
+impl LampStyle for Glass {
+    const NAME: &'static str = "glass";
+    const GRID: Grid = Grid::HALF_BLOCK;
 
-    fn grid(&self) -> Grid {
-        Grid::HALF_BLOCK
-    }
-
-    fn draw(&self, c: &Canvas, area: Rect, buf: &mut Buffer) {
-        for cy in 0..usize::from(area.height) {
-            for cx in 0..usize::from(area.width) {
-                let (yt, yb) = (2 * cy, 2 * cy + 1);
-                let base = c.theme.color(c.backdrop(cx, yt));
-                let cell = &mut buf[(area.x + cx as u16, area.y + cy as u16)];
-                if c.theme.blends() {
-                    half_block(cell, Some(pixel(c, cx, yt)), Some(pixel(c, cx, yb)), base);
-                    continue;
-                }
-                let (a, b) = (shade(c, cx, yt), shade(c, cx, yb));
-                let cover = 0.5 * (coverage(c.at(cx, yt).density) + coverage(c.at(cx, yb).density));
-                if cover < 0.5 {
-                    cell.set_char(' ').set_bg(base);
-                    continue;
-                }
-                let heat = wax_heat(0.5 * (c.at(cx, yt).temp + c.at(cx, yb).temp));
-                let (ch, ink) = if a.spec.max(b.spec) > 0.5 {
-                    ('█', Ink::Role(Role::Text))
-                } else {
-                    let ch = match 0.5 * (a.diffuse + b.diffuse) {
-                        l if l < 0.25 => '░',
-                        l if l < 0.5 => '▒',
-                        l if l < 0.75 => '▓',
-                        _ => '█',
-                    };
-                    (ch, Ink::Wax(heat))
-                };
-                cell.set_char(ch).set_fg(c.theme.color(ink)).set_bg(base);
-            }
+    fn draw(c: &Canvas, buf: &mut Buffer) {
+        if c.theme.blends() {
+            c.draw_half_blocks(buf, |x, y| Some(pixel(c, x, y)));
+            return;
         }
+        c.for_each_cell(buf, |at, cell| {
+            let mark = glyph(c, at.x, at.y).map(|(ch, ink)| (ch, c.theme.color(ink)));
+            mark_cell(cell, mark, at.base);
+        });
     }
+}
+
+/// A shade glyph for the cell whose top pixel is (`x`, `y`), from the same
+/// shading as the blended look; `None` where the cell is mostly liquid.
+fn glyph(c: &Canvas, x: usize, y: usize) -> Option<(char, Ink)> {
+    let (top, bottom) = (c.at(x, y), c.at(x, y + 1));
+    if 0.5 * (coverage(top.density) + coverage(bottom.density)) < 0.5 {
+        return None;
+    }
+    let (a, b) = (shade(c, x, y), shade(c, x, y + 1));
+    if a.spec.max(b.spec) > 0.5 {
+        return Some(('█', Ink::Role(Role::Text)));
+    }
+    let ch = match 0.5 * (a.diffuse + b.diffuse) {
+        l if l < 0.25 => '░',
+        l if l < 0.5 => '▒',
+        l if l < 0.75 => '▓',
+        _ => '█',
+    };
+    Some((ch, Ink::Wax(wax_heat(0.5 * (top.temp + bottom.temp)))))
 }
 
 struct Shade {
@@ -111,7 +103,7 @@ fn pixel(c: &Canvas, x: usize, y: usize) -> Color {
         return backdrop.shade(light).color();
     }
     let sh = shade(c, x, y);
-    let heat = quantise(wax_heat(s.temp), 16.0);
+    let heat = stepped_heat(wax_heat(s.temp));
     // Translucent body: more wax where it's lit, the liquid through it in shadow.
     let body = cover * (0.45 + 0.4 * sh.diffuse);
     backdrop

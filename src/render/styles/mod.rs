@@ -1,5 +1,5 @@
 //! The style registry. To add a style: write `styles/<name>.rs` with a unit
-//! struct implementing [`Style`](super::Style), declare the module here and
+//! struct implementing [`LampStyle`](super::LampStyle), declare the module here and
 //! add it to [`ALL`]. Order is the cycle order; the first is the default.
 //!
 //! Small helpers shared by more than one style live here too.
@@ -17,22 +17,22 @@ mod solid;
 mod synthwave;
 mod topo;
 
-use super::{Canvas, Style};
+use super::{Canvas, StyleEntry};
 use crate::sim::SURFACE;
 
-pub static ALL: &[&dyn Style] = &[
-    &solid::Solid,
-    &outline::Outline,
-    &heatmap::Heatmap,
-    &ascii::Ascii,
-    &dither::Dither,
-    &braille::Braille,
-    &halftone::Halftone,
-    &crt::Crt,
-    &synthwave::Synthwave,
-    &matrix::Matrix,
-    &topo::Topo,
-    &glass::Glass,
+pub static ALL: &[StyleEntry] = &[
+    StyleEntry::of::<solid::Solid>(),
+    StyleEntry::of::<outline::Outline>(),
+    StyleEntry::of::<heatmap::Heatmap>(),
+    StyleEntry::of::<ascii::Ascii>(),
+    StyleEntry::of::<dither::Dither>(),
+    StyleEntry::of::<braille::Braille>(),
+    StyleEntry::of::<halftone::Halftone>(),
+    StyleEntry::of::<crt::Crt>(),
+    StyleEntry::of::<synthwave::Synthwave>(),
+    StyleEntry::of::<matrix::Matrix>(),
+    StyleEntry::of::<topo::Topo>(),
+    StyleEntry::of::<glass::Glass>(),
 ];
 
 /// A wax pixel with liquid on at least one side. Off-canvas counts as wax,
@@ -51,6 +51,16 @@ fn is_edge(c: &Canvas, x: usize, y: usize) -> bool {
 #[inline]
 fn quantise(v: f32, steps: f32) -> f32 {
     (v * steps).round() / steps
+}
+
+/// Wax colour steps for styles that draw one colour per cell, so a cell
+/// whose heat drifts slowly changes colour only now and then.
+const HEAT_STEPS: f32 = 16.0;
+
+/// `heat` (0..1) snapped to one of [`HEAT_STEPS`] colours.
+#[inline]
+fn stepped_heat(heat: f32) -> f32 {
+    quantise(heat, HEAT_STEPS)
 }
 
 /// A well-mixed 32-bit hash, for stable per-column / per-cell randomness.

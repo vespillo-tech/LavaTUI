@@ -6,12 +6,10 @@
 //! NO_COLOR keeps the stripes and the grid.
 
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 use super::{is_edge, quantise};
-use crate::render::cell::half_block;
-use crate::render::{Canvas, Grid, Style, coverage, smoothstep, wax_heat};
+use crate::render::{Canvas, Grid, LampStyle, coverage, smoothstep, wax_heat};
 use crate::sim::SURFACE;
 use crate::theme::{Ink, Role};
 
@@ -26,26 +24,13 @@ const FAN_LINES: f32 = 7.0;
 /// Seconds for the floor to scroll one line toward the viewer.
 const SCROLL_SECS: f64 = 6.0;
 
-impl Style for Synthwave {
-    fn name(&self) -> &'static str {
-        "synthwave"
-    }
+impl LampStyle for Synthwave {
+    const NAME: &'static str = "synthwave";
+    const GRID: Grid = Grid::HALF_BLOCK;
 
-    fn grid(&self) -> Grid {
-        Grid::HALF_BLOCK
-    }
-
-    fn draw(&self, c: &Canvas, area: Rect, buf: &mut Buffer) {
+    fn draw(c: &Canvas, buf: &mut Buffer) {
         let scroll = (c.time / SCROLL_SECS).fract() as f32;
-        for cy in 0..usize::from(area.height) {
-            for cx in 0..usize::from(area.width) {
-                let base = c.theme.color(c.backdrop(cx, 2 * cy));
-                let top = pixel(c, cx, 2 * cy, scroll);
-                let bottom = pixel(c, cx, 2 * cy + 1, scroll);
-                let pos = (area.x + cx as u16, area.y + cy as u16);
-                half_block(&mut buf[pos], top, bottom, base);
-            }
-        }
+        c.draw_half_blocks(buf, |x, y| pixel(c, x, y, scroll));
     }
 }
 
