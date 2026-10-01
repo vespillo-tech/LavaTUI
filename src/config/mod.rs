@@ -3,9 +3,12 @@
 //!
 //! [`Settings`] is what lives in `config.toml` (XDG config dir, see
 //! [`store`]). Every field has a default and every section is optional, so
-//! a partial file is fine. Values out of range are clamped and unknown
-//! names (a style that no longer exists) fall back where they're resolved,
-//! so a stale file never stops the lamp.
+//! a partial file is fine. [`Settings::parse`] is tolerant per field: a
+//! value of the wrong type (or an unknown key) is reported and replaced by
+//! its default while every other value is kept. Values out of range are
+//! clamped and unknown names (a style that no longer exists) fall back
+//! where they're resolved, so a stale or hand-mangled file never stops the
+//! lamp.
 //!
 //! [`Session`] is what the CLI adds on top: flags win for this run only and
 //! are never written back (§9).
@@ -14,6 +17,7 @@ pub mod store;
 
 use std::path::PathBuf;
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -222,7 +226,49 @@ impl Default for Ui {
     }
 }
 
+/// The result of [`Settings::parse`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct Parsed {
+    /// Sanitized settings: every valid value from the file, defaults for
+    /// the rest.
+    pub settings: Settings,
+    /// Dotted keys that were dropped (`lamp.frame`), in file order.
+    pub ignored: Vec<String>,
+}
+
 impl Settings {
+    /// The sections of `config.toml`, in file order.
+    const SECTIONS: [&str; 8] = [
+        "display", "lamp", "theme", "clock", "pomodoro", "ui", "minimal", "input",
+    ];
+
+    /// Parse a hand-editable `config.toml`. Only a TOML syntax error fails;
+    /// a bad value costs just that one key (see [`Parsed::ignored`]).
+    pub fn parse(text: &str) -> Result<Parsed, toml::de::Error> {
+        let file: toml::Table = toml::from_str(text)?;
+        let mut ignored = Vec::new();
+        for key in file.keys() {
+            if !Self::SECTIONS.contains(&key.as_str()) {
+                ignored.push(key.clone());
+            }
+        }
+        let ig = &mut ignored;
+        let settings = Settings {
+            display: section("display", &file, ig),
+            lamp: section("lamp", &file, ig),
+            theme: section("theme", &file, ig),
+            clock: section("clock", &file, ig),
+            pomodoro: section("pomodoro", &file, ig),
+            ui: section("ui", &file, ig),
+            minimal: section("minimal", &file, ig),
+            input: section("input", &file, ig),
+        };
+        Ok(Parsed {
+            settings: settings.sanitized(),
+            ignored,
+        })
+    }
+
     /// Clamp every numeric field into its valid range (hand-edited files).
     pub fn sanitized(mut self) -> Self {
         let d = &mut self.display;
@@ -253,6 +299,37 @@ impl Settings {
     pub fn minimal(&self) -> bool {
         self.ui.mode == UiMode::Minimal
     }
+}
+
+/// One section, key by key: each user value is tried on top of the
+/// defaults and kept only if the section still deserializes. Generic over
+/// the section type, so new fields need no code here.
+fn section<T>(name: &str, file: &toml::Table, ignored: &mut Vec<String>) -> T
+where
+    T: Serialize + DeserializeOwned + Default,
+{
+    let Some(value) = file.get(name) else {
+        return T::default();
+    };
+    let Some(user) = value.as_table() else {
+        ignored.push(name.to_owned());
+        return T::default();
+    };
+    let Ok(mut accepted) = toml::Table::try_from(T::default()) else {
+        return T::default();
+    };
+    for (key, value) in user {
+        if accepted.contains_key(key) {
+            let mut trial = accepted.clone();
+            trial.insert(key.clone(), value.clone());
+            if toml::Value::Table(trial.clone()).try_into::<T>().is_ok() {
+                accepted = trial;
+                continue;
+            }
+        }
+        ignored.push(format!("{name}.{key}"));
+    }
+    toml::Value::Table(accepted).try_into().unwrap_or_default()
 }
 
 /// Session-only settings from the command line, layered over the file.
@@ -357,6 +434,55 @@ mod tests {
         let text = toml::to_string(&s).unwrap();
         assert!(text.contains("color = \"256\""), "{text}");
         assert_eq!(toml::from_str::<Settings>(&text).unwrap(), s);
+    }
+
+    #[test]
+    fn one_bad_value_keeps_the_rest() {
+        for bad in ["frame = \"round\"", "heat = 300", "speed = \"fast\""] {
+            let text = format!("[lamp]\nstyle = \"ascii\"\n{bad}\n[clock]\nface = \"words\"\n");
+            let p = Settings::parse(&text).unwrap();
+            assert_eq!(p.settings.lamp.style, "ascii", "{bad}");
+            assert_eq!(p.settings.clock.face, "words", "{bad}");
+            assert_eq!(p.ignored.len(), 1, "{bad}: {:?}", p.ignored);
+            assert!(p.ignored[0].starts_with("lamp."), "{bad}");
+        }
+        for (section, bad) in [
+            ("display", "fps = 60.0"),
+            ("display", "color = \"24bit\""),
+            ("pomodoro", "focus_min = -5"),
+        ] {
+            let text = format!("[lamp]\nstyle = \"ascii\"\n[{section}]\n{bad}\n");
+            let p = Settings::parse(&text).unwrap();
+            assert_eq!(p.settings.lamp.style, "ascii", "{bad}");
+            let key = bad.split(' ').next().unwrap();
+            assert_eq!(p.ignored, [format!("{section}.{key}")]);
+        }
+    }
+
+    #[test]
+    fn bad_value_takes_the_default_and_neighbours_survive() {
+        let text = "[pomodoro]\nfocus_min = -5\nshort_break_min = 7\ncycles = 2\n";
+        let p = Settings::parse(text).unwrap();
+        assert_eq!(p.settings.pomodoro.focus_min, 25);
+        assert_eq!(p.settings.pomodoro.short_break_min, 7);
+        assert_eq!(p.settings.pomodoro.cycles, 2);
+    }
+
+    #[test]
+    fn unknown_keys_and_malformed_sections_are_reported() {
+        let text = "colour = 1\nlamp = 5\n[clock]\nfase = \"x\"\nhour24 = false\n";
+        let p = Settings::parse(text).unwrap();
+        assert_eq!(p.ignored, ["colour", "lamp", "clock.fase"]);
+        assert!(!p.settings.clock.hour24);
+        assert_eq!(p.settings.lamp, Lamp::default());
+    }
+
+    #[test]
+    fn parse_clamps_and_rejects_syntax_errors() {
+        let p = Settings::parse("[lamp]\nheat = 9\n").unwrap();
+        assert_eq!(p.settings.lamp.heat, 5);
+        assert!(p.ignored.is_empty());
+        assert!(Settings::parse("[lamp\n").is_err());
     }
 
     #[test]
