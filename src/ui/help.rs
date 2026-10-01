@@ -116,6 +116,9 @@ pub fn max_scroll(area: Rect) -> u16 {
 }
 
 pub fn draw(buf: &mut Buffer, area: Rect, scroll: u16, model: &Model) {
+    if area.is_empty() {
+        return;
+    }
     let theme = &model.theme;
     let (text, dim, accent) = (
         theme.text(Role::Text),

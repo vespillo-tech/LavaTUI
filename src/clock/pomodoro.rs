@@ -253,6 +253,17 @@ impl Pomodoro {
         *self = Self::new(self.config);
     }
 
+    /// The machine was suspended for `asleep` (which `Instant` doesn't
+    /// count on macOS or Linux; the caller detects it from wall time). A
+    /// running phase counts the sleep as run time, like a kitchen timer; a
+    /// paused or idle one is unaffected. The next `tick` ends the phase if
+    /// the sleep used it up.
+    pub fn slept(&mut self, asleep: Duration) {
+        if let Run::Running { banked, .. } = &mut self.run {
+            *banked += asleep;
+        }
+    }
+
     /// Call every frame. Ends the phase if its time is up and returns the
     /// event. Ends at most one phase per call: after a long gap (laptop
     /// asleep) the next phase starts at `now` instead of also expiring.
@@ -264,15 +275,15 @@ impl Pomodoro {
         if self.elapsed(now) < duration {
             return None;
         }
-        let deadline = since + duration.saturating_sub(banked);
         let next_run = if self.config.auto_advance {
             // Start the next phase at the deadline so frame jitter doesn't
-            // accumulate, unless that would already have expired it too.
+            // accumulate, unless the deadline passed during a sleep (no
+            // `Instant` for it) or would already have expired that phase too.
             let next = self.next_phase();
-            let since = if now.saturating_duration_since(deadline) < self.config.duration(next) {
-                deadline
-            } else {
-                now
+            let deadline = duration.checked_sub(banked).map(|left| since + left);
+            let since = match deadline {
+                Some(at) if now.saturating_duration_since(at) < self.config.duration(next) => at,
+                _ => now,
             };
             Run::Running {
                 since,

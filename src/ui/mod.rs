@@ -24,9 +24,21 @@ use crate::render::{LampState, LampView};
 use crate::theme::Role;
 
 /// Draw one frame. `lamp` is the lamp's scratch state, kept by the caller.
+///
+/// Everything is placed by a layout for `frame.area()`, the size actually
+/// being drawn. The loop ticks the model at that size, so this is normally
+/// `model.layout`; if the two ever disagree (the terminal resized between
+/// tick and draw) the layout is recomputed rather than drawing stale rects
+/// outside the buffer.
 pub fn draw(frame: &mut Frame, model: &Model, lamp: &mut LampState) {
     let area = frame.area();
-    let layout = &model.layout;
+    let fresh;
+    let layout = if model.layout.area == area {
+        &model.layout
+    } else {
+        fresh = model.layout_for(area);
+        &fresh
+    };
     let theme = &model.theme;
     let buf = frame.buffer_mut();
     let bg = if model.settings.theme.transparent {
@@ -72,6 +84,6 @@ pub fn draw(frame: &mut Frame, model: &Model, lamp: &mut LampState) {
     match model.overlay {
         Overlay::None => {}
         Overlay::Help { scroll } => help::draw(buf, area, scroll, model),
-        Overlay::Picker(p) => picker::draw(buf, area, &p, model),
+        Overlay::Picker(p) => picker::draw(buf, area, layout, &p, model),
     }
 }

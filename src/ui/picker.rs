@@ -14,11 +14,15 @@ use ratatui::widgets::{Block, BorderType, Clear, Widget};
 
 use crate::app::{Model, Picker};
 use crate::theme::Role;
-use crate::ui::layout::margins;
+use crate::ui::layout::{Layout, SizeTier, margins};
 
 const SHEET_W: u16 = 26;
 
-pub fn draw(buf: &mut Buffer, area: Rect, picker: &Picker, model: &Model) {
+/// Draw `picker` over `area`, which `layout` was made for.
+pub fn draw(buf: &mut Buffer, area: Rect, layout: &Layout, picker: &Picker, model: &Model) {
+    if area.is_empty() {
+        return;
+    }
     let theme = &model.theme;
     let items = picker.kind.items();
     let bg = Style::new().bg(theme.role(Role::Bg));
@@ -28,7 +32,8 @@ pub fn draw(buf: &mut Buffer, area: Rect, picker: &Picker, model: &Model) {
         theme.text(Role::Accent),
     );
 
-    if model.inline_pickers() {
+    // From the drawn area, not the model's: they differ mid-resize.
+    if SizeTier::of(area) <= SizeTier::Tiny {
         let name = items[picker.cursor];
         let s = format!(" ‹ {name} › ");
         let w = s.chars().count() as u16;
@@ -40,7 +45,7 @@ pub fn draw(buf: &mut Buffer, area: Rect, picker: &Picker, model: &Model) {
     }
 
     let n = items.len() as u16;
-    let status = u16::from(model.layout.status.is_some());
+    let status = u16::from(layout.status.is_some());
     let (sheet, list, hint_y) = if area.width >= 80 && area.height >= 16 {
         let h = (n + 6).min(area.height - 2);
         let (_, hm) = margins(area.width, area.height);
