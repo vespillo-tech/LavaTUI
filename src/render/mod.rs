@@ -119,15 +119,6 @@ impl StyleId {
     pub fn index(self) -> usize {
         self.0
     }
-
-    pub fn next(self) -> StyleId {
-        StyleId((self.0 + 1) % styles::ALL.len())
-    }
-
-    #[cfg_attr(not(test), expect(dead_code, reason = "pickers move by index"))]
-    pub fn prev(self) -> StyleId {
-        StyleId((self.0 + styles::ALL.len() - 1) % styles::ALL.len())
-    }
 }
 
 /// Smooth 0 → 1 wax coverage across the surface, for anti-aliasing: half

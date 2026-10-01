@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
 use super::*;
+use crate::ui::keymap::Action;
+use crate::ui::picker::{self, Placement};
 
 fn temp_config(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("lavatui-model-{name}-{}", std::process::id()));

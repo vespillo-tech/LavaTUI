@@ -489,17 +489,10 @@ fn registry_cycles_and_names_are_unique() {
             "chrome",
         ]
     );
-    let n = names.len();
-    let first = StyleId::default();
-    assert_eq!(first.style().name(), "solid");
-    let mut id = first;
-    for i in 0..n {
+    assert_eq!(StyleId::default().style().name(), "solid");
+    for (i, id) in StyleId::all().enumerate() {
         assert_eq!(id.index(), i);
-        assert_eq!(id.next().prev(), id);
-        id = id.next();
     }
-    assert_eq!(id, first);
-    assert_eq!(first.prev().index(), n - 1);
     for name in &names {
         assert_eq!(StyleId::by_name(name).unwrap().style().name(), *name);
         assert!(name.chars().all(|c| c.is_ascii_lowercase()));
