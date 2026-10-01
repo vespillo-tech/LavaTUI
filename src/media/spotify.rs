@@ -1,4 +1,5 @@
-//! The Spotify desktop app on macOS, driven through AppleScript.
+//! The Spotify desktop app on macOS, driven through AppleScript (the
+//! module only exists on macOS).
 //!
 //! Every exchange is one `osascript` run: the queued commands, then a read
 //! of the whole state as one delimited record. The script first checks
@@ -33,11 +34,15 @@ const EVENT_TIMEOUT_SECS: u32 = 4;
 /// The Spotify backend, over a [`Runner`] (`osascript` in the app).
 pub struct Spotify<R> {
     runner: R,
+    name: Arc<str>,
 }
 
 impl<R: Runner> Spotify<R> {
     pub fn new(runner: R) -> Self {
-        Self { runner }
+        Self {
+            runner,
+            name: Arc::from("Spotify"),
+        }
     }
 }
 
@@ -45,10 +50,12 @@ impl<R: Runner> Backend for Spotify<R> {
     fn exchange(&mut self, commands: &[Command]) -> Snapshot {
         let result = self.runner.run(&script(commands), TIMEOUT);
         let now = Instant::now();
-        match result {
+        let mut snapshot = match result {
             Ok(out) => parse(&out, now),
             Err(err) => Snapshot::new(Status::Unavailable(classify(&err)), now),
-        }
+        };
+        snapshot.player = Some(Arc::clone(&self.name));
+        snapshot
     }
 }
 
@@ -180,6 +187,7 @@ pub fn parse(out: &str, now: Instant) -> Snapshot {
         })
     });
     Snapshot {
+        player: None,
         status,
         track,
         position: millis(position),
@@ -232,8 +240,14 @@ fn error_text(stderr: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
+    use std::sync::Mutex;
+    use std::thread;
 
+    use super::super::MediaSource;
+    use super::super::worker::{Polled, testing};
     use super::*;
+
+    const MS: Duration = Duration::from_millis(1);
 
     /// Recorded from Spotify 1.2 (macOS 26), playing.
     const PLAYING: &str = "lavatui1\u{1e}playing\u{1e}240497\u{1e}0\u{1e}1\u{1e}100\u{1e}\
@@ -445,10 +459,91 @@ mod tests {
         assert!(spotify.runner.1[1].contains("next track"));
     }
 
+    // The worker on its thread, through this backend and a fake osascript.
+
+    /// A pretend Spotify behind a fake osascript: `next track` changes the
+    /// track; `fail` makes the next runs fail.
+    #[derive(Default)]
+    struct FakeSpotify {
+        track: u32,
+        fail: Vec<RunError>,
+        scripts: Vec<String>,
+    }
+
+    #[derive(Clone, Default)]
+    struct FakeRunner(Arc<Mutex<FakeSpotify>>);
+
+    impl Runner for FakeRunner {
+        fn run(&mut self, script: &str, _: Duration) -> Result<String, RunError> {
+            let mut fake = self.0.lock().unwrap();
+            fake.scripts.push(script.to_owned());
+            if !fake.fail.is_empty() {
+                return Err(fake.fail.remove(0));
+            }
+            if script.contains("next track") {
+                fake.track += 1;
+            }
+            Ok(format!(
+                "lavatui1\u{1e}playing\u{1e}1000\u{1e}0\u{1e}0\u{1e}80\u{1e}spotify:track:{n}\
+                 \u{1e}200000\u{1e}\u{1e}Artist\u{1e}Album\u{1e}Song {n}\n",
+                n = fake.track
+            ))
+        }
+    }
+
+    fn track_id(snap: &Snapshot) -> &str {
+        snap.track.as_ref().map_or("", |t| t.id.as_str())
+    }
+
+    #[test]
+    fn thread_command_then_refresh() {
+        let runner = FakeRunner::default();
+        let source = Polled::spawn(Spotify::new(runner.clone()), testing::fast());
+        testing::wait_for(&source, "first poll", |s| s.status == Status::Playing);
+        source.next();
+        let snap = testing::wait_for(&source, "next track", |s| track_id(s) == "spotify:track:1");
+        assert_eq!(snap.track.unwrap().name, "Song 1");
+        let fake = runner.0.lock().unwrap();
+        assert_eq!(
+            fake.scripts
+                .iter()
+                .filter(|s| s.contains("next track"))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn thread_timeouts_and_errors_recover() {
+        let runner = FakeRunner::default();
+        runner.0.lock().unwrap().fail = vec![
+            RunError::Timeout,
+            RunError::Failed("execution error: Not authorized (-1743)".into()),
+        ];
+        let source = Polled::spawn(Spotify::new(runner.clone()), testing::fast());
+        testing::wait_for(&source, "permission denied", |s| {
+            s.status == Status::Unavailable(Unavailable::PermissionDenied)
+        });
+        testing::wait_for(&source, "recovery", |s| s.status == Status::Playing);
+        let fake = runner.0.lock().unwrap();
+        assert!(fake.scripts.len() >= 3);
+    }
+
+    #[test]
+    fn thread_stops_when_the_handle_drops() {
+        let runner = FakeRunner::default();
+        let source = Polled::spawn(Spotify::new(runner.clone()), testing::fast());
+        testing::wait_for(&source, "first poll", |s| s.status == Status::Playing);
+        drop(source);
+        thread::sleep(MS * 60);
+        let runs = runner.0.lock().unwrap().scripts.len();
+        thread::sleep(MS * 100);
+        assert_eq!(runner.0.lock().unwrap().scripts.len(), runs);
+    }
+
     /// Against a real osascript (not Spotify): the generated script must
     /// compile. Uses a bundle id that doesn't exist, so it can't launch
     /// anything, and checks that maps to `NotInstalled`.
-    #[cfg(target_os = "macos")]
     #[test]
     fn script_compiles_and_a_missing_app_is_not_installed() {
         use super::super::runner::Osascript;
@@ -465,7 +560,6 @@ mod tests {
     /// Against the real Spotify app (must be running, with a track loaded):
     /// every control once, timed, then the original state restored.
     /// `cargo test --release -- --ignored --nocapture live_spotify`
-    #[cfg(target_os = "macos")]
     #[test]
     #[ignore = "drives the real Spotify app"]
     fn live_spotify() {
@@ -548,14 +642,14 @@ mod tests {
         let s = settled("volume back", &[Command::SetVolume(orig.volume)]);
         assert_eq!(s.volume, orig.volume);
 
-        // Back to where it was, plus the time this took.
-        let resume = orig.position_at(Instant::now());
-        let s = settled("seek", &[Command::Seek(resume)]);
-        assert!(
-            s.position_at(Instant::now())
-                .abs_diff(orig.position_at(Instant::now()))
-                < Duration::from_secs(1)
-        );
+        // Back to where it was, plus the time this took (unless the track
+        // would have ended by now: then let the next one play).
+        let resume = orig.position + orig.sampled_at.elapsed();
+        if resume + Duration::from_secs(5) < orig_track.duration {
+            let s = settled("seek", &[Command::Seek(resume)]);
+            let expected = resume + Duration::from_millis(800);
+            assert!(s.position.abs_diff(expected) < Duration::from_secs(1));
+        }
 
         // Through the worker: optimistic at once, confirmed after.
         let source = Polled::spawn(Spotify::new(Osascript), Cadence::default());

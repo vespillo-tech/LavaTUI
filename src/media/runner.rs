@@ -100,7 +100,7 @@ fn read_all(pipe: Option<impl Read>) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

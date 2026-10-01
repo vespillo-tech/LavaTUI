@@ -251,8 +251,6 @@ mod tests {
     use std::sync::Arc;
 
     use super::super::Track;
-    use super::super::runner::{RunError, Runner};
-    use super::super::spotify::Spotify;
     use super::*;
 
     const MS: Duration = Duration::from_millis(1);
@@ -465,40 +463,56 @@ mod tests {
         assert_eq!(fresh.sampled_at, t0 + MS * 1000);
     }
 
-    // End to end, on a real thread, through the Spotify backend and a fake
-    // osascript.
+    // On a real thread.
 
-    /// A pretend Spotify behind a fake osascript: `next track` changes the
-    /// track; `fail` makes the next runs fail.
-    #[derive(Default)]
-    struct FakeSpotify {
-        track: u32,
-        fail: Vec<RunError>,
-        scripts: Vec<String>,
+    #[test]
+    fn thread_command_then_refresh() {
+        let log = Log::default();
+        let mut track = 0;
+        let backend = Scripted(
+            move |commands: &[Command]| {
+                track += commands.iter().filter(|c| **c == Command::Next).count();
+                playing(&format!("t{track}"), MS, Instant::now())
+            },
+            Arc::clone(&log),
+        );
+        let source = Polled::spawn(backend, testing::fast());
+        testing::wait_for(&source, "first poll", |s| s.status == Status::Playing);
+        source.next();
+        testing::wait_for(&source, "next track", |s| {
+            s.track.as_ref().is_some_and(|t| t.id == "t1")
+        });
+        let batches = log.lock().unwrap();
+        let nexts = batches.iter().flatten().filter(|c| **c == Command::Next);
+        assert_eq!(nexts.count(), 1);
     }
 
-    #[derive(Clone, Default)]
-    struct FakeRunner(Arc<Mutex<FakeSpotify>>);
-
-    impl Runner for FakeRunner {
-        fn run(&mut self, script: &str, _: Duration) -> Result<String, RunError> {
-            let mut fake = self.0.lock().unwrap();
-            fake.scripts.push(script.to_owned());
-            if !fake.fail.is_empty() {
-                return Err(fake.fail.remove(0));
-            }
-            if script.contains("next track") {
-                fake.track += 1;
-            }
-            Ok(format!(
-                "lavatui1\u{1e}playing\u{1e}1000\u{1e}0\u{1e}0\u{1e}80\u{1e}spotify:track:{n}\
-                 \u{1e}200000\u{1e}\u{1e}Artist\u{1e}Album\u{1e}Song {n}\n",
-                n = fake.track
-            ))
-        }
+    #[test]
+    fn thread_stops_when_the_handle_drops() {
+        let log = Log::default();
+        let backend = Scripted(
+            |_: &[Command]| playing("a", MS, Instant::now()),
+            Arc::clone(&log),
+        );
+        let source = Polled::spawn(backend, testing::fast());
+        testing::wait_for(&source, "first poll", |s| s.status == Status::Playing);
+        drop(source);
+        thread::sleep(MS * 60);
+        let runs = log.lock().unwrap().len();
+        thread::sleep(MS * 100);
+        assert_eq!(log.lock().unwrap().len(), runs);
     }
+}
 
-    fn fast() -> Cadence {
+/// Helpers for backend tests that drive a [`Polled`] on its thread.
+#[cfg(test)]
+pub(crate) mod testing {
+    use super::*;
+
+    const MS: Duration = Duration::from_millis(1);
+
+    /// Polls every 20 ms, re-reads 5 ms after a command.
+    pub fn fast() -> Cadence {
         Cadence {
             playing: MS * 20,
             idle: MS * 20,
@@ -509,7 +523,8 @@ mod tests {
         }
     }
 
-    fn wait_for(source: &Polled, what: &str, ok: impl Fn(&Snapshot) -> bool) -> Snapshot {
+    /// The first snapshot `ok` accepts; panics after 5 s.
+    pub fn wait_for(source: &Polled, what: &str, ok: impl Fn(&Snapshot) -> bool) -> Snapshot {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             let snap = source.snapshot();
@@ -522,55 +537,5 @@ mod tests {
             );
             thread::sleep(MS);
         }
-    }
-
-    fn track_id(snap: &Snapshot) -> &str {
-        snap.track.as_ref().map_or("", |t| t.id.as_str())
-    }
-
-    #[test]
-    fn thread_command_then_refresh() {
-        let runner = FakeRunner::default();
-        let source = Polled::spawn(Spotify::new(runner.clone()), fast());
-        wait_for(&source, "first poll", |s| s.status == Status::Playing);
-        source.next();
-        let snap = wait_for(&source, "next track", |s| track_id(s) == "spotify:track:1");
-        assert_eq!(snap.track.unwrap().name, "Song 1");
-        let fake = runner.0.lock().unwrap();
-        assert_eq!(
-            fake.scripts
-                .iter()
-                .filter(|s| s.contains("next track"))
-                .count(),
-            1
-        );
-    }
-
-    #[test]
-    fn thread_timeouts_and_errors_recover() {
-        let runner = FakeRunner::default();
-        runner.0.lock().unwrap().fail = vec![
-            RunError::Timeout,
-            RunError::Failed("execution error: Not authorized (-1743)".into()),
-        ];
-        let source = Polled::spawn(Spotify::new(runner.clone()), fast());
-        wait_for(&source, "permission denied", |s| {
-            s.status == Status::Unavailable(Unavailable::PermissionDenied)
-        });
-        wait_for(&source, "recovery", |s| s.status == Status::Playing);
-        let fake = runner.0.lock().unwrap();
-        assert!(fake.scripts.len() >= 3);
-    }
-
-    #[test]
-    fn thread_stops_when_the_handle_drops() {
-        let runner = FakeRunner::default();
-        let source = Polled::spawn(Spotify::new(runner.clone()), fast());
-        wait_for(&source, "first poll", |s| s.status == Status::Playing);
-        drop(source);
-        thread::sleep(MS * 60);
-        let runs = runner.0.lock().unwrap().scripts.len();
-        thread::sleep(MS * 100);
-        assert_eq!(runner.0.lock().unwrap().scripts.len(), runs);
     }
 }

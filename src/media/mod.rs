@@ -7,20 +7,25 @@
 //! key press shows on the very next frame; the player's real answer
 //! replaces it a moment later.
 //!
+//! [`detect`] picks the backend for this platform. Everything here is
+//! platform-neutral except the backends, each behind its own `cfg`:
+//!
 //! - [`worker`]: [`Polled`], the source used for real players: a background
 //!   thread that asks a blocking [`worker::Backend`] for the state on an
 //!   adaptive cadence and runs commands as they arrive. Nothing here ever
-//!   blocks the caller.
-//! - [`spotify`]: the Spotify desktop app on macOS, through `osascript`
-//!   ([`runner`] runs it with a timeout). It never launches Spotify.
+//!   blocks the caller. A new backend implements `Backend` and gets the
+//!   threading, optimistic state and smoothing for free.
+//! - `spotify` (macOS): the Spotify desktop app, through `osascript`
+//!   (`runner` runs it with a timeout). It never launches Spotify.
 //! - [`fake`]: [`FakeSource`], an in-memory player for tests and for
 //!   building the UI without a real one.
 //!
-//! Pure apart from [`runner::Osascript`]: no terminal code, no I/O on the
-//! caller's thread.
+//! No terminal code, and no I/O on the caller's thread.
 
 pub mod fake;
+#[cfg(target_os = "macos")]
 pub mod runner;
+#[cfg(target_os = "macos")]
 pub mod spotify;
 pub mod worker;
 
@@ -62,8 +67,9 @@ pub trait MediaSource: Send {
     fn set_volume(&self, volume: u8) {
         self.send(Command::SetVolume(volume.min(100)));
     }
-    /// Play a `spotify:` URI (track, album, playlist, …). URIs that aren't
-    /// plain `spotify:` identifiers are ignored.
+    /// Play a URI the player understands (`spotify:track:…`, an album or
+    /// playlist URI, …). Malformed URIs are ignored; ones the player
+    /// doesn't know do nothing.
     fn play_uri(&self, uri: &str) {
         if let Some(command) = Command::play_uri(uri) {
             self.send(command);
@@ -71,8 +77,11 @@ pub trait MediaSource: Send {
     }
 }
 
-/// The Spotify desktop app, or an unavailable source off macOS.
-pub fn spotify() -> Box<dyn MediaSource> {
+/// The media source for this platform: Spotify (AppleScript) on macOS;
+/// elsewhere, until a backend exists (MPRIS on Linux, SMTC on Windows), a
+/// source that is always `Unavailable(Unsupported)`. Starts the backend's
+/// worker thread; cheap to call, never blocks.
+pub fn detect() -> Box<dyn MediaSource> {
     #[cfg(target_os = "macos")]
     {
         Box::new(Polled::spawn(
@@ -103,14 +112,20 @@ pub enum Command {
 }
 
 impl Command {
-    /// `PlayUri` for a well-formed `spotify:` URI (`spotify:track:…`,
-    /// `spotify:album:…`, `spotify:user:…:playlist:…`), else `None`. Only
-    /// URI-safe ASCII is accepted, so the URI can go into a script as is.
+    /// `PlayUri` for a well-formed URI (`scheme:rest`, e.g.
+    /// `spotify:album:…`, `https://…`), else `None`. Only URI-safe ASCII is
+    /// accepted (no quotes, backslashes, spaces or control characters), so
+    /// backends can pass it to a script or a bus as is.
     pub fn play_uri(uri: &str) -> Option<Self> {
         let uri = uri.trim();
-        let rest = uri.strip_prefix("spotify:")?;
-        let safe = |c: char| c.is_ascii_alphanumeric() || ":_-.%+".contains(c);
-        (!rest.is_empty() && rest.chars().all(safe)).then(|| Self::PlayUri(uri.to_owned()))
+        let (scheme, rest) = uri.split_once(':')?;
+        let scheme_ok = scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+            && scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c));
+        let safe = |c: char| c.is_ascii_alphanumeric() || ":/_-.%+?=&~#@!$*,;".contains(c);
+        (scheme_ok && !rest.is_empty() && rest.chars().all(safe))
+            .then(|| Self::PlayUri(uri.to_owned()))
     }
 }
 
@@ -136,12 +151,13 @@ impl Status {
 /// Why the player can't be shown or controlled.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Unavailable {
-    /// No backend for this platform (Spotify control needs macOS).
+    /// No backend for this platform yet.
     Unsupported,
     NotInstalled,
-    /// Installed but not open. We never launch it.
+    /// Installed but not open (or no player at all). We never launch one.
     NotRunning,
-    /// macOS Automation permission was refused (AppleScript error -1743).
+    /// The OS refused us control of the player (on macOS: the Automation
+    /// permission, AppleScript error -1743).
     PermissionDenied,
     /// The player didn't answer in time (busy, starting up, or macOS is
     /// waiting on a permission prompt).
@@ -151,20 +167,25 @@ pub enum Unavailable {
 }
 
 impl Unavailable {
-    /// One calm sentence for the UI.
-    pub fn message(&self) -> &str {
+    /// One calm sentence for the UI. `player` names the player
+    /// ([`Snapshot::player_name`]).
+    pub fn message(&self, player: &str) -> String {
         match self {
-            Self::Unsupported => "Spotify control needs macOS",
-            Self::NotInstalled => "Spotify isn't installed",
-            Self::NotRunning => "Spotify isn't running",
-            Self::PermissionDenied => {
-                "Allow control of Spotify: System Settings › Privacy & Security › \
-                 Automation › your terminal › Spotify"
+            Self::Unsupported => "No media player support on this platform yet".into(),
+            Self::NotInstalled => format!("{player} isn't installed"),
+            Self::NotRunning => format!("{player} isn't running"),
+            #[cfg(target_os = "macos")]
+            Self::PermissionDenied => format!(
+                "Allow control of {player}: System Settings › Privacy & Security › \
+                 Automation › your terminal › {player}"
+            ),
+            #[cfg(not(target_os = "macos"))]
+            Self::PermissionDenied => format!("Not allowed to control {player}"),
+            Self::NotResponding if cfg!(target_os = "macos") => {
+                format!("{player} isn't answering (if macOS asks to allow control, choose Allow)")
             }
-            Self::NotResponding => {
-                "Spotify isn't answering (if macOS asks to allow control, choose Allow)"
-            }
-            Self::Error(message) => message,
+            Self::NotResponding => format!("{player} isn't answering"),
+            Self::Error(message) => message.clone(),
         }
     }
 }
@@ -186,6 +207,8 @@ pub struct Track {
 /// The player's state as last known.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Snapshot {
+    /// Which player this is ("Spotify"), once the backend knows.
+    pub player: Option<Arc<str>>,
     pub status: Status,
     pub track: Option<Arc<Track>>,
     /// Playback position at `sampled_at`; use [`Snapshot::position_at`].
@@ -200,6 +223,7 @@ pub struct Snapshot {
 impl Snapshot {
     pub fn new(status: Status, now: Instant) -> Self {
         Self {
+            player: None,
             status,
             track: None,
             position: Duration::ZERO,
@@ -207,6 +231,20 @@ impl Snapshot {
             shuffle: false,
             repeat: false,
             volume: 0,
+        }
+    }
+
+    /// The player's name, or a generic one.
+    pub fn player_name(&self) -> &str {
+        self.player.as_deref().unwrap_or("The player")
+    }
+
+    /// Why there's nothing to show, as one sentence (`None` when available
+    /// or still connecting).
+    pub fn unavailable_message(&self) -> Option<String> {
+        match &self.status {
+            Status::Unavailable(reason) => Some(reason.message(self.player_name())),
+            _ => None,
         }
     }
 
@@ -362,10 +400,13 @@ mod tests {
             ))
         );
         assert!(Command::play_uri("spotify:user:me:playlist:37i9dQ").is_some());
+        assert!(Command::play_uri("https://open.spotify.com/track/x?si=1").is_some());
         for bad in [
             "",
             "spotify:",
-            "https://open.spotify.com/track/x",
+            "no-scheme",
+            ":empty-scheme",
+            "1abc:x",
             "spotify:track:x\" & do shell script \"rm",
             "spotify:track:x\\",
             "spotify:track:é",
@@ -385,12 +426,24 @@ mod tests {
             Unavailable::NotResponding,
             Unavailable::Error("boom".into()),
         ] {
-            assert!(!reason.message().is_empty());
+            assert!(!reason.message("Spotify").is_empty());
         }
+        assert_eq!(
+            Unavailable::NotRunning.message("Spotify"),
+            "Spotify isn't running"
+        );
+        #[cfg(target_os = "macos")]
         assert!(
             Unavailable::PermissionDenied
-                .message()
-                .contains("Automation")
+                .message("Spotify")
+                .contains("Automation › your terminal › Spotify")
+        );
+        let mut snap = Snapshot::new(Status::Playing, Instant::now());
+        assert_eq!(snap.unavailable_message(), None);
+        snap.status = Status::Unavailable(Unavailable::NotRunning);
+        assert_eq!(
+            snap.unavailable_message().as_deref(),
+            Some("The player isn't running")
         );
     }
 }
