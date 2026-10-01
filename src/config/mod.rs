@@ -326,8 +326,10 @@ impl Settings {
     }
 
     /// Values from retired keys: `clock.show = false` hides the clock,
-    /// unless the file also says where the clock goes.
+    /// unless the file also says where the clock goes; a single
+    /// `dock.anchor` (before v1.2) becomes one per widget.
     fn carry_over(&mut self, file: &toml::Table) {
+        self.dock.split_anchors();
         let old = |section: &str, key: &str| file.get(section)?.as_table()?.get(key).cloned();
         let clock = &dock::Clock as &dyn dock::DockWidget;
         let placed = old("dock", clock.name()).is_some();
@@ -656,8 +658,20 @@ mod tests {
         let clock = &dock::Clock;
         let p = Settings::parse("[dock]\nclock = \"overlay\"\nanchor = \"top-left\"\n").unwrap();
         assert_eq!(p.settings.dock.place(clock), Place::Overlay);
-        assert_eq!(p.settings.dock.anchor, dock::Anchor::TopLeft);
+        assert_eq!(p.settings.dock.anchor(clock), dock::Anchor::TopLeft);
+        assert_eq!(p.settings.dock.anchor(&dock::Music), dock::Anchor::TopLeft);
         assert_eq!(p.settings.dock.place(&dock::Pomodoro), Place::Side);
+        // The old single anchor is split per widget, so the next save
+        // writes the new form.
+        assert!(matches!(p.settings.dock.anchor, dock::Anchors::Each(_)));
+        assert!(matches!(p.baseline.dock.anchor, dock::Anchors::All(_)));
+        let p = Settings::parse("[dock]\nanchor = { music = \"bottom-left\" }\n").unwrap();
+        assert!(p.ignored.is_empty() && p.unknown.is_empty(), "{p:?}");
+        assert_eq!(
+            p.settings.dock.anchor(&dock::Music),
+            dock::Anchor::BottomLeft
+        );
+        assert_eq!(p.settings.dock.anchor(clock), dock::Anchor::Center);
         // A bad place costs just that key; a widget that doesn't exist
         // (yet) is an unknown key, kept in the file.
         let p = Settings::parse("[dock]\nclock = \"sideways\"\nradio = \"side\"\n").unwrap();

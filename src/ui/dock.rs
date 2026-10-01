@@ -7,7 +7,7 @@ use ratatui::style::Style;
 use crate::app::Model;
 use crate::dock::{Backdrop, Look, WIDGETS};
 use crate::theme::{ColorDepth, Role, TERMINAL_DEFAULT, Theme};
-use crate::ui::layout::{Chip, Stack, halo};
+use crate::ui::layout::{CHIP_SEP, ChipRow, Stack, halo};
 
 /// The side panel: each widget in its slot, on the app background.
 pub fn draw_panel(buf: &mut Buffer, panel: &Stack, model: &Model) {
@@ -99,18 +99,28 @@ pub fn draw_on_lava(buf: &mut Buffer, stack: &Stack, model: &Model, lamp: &Theme
     }
 }
 
-/// ` 14:32 ` / ` ▸ 18:24 ` with a 1-cell `bg` pad, over the lamp.
-pub fn draw_chip(buf: &mut Buffer, chip: &Chip, model: &Model) {
-    let Some(c) = WIDGETS[chip.widget].chip(model) else {
-        return;
-    };
+/// The chip row over the lamp: ` 14:32 · ▸ 18:24 `, on `bg` with a
+/// 1-cell pad, the dots `dim`.
+pub fn draw_chips(buf: &mut Buffer, row: &ChipRow, model: &Model) {
     let bg = Style::new().bg(super::background(model));
-    let r = chip.rect;
-    let w = c.text.chars().count() as u16;
-    if w > r.width {
-        return;
-    }
+    let r = row.rect;
     buf.set_string(r.x, r.y, " ".repeat(usize::from(r.width)), bg);
-    let x = r.x + (r.width - w) / 2;
-    buf.set_string(x, r.y, &c.text, model.theme.text(c.ink).patch(bg));
+    let dim = model.theme.text(Role::Dim).patch(bg);
+    for (i, chip) in row.items.iter().enumerate() {
+        let Some(c) = WIDGETS[chip.widget].chip(model) else {
+            continue;
+        };
+        let at = chip.rect;
+        buf.set_stringn(
+            at.x,
+            at.y,
+            &c.text,
+            usize::from(at.width),
+            model.theme.text(c.ink).patch(bg),
+        );
+        if i > 0 {
+            let x = at.x - CHIP_SEP + 1;
+            buf.set_string(x, at.y, "·", dim);
+        }
+    }
 }

@@ -14,6 +14,7 @@ mod saving;
 use std::time::{Duration, Instant, SystemTime};
 
 use ratatui::layout::Rect;
+use unicode_width::UnicodeWidthStr;
 
 use crate::clock::{
     self, ClockTime, Face, PhaseEnd, Pomodoro, PomodoroConfig, Status, format_remaining,
@@ -129,6 +130,8 @@ pub struct Model {
 
     /// The music widget's player, cover and keys.
     pub music: Music,
+    /// The widget on the lava `l` moves (`L` picks another).
+    pub lava_focus: Option<usize>,
 
     // Chrome.
     pub overlay: Overlay,
@@ -199,6 +202,7 @@ impl Model {
             reset_pending: None,
             last_reset_key: None,
             music: Music::default(),
+            lava_focus: None,
             overlay: Overlay::None,
             toast: None,
             hud: false,
@@ -285,9 +289,11 @@ impl Model {
             .map_or(Duration::ZERO, |d| {
                 Duration::from_nanos(d.subsec_nanos().into())
             });
-        let seconds_shown = [&self.layout.panel, &self.layout.on_lava]
-            .into_iter()
-            .flatten()
+        let seconds_shown = self
+            .layout
+            .panel
+            .iter()
+            .chain(&self.layout.on_lava)
             .any(|s| s.items.iter().any(|p| p.form.seconds));
         let to_clock = if seconds_shown {
             second - into_second
@@ -455,9 +461,9 @@ impl Model {
                         Place::Off => Vec::new(),
                         _ => w.forms(self, place),
                     },
-                    chip: w
-                        .chip(self)
-                        .map(|c| (c.text.chars().count() as u16, c.rank)),
+                    anchor: self.settings.dock.anchor(*w),
+                    chip: w.chip(self).map(|c| c.text.width() as u16),
+                    rank: w.rank(self),
                 }
             })
             .collect();
@@ -465,7 +471,6 @@ impl Model {
             minimal: self.minimal(),
             status_bar: self.settings.ui.status_bar,
             dock: &dock,
-            anchor: self.settings.dock.anchor,
             cell_aspect: self.cell_aspect,
         };
         layout::layout(area, &input)

@@ -104,6 +104,7 @@ impl Model {
             Action::PalettePicker => self.open_picker(PickerKind::Palette),
             Action::Place(name) => self.move_widget(name, now),
             Action::NextAnchor => self.next_anchor(now),
+            Action::NextLavaWidget => self.next_lava_widget(),
             Action::PlayerKeys => self.player_keys_on(),
             // Only while the player keys are on (`player_action`).
             Action::Player(_) => {}
@@ -164,6 +165,9 @@ impl Model {
         self.changed(now);
         self.sync_music();
         self.relayout(self.layout.area);
+        if place == Place::Overlay {
+            self.lava_focus = Some(index);
+        }
         let note = match place {
             Place::Off => "",
             _ if self.layout.placed(index).is_some() => "",
@@ -173,17 +177,56 @@ impl Model {
         self.toast(format!("{name} · {}{note}", place.describe()));
     }
 
-    /// The widgets on the lava move round: centre, then the edge clockwise.
+    /// The widgets on the lava, by index.
+    fn on_the_lava(&self) -> Vec<usize> {
+        (0..dock::WIDGETS.len())
+            .filter(|&i| self.settings.dock.place(dock::WIDGETS[i]) == Place::Overlay)
+            .collect()
+    }
+
+    /// The widget `l` moves: the one last put on the lava or picked with
+    /// `L`, else the first there.
+    fn focused_lava_widget(&self) -> Option<usize> {
+        let there = self.on_the_lava();
+        self.lava_focus
+            .filter(|i| there.contains(i))
+            .or_else(|| there.first().copied())
+    }
+
+    /// `l`: the focused lava widget moves round: centre, then the edge
+    /// clockwise. The toast names it and where it went.
     fn next_anchor(&mut self, now: Instant) {
-        let dock = &mut self.settings.dock;
-        dock.anchor = dock.anchor.next();
-        let anchor = dock.anchor.name();
-        let any = dock::WIDGETS
-            .iter()
-            .any(|w| self.settings.dock.place(*w) == Place::Overlay);
-        let note = if any { "" } else { " · nothing there yet" };
-        self.toast(format!("on the lava · {anchor}{note}"));
+        let Some(index) = self.focused_lava_widget() else {
+            self.toast("nothing on the lava · t f a put widgets there");
+            return;
+        };
+        let widget = dock::WIDGETS[index];
+        let anchor = self.settings.dock.anchor(widget).next();
+        self.settings.dock.set_anchor(widget, anchor);
+        self.lava_focus = Some(index);
         self.changed(now);
+        self.relayout(self.layout.area);
+        let note = if self.layout.placed(index).is_some() {
+            ""
+        } else {
+            " · no room"
+        };
+        self.toast(format!("{} · {}{note}", widget.name(), anchor.name()));
+    }
+
+    /// `L`: `l` moves the next widget on the lava.
+    fn next_lava_widget(&mut self) {
+        let there = self.on_the_lava();
+        let Some(current) = self.focused_lava_widget() else {
+            self.toast("nothing on the lava · t f a put widgets there");
+            return;
+        };
+        let at = there.iter().position(|&i| i == current).unwrap_or(0);
+        let next = there[(at + 1) % there.len()];
+        self.lava_focus = Some(next);
+        let widget = dock::WIDGETS[next];
+        let anchor = self.settings.dock.anchor(widget).name();
+        self.toast(format!("l moves {} · now {anchor}", widget.name()));
     }
 
     fn toggle_minimal(&mut self, now: Instant) {

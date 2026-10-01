@@ -350,13 +350,14 @@ fn merge(doc: &mut DocumentMut, fresh: &str, changed: &[Change]) {
         let Some((name, key)) = dotted.split_once('.') else {
             continue;
         };
-        let Some(new) = fresh
-            .get(name)
-            .and_then(|t| t.get(key))
-            .and_then(Item::as_value)
-        else {
-            continue;
+        // A table value (`dock.anchor`) goes in as an inline table, on
+        // the key's own line like any other value.
+        let new = match fresh.get(name).and_then(|t| t.get(key)) {
+            Some(Item::Value(v)) => v.clone(),
+            Some(Item::Table(t)) => toml_edit::Value::InlineTable(t.clone().into_inline_table()),
+            _ => continue,
         };
+        let new = &new;
         if doc.get(name).and_then(Item::as_table_like).is_none() {
             // Not a table (`lamp = 5`, `[[lamp]]`): out, so the new table
             // goes at the end like any added section.
@@ -755,6 +756,36 @@ mod tests {
         let saved = fs::read_to_string(&path).unwrap();
         assert!(saved.contains("heat = 4\n"), "{saved}");
         assert!(saved.contains("fps = 1000\n"), "{saved}");
+    }
+
+    /// lava-9vj.7: a single `dock.anchor` from an older file loads for
+    /// every widget, and the next save writes one per widget, inline, in
+    /// its place.
+    #[test]
+    fn an_old_single_anchor_is_saved_per_widget() {
+        let dir = TempDir::new("anchors");
+        let path = dir.join("config.toml");
+        fs::write(
+            &path,
+            "[dock]\nclock = \"overlay\"\nanchor = \"top\" # up there\n",
+        )
+        .unwrap();
+        let mut store = Store::new(Some(path.clone()));
+        let loaded = store.load();
+        assert!(loaded.problem.is_none(), "{:?}", loaded.problem);
+        let mut settings = loaded.settings;
+        let clock = &crate::dock::Clock;
+        assert_eq!(settings.dock.anchor(clock), crate::dock::Anchor::Top);
+        settings
+            .dock
+            .set_anchor(clock, crate::dock::Anchor::TopRight);
+        store.save(&settings).unwrap();
+        let saved = fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            saved,
+            "[dock]\nclock = \"overlay\"\nanchor = { clock = \"top-right\", music = \"top\", pomodoro = \"top\" } # up there\n"
+        );
+        assert_eq!(Store::new(Some(path)).load().settings, settings);
     }
 
     #[test]

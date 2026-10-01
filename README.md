@@ -54,13 +54,20 @@ in minimal mode:
 - **8 palettes**: lava, ultraviolet, abyss, toxic, synthwave, mono, paper
   (light) and ansi (your terminal's own colours).
 - **Edge to edge.** The wax fills the window, with the clock and
-  pomodoro beside it (or below it in a tall, narrow terminal).
-- **Widgets go where you want them.** The clock (`t`) and the pomodoro
-  (`f`) each sit in the side panel, on the lava, or off. On the lava they
-  float on a soft pool of liquid that the wax melts into at the edges,
-  readable over every style; `l` moves them round (centre, top, corners,
-  bottom). They shrink, then fall back to the corner chip, rather than
-  ever covering the lamp.
+  pomodoro beside it (or below it in a tall, narrow terminal). A
+  wide, short terminal gets them side by side in a strip under the lamp,
+  a very large one two columns, a cramped portrait one rows across the
+  width: whichever keeps the widgets largest.
+- **Widgets go where you want them.** The clock (`t`), the pomodoro
+  (`f`) and music (`a`) each sit in the side panel, on the lava, or off.
+  On the lava each has its own spot (centre, top, the corners, bottom):
+  `l` moves the one you last put there, `L` picks another. They float
+  on a soft pool of liquid that the wax melts into at the edges,
+  readable over every style, and spread out without touching. What
+  matters most right now keeps its size longest (a running pomodoro,
+  then playing music, then the clock); when space runs out the rest
+  shrink, then fold into one row of chips in the corner
+  (`14:32 · ▸ 18:24 · ▶ Song – Artist`), never covering the lamp.
 - **Now playing** (`a`, off by default): the Spotify desktop app's track
   with its cover art drawn in half-block pixels, title, artist, album, a
   progress bar, play state and volume, beside the lamp or on the lava. It
@@ -154,7 +161,8 @@ unknown `--style` or `--palette` name exits with the list of valid ones.
 | `f` | pomodoro: side panel → on the lava → off |
 | `a` | music (now playing): side panel → on the lava → off |
 | `A` | player keys on (see below) |
-| `l` | move the widgets on the lava (centre, top, the corners, bottom) |
+| `l` | move a widget on the lava (the last put there): centre, top, the corners, bottom |
+| `L` | pick which widget on the lava `l` moves |
 | **App** | |
 | `m` | minimal mode on/off |
 | `b` | status bar on/off |
@@ -235,10 +243,12 @@ clock = "corner"         # corner | off
 mouse = false
 
 [dock]
-anchor = "center"        # center | top | top-right | bottom-right | bottom | bottom-left | top-left
 clock = "side"           # side | overlay | off
 pomodoro = "side"        # side | overlay | off
 music = "off"            # side | overlay | off
+# each widget's spot on the lava:
+# center | top | top-right | bottom-right | bottom | bottom-left | top-left
+anchor = { clock = "center", pomodoro = "center", music = "top-left" }
 
 [spotify]
 client_id = ""           # for the Web API library features, see docs/spotify.md
@@ -258,7 +268,8 @@ toast names the first problem; if there are more, all of them are printed
 when you quit. A TOML syntax error is reported with its line and the lamp
 starts from the defaults.
 
-Settings from older versions load without a word: `lamp.frame` and
+Settings from older versions load without a word: a single `dock.anchor =
+"top"` puts every widget there (saved per widget next time), `lamp.frame` and
 `lamp.lighting` are ignored (and dropped at the next save), `clock.show =
 false` becomes `dock.clock = "off"`, a removed
 style (`heatmap`, `dither`, `crt`) becomes `solid`, and `minimal.clock =

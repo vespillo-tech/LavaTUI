@@ -89,7 +89,7 @@ fn picture(m: &Model, buf: &Buffer) -> String {
     let bg = m.theme.role(Role::Bg);
     let view = m.layout.lamp;
     // The widgets on the lava sit on a cleared backing: print them.
-    let lava = m.layout.on_lava.as_ref().map(|s| s.rect);
+    let lava: Vec<Rect> = m.layout.on_lava.iter().map(|s| s.rect).collect();
     let mut out = String::new();
     for y in 0..buf.area.height {
         let mut line = String::new();
@@ -97,7 +97,7 @@ fn picture(m: &Model, buf: &Buffer) -> String {
             let cell = &buf[(x, y)];
             let pos = (x, y).into();
             let lamp = view.is_some_and(|v| v.contains(pos))
-                && lava.is_none_or(|l| !l.contains(pos))
+                && lava.iter().all(|l| !l.contains(pos))
                 && cell.bg != bg;
             line.push_str(if lamp { "~" } else { cell.symbol() });
         }
@@ -150,7 +150,7 @@ fn scenarios() -> Vec<(&'static str, Setup)> {
             m.update(Action::Place("clock"), t);
             m.toast = None;
         }),
-        ("both on the lava, top left, running", |m, t| {
+        ("both on the lava, pomodoro top left, running", |m, t| {
             m.update(Action::Place("clock"), t);
             m.update(Action::Place("pomodoro"), t);
             for _ in 0..6 {
@@ -496,8 +496,8 @@ fn minimal_chip_tells_focus_from_break() {
         for rows in (5..=90).step_by(5) {
             let (mf, bf) = scene(cols, rows, 7, focus);
             let (mb, bb) = scene(cols, rows, 7, rest);
-            assert_eq!(mf.layout.chip.is_some(), mb.layout.chip.is_some());
-            if mf.layout.chip.is_none() {
+            assert_eq!(mf.layout.chips.is_some(), mb.layout.chips.is_some());
+            if mf.layout.chips.is_none() {
                 continue;
             }
             seen += 1;

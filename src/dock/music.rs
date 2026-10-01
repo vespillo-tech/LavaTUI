@@ -24,7 +24,7 @@ use ratatui::layout::{Alignment, Rect};
 use ratatui::style::Style;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use super::{ChipText, DockWidget, Look, Place, WidgetForm, align_x};
+use super::{Anchor, ChipText, DockWidget, Look, Place, WidgetForm, align_x};
 use crate::app::Model;
 use crate::media::art::ArtState;
 use crate::media::{Snapshot, Status};
@@ -227,20 +227,32 @@ impl DockWidget for Music {
         }
     }
 
-    /// `▶ title – artist` while playing (outranks the clock), `‖ …` while
-    /// paused; nothing without a track.
+    /// Top left: clear of the clock (centre) and of the lyrics to come
+    /// (bottom centre).
+    fn default_anchor(&self) -> Anchor {
+        Anchor::TopLeft
+    }
+
+    /// Playing 2 (above the clock), paused 1, otherwise 0.
+    fn rank(&self, model: &Model) -> u8 {
+        match model.music.snapshot.as_ref().map(|s| &s.status) {
+            Some(Status::Playing) => 2,
+            Some(Status::Paused) => 1,
+            _ => 0,
+        }
+    }
+
+    /// `▶ title – artist` while playing, `‖ …` while paused; nothing
+    /// without a track.
     fn chip(&self, model: &Model) -> Option<ChipText> {
         let snap = model.music.snapshot.as_ref()?;
         snap.track.as_ref()?;
-        let rank = match snap.status {
-            Status::Playing => 2,
-            Status::Paused => 1,
-            _ => return None,
-        };
+        if !matches!(snap.status, Status::Playing | Status::Paused) {
+            return None;
+        }
         Some(ChipText {
             text: fit(&line_text(snap), CHIP_MAX),
             ink: Role::Text,
-            rank,
         })
     }
 }

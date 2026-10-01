@@ -249,8 +249,12 @@ numbers); `docs/design.md` is the layout/visual contract.
                 tall terminal) and `fill`; `draw(model, form, rect, Look)`;
                 `chip(model)` → one-line fallback with a rank) + `WIDGETS`
                 registry (`clock.rs`, `pomodoro.rs`, `music.rs`). `Place` (side /
-                overlay / off), `Anchor`. Widgets are stateless views of the
-                `Model`. Seconds never on the lava; date forms need tall.
+                overlay / off), `Anchor` (per widget:
+                `DockSettings::anchor(w)`; an old single `dock.anchor`
+                loads for all). `rank(model)` (clock 1, pomodoro 3/2/0,
+                music 2/1/0) decides shrink, drop and chip order.
+                Widgets are stateless views of the `Model`. Seconds never
+                on the lava; date forms need tall.
 - `media/`    — now playing (platform-neutral; backends behind `cfg`):
                 `MediaSource` (`snapshot()` a short lock, `send(Command)`
                 queued + applied optimistically, `capabilities()`),
@@ -271,14 +275,18 @@ numbers); `docs/design.md` is the layout/visual contract.
                 + cache for the lyrics widget to come.
 - `ui/`       — the only terminal-facing code. `layout.rs`: the pure
                 `layout(area, &LayoutInput) -> Layout` of design §1 (the lamp
-                rect, right/bottom panel = `Stack` of side widgets, `on_lava`
-                = `Stack` of overlay widgets at the anchor (≤ 60 % × 50 % of
-                the lamp, backing ≤ 35 % of its area, lamp ≥ 28×10, clear of
-                toast/chip rows), chip for the top-ranked widget with no
-                room, status row, toast row). `LayoutInput.dock` is one
-                `DockItem` (place, forms, chip width/rank) per widget;
-                `first_fit` tries form combinations in hide order (last
-                widget shrinks first; date → face size → stack → chip). `keymap.rs`: the single `KEYMAP` table (its
+                rect; `panel` = `Stack` of side widgets in the best of
+                column / strip (A ≥ 3) / two columns (≥ 200 cols) / wrap
+                (portrait), scored by (dropped, forms by rank), ties to the
+                column; `on_lava` = one `Stack` per anchor (each ≤ 60 % ×
+                50 % of the lamp, backings apart and ≤ 35 % of it together,
+                lamp ≥ 28×10, clear of toast/chip rows); `chips` =
+                `ChipRow` of homeless widgets' chips, lowest rank dropped
+                first; status row, toast row). `LayoutInput.dock` is one
+                `DockItem` (place, anchor, forms, chip width, rank) per
+                widget; `fit_dropping` tries form combinations with the
+                least important widget changing fastest, then drops it
+                when nothing fits. `bench_layout` (ignored) times it. `keymap.rs`: the single `KEYMAP` table (its
                 `Section::Music` rows are the player keys, a mode of their
                 own: `InputMode::Player`) that drives
                 both dispatch (`action_for(event, InputMode)`) and the help
@@ -323,7 +331,9 @@ never drift apart; there is no direct crossterm dependency.
 - **A dock widget** (e.g. now-playing): one module implementing
   `dock::DockWidget` — `name` (also its config key `dock.<name>`),
   `default_place` (new widgets: `Place::Off`, so the default screen
-  doesn't change), `forms(model, place)` (fixed sizes, most preferred
+  doesn't change), `default_anchor` (where on the lava; lyrics: bottom
+  centre), `rank(model)` (how much it matters right now: 2 while it has
+  something live to show puts it above the clock), `forms(model, place)` (fixed sizes, most preferred
   first; `WidgetForm::fixed` / `::fill`, `variant` is yours to tell them
   apart in `draw`), `draw` (inside the rect only; colours via
   `model.theme`; `look.align` for forms narrower than the rect; spaces

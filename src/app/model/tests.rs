@@ -586,23 +586,33 @@ fn widget_keys_cycle_places_and_persist() {
     m.update(Action::Place("clock"), t0);
     assert_eq!(m.settings.dock.place(&Clock), Place::Overlay);
     assert_eq!(m.toast.as_ref().unwrap().text, "clock · on the lava");
-    assert_eq!(m.layout.on_lava.as_ref().unwrap().items[0].widget, 0);
+    assert_eq!(m.layout.on_lava[0].items[0].widget, 0);
     m.update(Action::Place("pomodoro"), t0);
     assert!(m.layout.panel.is_none(), "nothing left beside the lamp");
     assert_eq!(m.layout.lamp.unwrap().width, 120);
+    // Both at the centre: one stack.
+    assert_eq!(m.layout.on_lava.len(), 1);
+    // `l` moves the one last put there; `L` picks the other.
+    m.update(Action::NextAnchor, t0);
+    assert_eq!(m.settings.dock.anchor(&Pomodoro), Anchor::Top);
+    assert_eq!(m.toast.as_ref().unwrap().text, "pomodoro · top");
+    assert_eq!(m.layout.on_lava.len(), 2, "two anchors, two stacks");
+    m.update(Action::NextLavaWidget, t0);
+    assert_eq!(m.toast.as_ref().unwrap().text, "l moves clock · now centre");
+    m.update(Action::NextAnchor, t0);
+    assert_eq!(m.settings.dock.anchor(&Clock), Anchor::Top);
+    assert_eq!(m.layout.on_lava.len(), 1, "together again");
     m.update(Action::Place("clock"), t0);
     assert_eq!(m.toast.as_ref().unwrap().text, "clock · off");
     assert!(m.layout.placed(0).is_none());
-    m.update(Action::NextAnchor, t0);
-    assert_eq!(m.settings.dock.anchor, Anchor::Top);
-    assert_eq!(m.toast.as_ref().unwrap().text, "on the lava · top");
     m.save_at = Some(t0);
     m.save();
 
     let (m, _) = model_with(Session::default(), path, 120, 36);
     assert_eq!(m.settings.dock.place(&Clock), Place::Off);
     assert_eq!(m.settings.dock.place(&Pomodoro), Place::Overlay);
-    assert_eq!(m.settings.dock.anchor, Anchor::Top);
+    assert_eq!(m.settings.dock.anchor(&Pomodoro), Anchor::Top);
+    assert_eq!(m.settings.dock.anchor(&Clock), Anchor::Top);
 }
 
 #[test]
@@ -613,7 +623,7 @@ fn widget_toasts_say_when_there_is_no_room() {
         m.toast.as_ref().unwrap().text,
         "clock · on the lava · no room"
     );
-    assert_eq!(m.layout.chip.unwrap().widget, 0, "the chip stands in");
+    assert!(m.layout.chipped(0), "the chip stands in");
     m.update(Action::ToggleMinimal, t0);
     m.update(Action::Place("clock"), t0);
     m.update(Action::Place("clock"), t0);
@@ -624,7 +634,7 @@ fn widget_toasts_say_when_there_is_no_room() {
     m.update(Action::NextAnchor, t0);
     assert_eq!(
         m.toast.as_ref().unwrap().text,
-        "on the lava · top · nothing there yet"
+        "nothing on the lava · t f a put widgets there"
     );
 }
 
@@ -731,7 +741,7 @@ mod music {
         m.update(Action::Place("music"), t0); // on the lava: same source
         tick(&mut m, t0);
         assert_eq!(alive.load(Ordering::SeqCst), 1);
-        assert!(m.layout.on_lava.is_some());
+        assert!(!m.layout.on_lava.is_empty());
         m.update(Action::Place("music"), t0); // off: dropped, polling stops
         tick(&mut m, t0);
         assert_eq!(alive.load(Ordering::SeqCst), 0);
@@ -898,12 +908,15 @@ mod music {
         tick(&mut m, t0);
         let chip = Music.chip(&m).unwrap();
         assert_eq!(chip.text, "▶ Slow Rise – The Paraffins");
-        assert_eq!(m.layout.chip.unwrap().widget, 2);
+        let row = m.layout.chips.as_ref().unwrap();
+        let shown: Vec<usize> = row.items.iter().map(|c| c.widget).collect();
+        assert_eq!(shown, [0, 2], "the clock and music, in registry order");
+        assert_eq!(Music.rank(&m), 2);
         m.update(Action::PlayerKeys, t0);
         m.update(Action::Player(P::PlayPause), t0);
         m.update(Action::Close, t0);
         assert_eq!(Music.chip(&m).unwrap().text, "‖ Slow Rise – The Paraffins");
-        assert_eq!(m.layout.chip.unwrap().widget, 0, "paused: the clock again");
+        assert_eq!(Music.rank(&m), 1, "paused: below the clock again");
     }
 
     #[test]
