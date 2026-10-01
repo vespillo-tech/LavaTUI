@@ -1,8 +1,9 @@
 # LavaTUI — Layout & Visual Design Spec
 
 Status: **contract** for `lava-xxx` (TUI shell), `lava-bdj`/`lava-y7g`
-(styles), `lava-ef7` (faces), `lava-h0f` (palettes/perf) and `lava-5ak`
-(lighting). If the code and this doc disagree, fix one of them on purpose,
+(styles), `lava-ef7` (faces) and `lava-h0f` (palettes/perf); v1.1
+(`lava-9vj`) dropped the glass frame, the lighting pass and the heatmap,
+dither and crt styles. If the code and this doc disagree, fix one of them on purpose,
 not by accident.
 
 The one rule above all others: **the lamp is the hero, and the screen is
@@ -18,10 +19,8 @@ truncate mid-word, wrap, overlap or overflow.
 |---|---|
 | **cols × rows** | Terminal size in cells. |
 | **visual aspect** `A` | `cols / (rows × cell_aspect)`: the true on-screen width÷height. `cell_aspect` defaults to 2.0 (see §2.3). |
-| **content area** | Terminal minus outer margins, minus the status bar row when it's shown. |
-| **lamp region** | The part of the content area that belongs to the lamp. |
-| **glass** | Lamp frame mode: a lava-lamp silhouette (cap, bottle, base) drawn inside the lamp region. |
-| **bleed** | Lamp frame mode: the fluid fills the lamp region edge to edge, with no silhouette. |
+| **content area** | Terminal minus the status bar row when it's shown. |
+| **lamp region** | The part of the content area that belongs to the lamp. The fluid fills it edge to edge: there is no frame or silhouette. |
 | **panel** | The clock + pomodoro block, placed beside the lamp (right panel) or below it (bottom panel). |
 | **chip** | The single-line fallback for the panel: ` 14:32 ` or ` ▸ 18:24 `, drawn over a corner of the lamp. |
 | **toast** | A transient one-line message, e.g. the style name after pressing `s`. |
@@ -51,12 +50,12 @@ For example, 160×22 gets the full hint text (it's wide) but no date line
 
 | Tier | Typical size | Lamp | Clock | Pomodoro | Status bar | Hints |
 |---|---|---|---|---|---|---|
-| **Micro** | < 20 cols or < 8 rows | bleed, whole screen | – | – | – | – |
-| **Tiny** | 20–39 × 8–13 | bleed, whole screen | chip `14:32` | chip `▸ 18:24` (replaces the clock while running or paused) | – | – |
-| **Small** | 40–79 × 14–23 | bleed | chip, or right panel with M face if ≥ 60 % width remains | chip or panel: time + bar | yes: style · palette | `? help` and as many more as fit |
-| **Medium** | 80–119 × 24–35 | **glass** (auto) | panel, M face | panel: label, time, bar, dots | yes | most hints |
-| **Large** | 120–199 × 36–55 | glass, bigger margins | panel, L face + date line | full | yes | all hints |
-| **Huge** | ≥ 200 × ≥ 56 | glass, proportional margins | panel, largest face that fits + date; the panel widens up to 56 for it (§1.4) | full | yes | all hints |
+| **Micro** | < 20 cols or < 8 rows | whole screen | – | – | – | – |
+| **Tiny** | 20–39 × 8–13 | whole screen | chip `14:32` | chip `▸ 18:24` (replaces the clock while running or paused) | – | – |
+| **Small** | 40–79 × 14–23 | the content area | chip, or right panel with M face if ≥ 60 % width remains | chip or panel: time + bar | yes: style · palette | `? help` and as many more as fit |
+| **Medium** | 80–119 × 24–35 | content area left of the panel | panel, M face | panel: label, time, bar, dots | yes | all hints |
+| **Large** | 120–199 × 36–55 | as Medium | panel, L face + date line | full | yes | all hints |
+| **Huge** | ≥ 200 × ≥ 56 | as Medium | panel, largest face that fits + date; the panel widens up to 56 for it (§1.4) | full | yes | all hints |
 
 Micro is `cols < 20 || rows < 8`; the other tier cuts are 40 × 14,
 80 × 24 and 200 × 56 (Huge). Overlays pick their form by their own size
@@ -72,15 +71,15 @@ the lamp (§1.4).
 
 | Element | Shown when | Variant rules |
 |---|---|---|
-| **Lamp** | always (if `cols < 4` or `rows < 2`, the screen is painted `bg`, nothing else) | frame per §2.1 |
+| **Lamp** | always (if `cols < 4` or `rows < 2`, the screen is painted `bg`, nothing else) | fills what the status bar and panel leave (§2.1) |
 | **Status bar** | `rows ≥ 14 && cols ≥ 30 && status_bar_on` and not minimal mode | segments drop per §4.1 |
 | **Panel** | the placement algorithm (§1.4) finds a slot | face variant = largest that fits the panel's inner rect |
 | **Chip** | no panel, clock or pomodoro enabled, `cols ≥ 20 && rows ≥ 8` | shows the pomodoro while one is running (`▸`) or paused (`‖`), `break` before a break's time, else the clock |
 | **Date line** | in panel, `rows ≥ 36`, and the panel still fits | `thu 1 oct`, dim, lowercase |
 | **Pomodoro label** `focus` / `break` | panel inner width ≥ 18 | — |
 | **Cycle dots** `●●○○` | panel inner width ≥ 22 | right-aligned on the label line |
-| **Toasts** | `cols ≥ 16 && rows ≥ 4` | truncated by dropping the suffix (`braille 6/12` → `braille`), never mid-word |
-| **Outer margins** | glass mode only (bleed is edge-to-edge) | vertical (top and above status bar): 0 if rows < 24, 1 if < 36, 2 if < 56, else `round(rows × 0.04)`; horizontal: 2 if cols < 120, 4 if < 200, else `round(cols × 0.03)` |
+| **Toasts** | `cols ≥ 16 && rows ≥ 4` | truncated by dropping the suffix (`braille 4/9` → `braille`), never mid-word |
+| **Side margin** | the status bar and side sheets only (the lamp is edge-to-edge) | 2 if cols < 120, 4 if < 200, else `round(cols × 0.03)` |
 
 **Hide priority.** When space runs out, things go in this order (first to
 go at the top). The lamp is never hidden.
@@ -88,47 +87,26 @@ go at the top). The lamp is never hidden.
 1. Extended key hints (dropped in the §4.1 order until only `? help` is left, then that too)
 2. Date line
 3. Cycle dots, then the pomodoro phase label
-4. Outer margins (shrink to 0)
-5. Clock face size (XL → L → M → S → `text`)
-6. Panel (→ collapses into the chip; nothing is lost but size). When a
-   glass lamp fits but glass + panel doesn't, the glass stays and the
-   panel goes (§1.4 step 3).
-7. Glass silhouette (→ bleed): only when no glass lamp fits at all
-   (auto: §2.1 rule; forced glass: under 12 lamp rows)
-8. Status bar
-9. Clock chip (a running pomodoro chip outranks it)
-10. Pomodoro chip
-11. ~~Lamp~~ — never
+4. Clock face size (XL → L → M → S → `text`)
+5. Panel (→ collapses into the chip; nothing is lost but size)
+6. Status bar
+7. Clock chip (a running pomodoro chip outranks it)
+8. Pomodoro chip
+9. ~~Lamp~~ — never
 
 ### 1.4 Panel placement algorithm
 
 ```
 panel_w   = clamp(round(cols × 0.30), 22, 36)      // incl. 1-col inner padding each side
             // cols ≥ 200: widened to face_w + 2 (max 56) when the face needs it
-gutter    = clamp(cols / 16, 4, 12)                // glass mode: lamp ↔ panel
 panel_h   = face_h + (date? 2) + 2 + 3             // face, gap, label/time/bar
                                                    // (clock hidden: just 3)
-k         = 0.8 × 2.0 / cell_aspect                // lamp cols per lamp row
 
-GLASS mode (lamp height Ht, width W = round(Ht × k); k = 0.8 at the
-default cell aspect 2.0):
-  1. Right panel: Ht = min(content_rows, (content_cols − gutter − panel_w) / k).
-     Accept if Ht ≥ 20 and Ht ≥ 0.85 × content_rows.
-     Lamp + gutter + panel form ONE group, centred horizontally; the panel
-     is vertically centred on the lamp.
-  2. Bottom panel: Ht = min(content_rows − panel_h − 2, content_cols / k)
-     (content_cols already has the margins taken off).
-     Accept if Ht ≥ 20. The panel is as wide as the lamp, clamped 22–36
-     (widened for the face as above when cols ≥ 200), and centred under
-     the base.
-  3. Otherwise no panel → chip, and the glass lamp stays (glass alone
-     needs only 12 rows). Bleed is only tried when no glass lamp fits.
-
-BLEED mode:
-  1. A ≥ 1.0 → right panel if lamp keeps ≥ 60 % of cols and ≥ 24 cols.
-  2. A < 1.0 → bottom panel (min(36, content_cols) wide, one blank row
-     below the tank) if lamp keeps ≥ 60 % of rows and ≥ 10 rows.
-  3. Otherwise chip.
+1. A ≥ 1.0 → right panel, flush with the right edge and vertically
+   centred, if the lamp keeps ≥ 60 % of cols and ≥ 24 cols.
+2. A < 1.0 → bottom panel (min(36, content_cols) wide, centred, one blank
+   row below the lamp) if the lamp keeps ≥ 60 % of rows and ≥ 10 rows.
+3. Otherwise no panel → chip.
 ```
 
 Below 200 cols the panel's inner width is at most 36 − 2 = 34. From 200
@@ -136,7 +114,7 @@ cols up the panel grows only as far as the face it holds needs, up to
 56 (inner 54): blocks XL (51 × 8) shows at Huge, blocks L with seconds
 (54 × 5) when the terminal is ≥ 200 cols but under 56 rows. Narrower
 faces keep the 36-col panel. Face size is still tried largest first
-within the §1.3 hide order (margins go before a smaller face).
+within the §1.3 hide order (the date line goes before a smaller face).
 
 Centring: whenever a split leaves an odd cell, the extra cell goes
 right/bottom. Always do it this way, so the composition never jitters by
@@ -144,37 +122,36 @@ a cell between neighbouring sizes.
 
 ### 1.5 Mockups
 
-Legend: `░` liquid (glass interior / bleed background) · `█▀▄` wax (solid
-style, half-blocks) · `▓` lamp metal (cap, base) · ` ` app background.
-Real colours come from the palette (§5). These were drawn by a generator
-script using the formulas above, so the proportions are true. The wax is
-illustrative; status rows, the help sheet and the picker are copied from
-the running app (pty capture, `--seed 2`). Real screenshots of most of
-these sizes are in `docs/screenshots/` (see the README).
+Legend: `░` liquid · `█▀▄` wax (solid style, half-blocks) · ` ` app
+background. Real colours come from the palette (§5). These are captured
+from the running app (pty, `--seed 2 --color none`, solid style) with the
+lamp's liquid drawn as `░`; the times are whenever they were taken. Real
+screenshots of most of these sizes are in `docs/screenshots/` (see the
+README).
 
 **Micro — 16×6.** Lamp only. Nothing else, ever.
 
 ```
-░░░▄█▄▄░░░░░░░░░
-░░░▀███▄▄██░░░░░
-░░░░░██████░░░░░
-░░░░▄████▀██▄░░░
-░░░██░░░░░░▀░░░░
-▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
+░░░░░░░░░░░░░░░░
+░░░░██▄░░░░▄░░░░
+░░░░▀▀▀░░▄███░░░
+░░░░░▄████▀▀▀░░░
+░░░░█░▀████░░░░░
+████████████████
 ```
 
-**Tiny — 20×8.** Full-bleed lamp plus the clock chip in the bottom-right.
-No status bar, no hints.
+**Tiny — 20×8.** The lamp fills the screen, plus the clock chip in the
+bottom-right. No status bar, no hints.
 
 ```
-░░░░▄▄▄▄░░░░░░░░░░░░
-░░░░█████░▄▄▄▄░░░░░░
-░░░░▀█████████░░░░░░
-░░░░░░████████░░░░░░
-░░░░░░█████████▄░░░░
-░░░░███▀▀▀▀░▀▀█▀░░░░
-░░░░▀▀░░░░░░░░░░░░░░
-▄▄▄▄▄▄▄▄▄▄▄▄▄ 14:32
+░░░░░░░░░░░░░░░░░░░░
+░░░░░▄▄▄░░░░░░░░░░░░
+░░░░░████░░░░▄█▄░░░░
+░░░░░░▀▀░░░▄█████░░░
+░░░░░░▄███▄██▀▀▀░░░░
+░░░░░▄░██████░░░░░░░
+░░░░░█░░▄████▄░░░░░░
+█████████████ 13:46
 ```
 
 The same size with a pomodoro running. The chip switches to the
@@ -182,37 +159,36 @@ pomodoro: `▸` while running, coloured by phase (accent for focus,
 `wax_hot` for breaks), and `‖` in `text` while paused.
 
 ```
-░░░░▄▄▄▄░░░░░░░░░░░░
-░░░░█████░▄▄▄▄░░░░░░
-░░░░▀█████████░░░░░░
-░░░░░░████████░░░░░░
-░░░░░░█████████▄░░░░
-░░░░███▀▀▀▀░▀▀█▀░░░░
-░░░░▀▀░░░░░░░░░░░░░░
-▄▄▄▄▄▄▄▄▄▄▄ ▸ 18:24
+░░░░░░░░░░░░░░░░░░░░
+░░░░░▄▄▄░░░░░░░░░░░░
+░░░░░████░░░░▄█▄░░░░
+░░░░░░▀▀░░░▄█████░░░
+░░░░░░▄███▄██▀▀▀░░░░
+░░░░░▄░██████░░░░░░░
+░░░░░█░░▄████▄░░░░░░
+███████████░▸ 24:58
 ```
 
-**Small — 50×16.** Bleed (fewer than 20 content rows, so no glass). A
-panel would leave the lamp only 56 % of the width, so the clock is a chip.
-The status bar appears.
+**Small — 50×16.** A panel would leave the lamp only 56 % of the width,
+so the clock is a chip. The status bar appears.
 
 ```
-░░░░░░░░░░░░░▄▄▄▄░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-░░░░░░░░░░░▄██████▄░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-░░░░░░░░░░░█████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-░░░░░░░░░░░█████████░░░░░░░▄█████▄░░░░░░░░░░░░░░░░
-░░░░░░░░░░░░▀████████▄▄▄▄▄▄███████░░░░░░░░░░░░░░░░
-░░░░░░░░░░░░░░░▀▀█████████████████░░░░░░░░░░░░░░░░
-░░░░░░░░░░░░░░░░░█████████████▀▀▀░░░░░░░░░░░░░░░░░
-░░░░░░░░░░░░░░░░░████████████░░░░░░▄▄░░░░░░░░░░░░░
-░░░░░░░░░░░░░░░░░███████████░░░░░█████▄░░░░░░░░░░░
-░░░░░░░░░░░▄▄▄▄░░░▀██████▀▀░░░░░░██████░░░░░░░░░░░
-░░░░░░░░░░█████░░░░░░░░░░░░░░░░░░░▀██▀░░░░░░░░░░░░
-░░░░░░░░░░▀████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
 ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 14:32 ░
-██████████████████████████████████████████████████
-  ● heatmap             s style  c clock  ? help
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░▄████▄░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░████████░░░░░░░░░░░░░▄████▄░░░░░░░░░░
+░░████▄░░░░░░███████▀░░░░░░░░░░░░███████▄░░░░░░░░░
+░██████░░░░░█████▀▀░░░░░░░░░░░░░█████████░░░░░░░░░
+░██████░░░░░████▀░░░░░░░░░░░░░░░████████░░░░░░░░░░
+░██████░░░░░█████░▄██████░░░░░░░░▀████▀░░░░░░░░░░░
+░░▀▀▀▀███████████▀████████░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░███████████░▀▀███▀▀░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░███████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░██████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░▄█████████▄▄░░░░░░░░░░░░░░▄▄▄▄▄▄▄▄▄░░░░░░░░░
+███████████████████████████████████████████ 13:46
+  ● solid    s style  c clock  p palette  ? help
 ```
 
 **Small, wide — 72×18.** The lamp keeps 69 % of the width, so a right
@@ -220,190 +196,186 @@ panel appears with the M blocks face. The panel is too narrow for the
 cycle dots.
 
 ```
-░░░░░░░░░░░░░░▄▄▄░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-░░░░░░░░░░░▄██████▄░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-░░░░░░░░░░██████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-░░░░░░░░░░███████████░░░░░░▄▄███▄▄░░░░░░░░░░░░░░░░
-░░░░░░░░░░░██████████▄▄▄▄▄█████████░░░░░░░░░░░░░░░ ▄█  █ █ ▄ ▀▀█ ▀▀█
-░░░░░░░░░░░░▀▀█████████████████████░░░░░░░░░░░░░░░  █  ▀▀█ ▄ ▀▀█ █▀▀
-░░░░░░░░░░░░░░░▀██████████████████▀░░░░░░░░░░░░░░░ ▀▀▀   ▀   ▀▀▀ ▀▀▀
-░░░░░░░░░░░░░░░░████████████████▀░░░░░░░░░░░░░░░░░
-░░░░░░░░░░░░░░░░██████████████▀░░░▄▄▄░░░░░░░░░░░░░
-░░░░░░░░░░░░░░░░█████████████▀░░██████▄░░░░░░░░░░░ focus
-░░░░░░░░░░░▄▄▄▄░▀██████████▀░░░░███████░░░░░░░░░░░ 18:24
-░░░░░░░░░░██████░░░▀▀▀▀▀▀░░░░░░░▀█████▀░░░░░░░░░░░ ━━━━━━━━────────────
-░░░░░░░░░▀██████░░░░░░░░░░░░░░░░░░░▀░░░░░░░░░░░░░░
-░░░░░░░░░░▀▀█▀▀░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
 ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
 ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░▄▄███▄▄░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░█████████▄░░░░░░░░░░░░▄▄▄▄▄░░░░░░░░░░░ ▄█  ▀▀█ ▄ █ █ █▀▀
+░░░░░░░░░░░░██████████░░░░░░░░░░▄████████░░░░░░░░░  █  ▀▀█ ▄ ▀▀█ █▀█
+░░░░░░░░░░░░▀████████▀░░░░░░░░░▄█████████░░░░░░░░░ ▀▀▀ ▀▀▀     ▀ ▀▀▀
+░░░░░░░░░░░░░░░▀▀▀▀░░░░░░░░░░░░██████████░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▀████████▀░░░░░░░░░
+░░░░░░░░░░░░░░░░▄███████▄░░░░░░▄████████░░░░░░░░░░ focus
+░░░░░░░░░░░░░░░░██████████░░░░░████████░░░░░░░░░░░ 25:00
+░░░░░░░▄▄░░░░░░░▀████████░░░░░█████████▄░░░░░░░░░░ ────────────────────
+░░░░░░███░░░░░░░░░▀▀▀▀▀▀░░░░░░██████████░░░░░░░░░░
+░░░░░░▀██░░░░░░░░░░░░░░░░░░░░░░████████▀░░░░░░░░░░
+░░░░░░░░░░░░▄▄▄▄░░░░░░░░░░░░░░█████████░░░░░░░░░░░
+░░▄▄▄▄▄████████████▄▄░░░░░░░░▄█████████████▄▄▄▄░░░
 ██████████████████████████████████████████████████
-  ● heatmap · lava         s style  c clock  p palette  ␣ pomo  ? help
+  ● solid · lava           s style  c clock  p palette  ␣ pomo  ? help
 ```
 
-**Medium — 80×24.** The reference size. Glass lamp, 1-row top margin.
-The lamp, gutter and panel are centred as one group. Status bar on the
-last row with a 2-col inset.
+**Medium — 80×24.** The reference size. The lamp takes 56 cols, the
+panel the other 24, vertically centred. Status bar on the last row with
+a 2-col inset.
 
 ```
-
-                        ▓▓▓
-                       ▓▓▓▓▓
-                      ▓▓▓▓▓▓▓
-                      ░▄▄░░░░
-                     ▄████░░░░
-                     ░████░░░░
-                     ░░░░░░▄▄░          ▄█  █ █ ▄ ▀▀█ ▀▀█
-                    ░░░░░░████░          █  ▀▀█ ▄ ▀▀█ █▀▀
-                    ░░▄▄▄▄██▀▀░         ▀▀▀   ▀   ▀▀▀ ▀▀▀
-                    ░██████░░░░
-                   ░░██████░░░░░
-                   ░░░▀█▀▀░░▄▄▄░        focus             ●●○○
-                   ░░░░░░░░░██▀░        18:24
-                   ░▄██▄░░░░░░░░        ━━━━━━━━──────────────
-                    ░██▀░░░░░░░
-                    ███████████
-                    ▓▓▓▓▓▓▓▓▓▓▓
-                    ▓▓▓▓▓▓▓▓▓▓▓
-                   ▓▓▓▓▓▓▓▓▓▓▓▓▓
-                  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-                 ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-
-  ● braille · lava        s style  c clock  p palette  f frame  ␣ pomo  ? help
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░▄██████▄▄░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░▄███████████▄░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░▄██████████████░░░░░░░░░░░░▄▄▄██▄▄▄░░░░░░░░░░
+░░░░░░░░░░░▀███████████████░░░░░░░░▄███████████▄░░░░░░░░ ▄█  ▀▀█ ▄ █ █ █▀▀
+░░░░░░░░░░░░▀█████████████░░░░░░░░▄█████████████░░░░░░░░  █  ▀▀█ ▄ ▀▀█ █▀█
+░░░░░░░░░░░░░░▀▀███████▀▀░░▄▄▄▄▄▄▄███████████████░░░░░░░ ▀▀▀ ▀▀▀     ▀ ▀▀▀
+░░░░░░░░░░░░░░░░░░░░░░░░░░██████████████████████░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░█████████████████████▀░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░▄▄█▄▄███████████████████▀░░░░░░░░░░░ focus             ○○○○
+░░░░░░░░░░░░░░░░░░█████████████████░░▀▀▀▀▀░░░░░░░░░░░░░░ 25:00
+░░░░░░░░░░░░░░░░░▄████████████████▀░░░░░░░░░░░░░░░░░░░░░ ──────────────────────
+░░░░░░░░░░░░░░░░░████████████████▀░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░▀█████████████▀▀░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░██████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░▀█████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░▀████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░▄████████████████████▄▄▄░░░░░░░░░░░░░░
+░░░░▄▄▄▄▄▄███████████████████████████████████▄▄▄░░░░░░░░
+████████████████████████████████████████████████████████
+  ● solid · lava        s style  c clock  p palette  m minimal  ␣ pomo  ? help
 ```
 
-**Large — 120×36.** L face (blocks ×2), date line, 2-row margins, every
-hint.
+**Large — 120×36.** L face (blocks ×2), date line, every hint.
 
 ```
-
-
-                                    ▓▓▓▓▓
-                                   ▓▓▓▓▓▓▓
-                                   ▓▓▓▓▓▓▓
-                                  ▓▓▓▓▓▓▓▓▓
-                                 ▓▓▓▓▓▓▓▓▓▓▓
-                                 ░░░░░░░░░░░
-                                 ▄████▄░░░░░
-                                 ██████▄░░░░
-                                ░██████░░░░░░
-                                ░░▀▀▀▀░░░░░░░                ██   ██  ██    ██████ ██████
-                               ░░░░░░░░░▄▄▄▄░░             ████   ██  ██ ██     ██     ██
-                               ░░░░░░░░▄█████░               ██   ██████    ██████ ██████
-                               ░░░░░░░░██████░               ██       ██ ██     ██ ██
-                              ░░░▄██████▀▀▀▀░░░            ██████     ██    ██████ ██████
-                              ░░█████████░░░░░░
-                              ░░█████████░░░░░░            thu 1 oct
-                             ░░░████████▀░░░░░░░
-                             ░░░░▀▀██▀▀░░░▄██▄░░
-                             ░░░░░░░░░░░░░████░░           focus                         ●●○○
-                             ░░░▄▄▄░░░░░░░░▀▀░░░           18:24
-                              ░█████░░░░░░░░░░░            ━━━━━━━━━━━━━─────────────────────
-                              ░▀███▀░░░░░░░░░░░
-                               █████▄▄▄▄░░░░░░
-                               ███████████████
-                               ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-                              ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-                             ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-                            ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-                            ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-                           ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-                          ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-
-
-    ● braille · lava                        s style  c clock  p palette  f frame  l light  m minimal  ␣ pomo  ? help
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░▄▄▄░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░▄▄██████████▄▄░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░████████████████▄░░░░░░░░░░░░░░░░░░▄▄████████▄░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░███████████████████▄░░░░░░░░░░░░░░▄█████████████▄░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░█████████████████████▄░░░░░░░░░░░░█████████████████░░░░░░░░░░░░░░░░   ██    ██████      ██  ██  ██████
+░░░░░░░░░░░░░░░░░██████████████████████░░░░░░░░░░░███████████████████░░░░░░░░░░░░░░░ ████        ██  ██  ██  ██  ██
+░░░░░░░░░░░░░░░░░▀█████████████████████░░░░░░░░░░████████████████████░░░░░░░░░░░░░░░   ██    ██████      ██████  ██████
+░░░░░░░░░░░░░░░░░░▀████████████████████░░░░░░░░░░████████████████████░░░░░░░░░░░░░░░   ██        ██  ██      ██  ██  ██
+░░░░░░░░░░░░░░░░░░░░▀███████████████████▄░░░░░░░█████████████████████░░░░░░░░░░░░░░░ ██████  ██████          ██  ██████
+░░░░░░░░░░░░░░░░░░░░░░▀▀█████████████████░░░░░░░████████████████████░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▀███████████░░░░░░░██████████████████░░░░░░░░░░░░░░░░░ thu 1 oct
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░███████████░░░░░░░▀███████████████▀░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░██████████▀░░░░░░░░▀████████████▀░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░██████████░░░░░░░░░░░▀▀██████▀▀░░░░░░░░░░░░░░░░░░░░░░ focus                         ○○○○
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░██████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 25:00
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▄██████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ ──────────────────────────────────
+░░░░░░░░░░░░░░░░░░░░░░░░░▄▄▄█████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░▄███████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░▄████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░█████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░█████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░█████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░▀██████████████████████▄▄▄▄▄▄▄▄▄▄░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░▄███████████████████████████████████▄▄░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░▄▄▄▄▄▄▄██████████████████████████████████████████▄▄▄░░░░░░░░░░░░░░░░░
+▄▄▄▄▄▄▄▄▄▄████████████████████████████████████████████████████████████▄▄▄▄░░░░░░░░░░
+████████████████████████████████████████████████████████████████████████████████████
+    ● solid · lava                                            s style  c clock  p palette  m minimal  ␣ pomo  ? help
 ```
 
-**Wide — 160×22** (`A ≈ 3.8`). The content area is wider than 2.2:1, so
-auto-frame picks **bleed**: a wide wax tank with convection cells. Glass
-here would be a 17-col lamp lost in 160 cols. The right panel takes 36
-cols. This terminal is short, so there's no date line, but it's wide, so
-every hint shows.
+**Wide — 160×22** (`A ≈ 3.8`). A wide wax tank with convection cells;
+the right panel takes 36 cols. This terminal is short, so there's no
+date line, but it's wide, so every hint shows.
 
 ```
 ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
 ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▄████▄░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-░░░░░░░░░░░░░███▄░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░██████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-░░░░░░░░░░░░█████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▀▀▀▀░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▄████░░░░░░░░░░░░░░░░░░░░ ▄█  █ █ ▄ ▀▀█ ▀▀█
-░░░░░░░░░░░░░▀▀▀▀░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░██████░░░░░░░░░░░░░░░░░░░  █  ▀▀█ ▄ ▀▀█ █▀▀
-░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▀▀██▀░░░░░░░░░░░░░░░░░░░░ ▀▀▀   ▀   ▀▀▀ ▀▀▀
-░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▄████▄░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░███████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▄▄░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ focus                         ●●○○
-░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▀█████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 18:24
-░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▀▀▀▀░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ ━━━━━━━━━━━━━─────────────────────
-░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▄███░░░░░░░░
-░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▀▀░░░░░░░░░
-░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▄▄▄▄░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▄██████▄░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▄▄████▄▄░░░░░░░░░░░░░░░░░░░░░▄████████▄░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▄█████████▄░░░░░░░░░░░░░░░░░░░██████████░░░░░░░▄▄███████▄▄░░░▄██▄░░░▄████▄░░░░░░░░░░░░   ██    ██████      ██  ██  ██████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░███████████▄░░░░░░░░░░░░░░░░░░███████████░░░░▄█████████████▄██████░▄███████░░░░░░░░░░░ ████        ██  ██  ██  ██  ██
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████████░░░░░░░░░░░░░░░░░░██████████▀░░░██████████████████████░▀███████░░░░░░░░░░░   ██    ██████      ██████  ██████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░██████████░░░░░░░░░░░░░░░░░░░▀█████████░░░░██████████████████████░░▀█████▀░░░░░░░░░░░   ██        ██  ██      ██  ██  ██
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▀▀███▀▀░░░░░░░░░░░░░░░░░░░░░▀██████▀░░░░░▀███████████▀▀████████░░░░▀▀▀░░░░░░░░░░░░░ ██████  ██████          ██  ██████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▄▄████▄░░░░░░░░░░░░░░▀▀▀░░░░░░░░░░▀▀▀▀▀▀▀░░░░████████░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▄███████▄░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████░░▄▄▄▄▄░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▄▄█████████▄▄█████████▄░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▀██████▀▄███████░░░░░░░░░░░░ focus                         ○○○○
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▄████████████████████████▄░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▄▄░░░░░██████░████████░░░░░░░░░░░░ 25:00
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░█████░░░▀████░░░▀████▀░░░░░░░░░░░░░ ──────────────────────────────────
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▀▀▀▀▀▀▀▀▀▀░▀███████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░▀███▀░░░░▀██▀░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▀██████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░▄▄▄▄▄▄▄████░░░░░░░░░░░░░░░░░░░███████████▄▄░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▄▄█████▄▄▄░░░░░░░░░░░░░░░░
+░░░░░░░░▄▄▄▄▄▄██████████████████▄▄░░░░░░░░░░░░░░░░▄███████████████████▄▄▄▄░░░░░░░░░░░░░░░░░░░▄▄███████████████▄▄▄░░░░░░░░░░░
+▄▄██████████████████████████████████▄▄░░░░░░░▄▄▄███████████████████████████████▄▄▄▄▄▄▄▄▄▄▄███████████████████████████▄▄▄▄▄▄▄
 ████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
-    ● solid · ultraviolet                                                           s style  c clock  p palette  f frame  l light  m minimal  ␣ pomo  ? help
+    ● solid · lava                                                                                    s style  c clock  p palette  m minimal  ␣ pomo  ? help
 ```
 
-**Ultra-tall — 34×56** (`A ≈ 0.3`). The glass lamp is width-bound (30
-cols, 2-col side clearance). A right panel won't fit, so the panel goes
-*below* the lamp, as a centred block like a plinth label.
+**Ultra-tall — 34×56** (`A ≈ 0.3`). A right panel won't fit, so the
+panel goes *below* the lamp, after one blank row.
 
 ```
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░▄▄░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░▄████████▄░░░░░░
+░░░░░░▄▄▄▄▄░░░░░▄████████████░░░░░
+░░░░▄███████▄░░███████████████░░░░
+░░░▄██████████████████████████░░░░
+░░░███████████████████████████░░░░
+░░░██████████████████████████░░░░░
+░░░▀████████████████████████░░░░░░
+░░░░░▀█████▀▀░░▀██████████▀░░░░░░░
+░░░░░░░░░░░░░░░░░▀▀███▀▀░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░▄▄█████▄░░░░░░░░░░░░░░░░░░░░░░░
+░░▄█████████▄░░░░░░░░░░░░░░░░░░░░░
+░░███████████▄▄▄██████▄░░░░░░░░░░░
+░░███████████████████████▄░░░░░░░░
+░░░▀███████▀▀█████████████▄░░░░░░░
+░░░░░░░░░░░░░██████████████░░░░░░░
+░░░░░░░░░░░░░█████████████▀░░░░░░░
+░░░░░░░░░░░░▄█████████████░░░░░░░░
+░░░░░░░░░░▄█████████████▀░░░░░░░░░
+░░░░░░░░░░████████████▀░░░░░░░░░░░
+░░░░░░░░░████████████▀░░░░░░░░░░░░
+░░░░░░░░░▀██████████▀░░░░░░░░░░░░░
+░░░░░░░░░░██████████░░░░░░░░░░░░░░
+░░░░░░░░░░░████████▄░░░░░░░░░░░░░░
+░░░░░░░░░░░██████████▄▄▄░░░░░░░░░░
+░░░░░░░░▄▄▄██████████████▄░░░░░░░░
+░░░░▄▄█████████████████████▄░░░░░░
+░▄▄██████████████████████████▄▄░░░
+██████████████████████████████████
+
+ ▄█  ▀▀█ ▄ █ █ █▀▀
+  █  ▀▀█ ▄ ▀▀█ █▀█
+ ▀▀▀ ▀▀▀     ▀ ▀▀▀
+
+ thu 1 oct
 
 
-              ▓▓▓▓▓▓
-             ▓▓▓▓▓▓▓▓
-             ▓▓▓▓▓▓▓▓
-            ▓▓▓▓▓▓▓▓▓▓
-           ▓▓▓▓▓▓▓▓▓▓▓▓
-           ▓▓▓▓▓▓▓▓▓▓▓▓
-           ░░░░░░░░░░░░
-          ░▄▄██▄▄░░░░░░░
-          ████████░░░░░░
-          ████████░░░░░░
-         ░▀███████░░░░░░░
-         ░░░▀▀▀▀▀░░░░░░░░
-         ░░░░░░░░░░░░░░░░
-        ░░░░░░░░░░▄█████▄░
-        ░░░░░░░░░░███████░
-        ░░░░░░░░░████████░
-       ░░░░▄▄█████████▀▀░░░
-       ░░▄██████████░░░░░░░
-       ░▄███████████░░░░░░░
-      ░░████████████░░░░░░░░
-      ░░░███████████░░░░░░░░
-      ░░░░▀███████▀░░▄▄▄▄░░░
-     ░░░░░░░░░░░░░░░██████░░░
-     ░░░░░░░░░░░░░░░░█████░░░
-      ░░░▄▄▄▄░░░░░░░░░░░░░░░
-      ░░██████░░░░░░░░░░░░░░
-       ░██████░░░░░░░░░░░░░
-       ░▄████▄░░░░░░░░░░░░░
-        ████████▄▄▄▄▄▄▄▄▄▄
-        ██████████████████
-        ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-       ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-      ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-      ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-     ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-    ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-   ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-
-
-
-
-       ▄█  █ █ ▄ ▀▀█ ▀▀█
-        █  ▀▀█ ▄ ▀▀█ █▀▀
-       ▀▀▀   ▀   ▀▀▀ ▀▀▀
-
-
-       focus           ●●○○
-       18:24
-       ━━━━━━━━────────────
-
-
-
+ focus                       ○○○○
+ 25:00
+ ────────────────────────────────
   ● solid        s style  ? help
 ```
 
@@ -411,64 +383,16 @@ cols, 2-col side clearance). A right panel won't fit, so the panel goes
 
 ## 2. Lamp viewport
 
-### 2.1 Frame: glass vs bleed
+### 2.1 The lamp area
 
-`frame = auto | glass | bleed` (key `f` cycles). **auto** resolves to:
+The lamp region *is* the tank: no frame, no silhouette, no metal. Heat
+source along the bottom row, cooling at the top, the fluid edge to edge.
+It takes the whole content area, less the panel when there is one (§1.4),
+so a resize only ever changes its width and height (§2.2).
 
-* **glass** if `content_rows ≥ 20` **and** content-area visual aspect `A ≤ 2.2`
-* **bleed** otherwise (tiny/small windows and very wide strips)
-
-With hysteresis: coming *from* bleed, auto needs `content_rows ≥ 22` and
-`A ≤ 2.0` to go back to glass, so dragging a window edge across the line
-doesn't flap. Switching keeps the wax: blobs that fit the new container
-stay exactly where they are (§2.2).
-
-Minimal mode uses the same rule.
-
-**Glass silhouette.** Stylised, chunkier than a real lamp (a real one is
-about 3.2:1; ours is **2.5:1** total height : max width), so it still
-reads as a lamp at 20 rows.
-
-| Part | Share of lamp height `Ht` | Width (fraction of `W = 0.8 × Ht` cols at cell aspect 2.0) |
-|---|---|---|
-| Cap | 15 % (≥ 2 rows) | 0.18 at top → 0.40 at bottom (truncated cone) |
-| Bottle | the rest (≈ 63 %) | 0.40 at top → **0.78 bulge at 72 % down** (28 % up from the foot) → 0.56 at bottom |
-| Base | 22 % (≥ 2 rows) | 0.56 at top → 1.00 at bottom (flared cone) |
-
-All of these numbers live in `silhouette.rs` and nowhere else. The sim's
-bottle has a fixed world aspect of 0.5; on screen `W` is corrected for the
-real cell aspect (§1.4), so the lamp keeps its shape in any font.
-
-Rendering rules for the silhouette:
-
-* **The glass has no outline.** It's the `liquid` colour against `bg`.
-  The walls cut cells at half-column *and* half-row precision: each cut
-  cell becomes a quadrant glyph (`▗ ▖ ▄ ▐ ▌ ▟ ▙ ▜ ▛ …`) whose inside
-  quadrants take the colour the style drew in the nearest whole inside
-  cell (wax or liquid) and whose outside quadrants take `bg` (terminal
-  default when transparent). So the taper is smooth at any width, odd and
-  even widths both centre exactly, and wax touching the wall isn't cut
-  off by a liquid-coloured rim. This needs a blending theme (truecolor or
-  256, not `ansi`).
-* Cap and base are drawn in `metal` with a continuous per-row shade, from
-  1.25× `metal` at the top of the cap to 0.7× at the foot of the base.
-  Slopes use `▌` / `▐` half cells, never `/\`. The fill is `█`, or `▒` in
-  NO_COLOR so the metal still reads as a surface.
-* A one-cell **highlight streak** runs down the bottle 32 % of the
-  half-width in from the left wall, 18 % toward `text`, fading out near
-  the shoulder and the base. It's shown only when lighting is on and the
-  theme blends.
-* With lighting on, the liquid in the bottom third is brightened by the
-  base light (up to +55 %, falling off upward). The heat source is
-  visibly the base.
-* When the theme doesn't blend (16 colours, NO_COLOR, or the `ansi`
-  palette at any depth) there's no liquid tint, so the walls are drawn as
-  a thin edge in `metal` instead: `▕` / `▏` where the wall falls on a cell
-  boundary, `│` where it passes mid-cell (§5.3).
-
-**Bleed.** The lamp region *is* the tank: heat source along the bottom
-row, cooling at the top, no metal. Bleed ignores outer margins. Edge to
-edge is the point.
+(Before v1.1 there was also a glass lamp silhouette with a cap, a base
+and a lighting pass; both were dropped to keep the lamp simple and
+uncluttered at every size.)
 
 ### 2.2 Proportions: square sim pixels
 
@@ -478,7 +402,7 @@ pixels**:
 
 | Style family | Sub-samples per cell | Pixel grid for a cols×rows region |
 |---|---|---|
-| half-block (solid, heatmap, ascii, dither, halftone, crt, synthwave, chrome) | 1 × 2 | cols × 2·rows |
+| half-block (solid, ascii, halftone, synthwave, chrome) | 1 × 2 | cols × 2·rows |
 | braille (braille, outline, topo) | 2 × 4 | 2·cols × 4·rows |
 | cell (matrix) | 1 × 1, sample at the cell centre, aspect-corrected | cols × rows, `y` scaled by `cell_aspect` |
 
@@ -488,14 +412,11 @@ two pixels per glyph.
 The sim lives in **world units**, independent of the terminal:
 
 * World height is always `1.0`. World width is `A_region` (the visual
-  aspect of the lamp region; for glass, the bottle's bounding box).
+  aspect of the lamp region).
 * Blob radii, velocities and the heat field are in world units. A
   terminal resize changes **sampling density only**, never the physics.
   A blob that's 10 % of lamp height stays 10 % at 30 rows or 120.
-* Glass: world shape = the bottle profile above (the walls are the
-  bottle's curved sides), with a fixed aspect. The sim never resizes in
-  glass mode, only the sampling does.
-* Bleed: world width follows the region. On resize the walls **ease** to
+* World width follows the region. On resize the walls **ease** to
   the new width over 250 ms (the sim pushes blobs, so nothing teleports),
   and total wax volume is kept at a constant **≈ 30 % of world area** by
   slowly growing/shrinking the bottom pool (no blobs pop in or out).
@@ -517,12 +438,10 @@ otherwise **2.0**. Recompute on every resize.
 * Sampling culls per blob: each blob only touches pixels inside its
   influence box. Cost scales with *blob area*, not blobs × pixels.
 * Blob count is set by the world, not the window: a few big, varied blobs
-  rather than many equal ones. At the default heat (3), glass aims for
-  **4** (radii spanning 3:1 or more, now and then one a third to half the
-  bottle wide) and bleed for `≈ 2.8 × A_region`, clamped to 3–16. Heat
-  scales the target by `1 + 0.4 × (heat − 3)` (×0.6 at heat 1, ×1.4 at
-  heat 5), and the result is clamped to 2–40, so glass runs about 2–6
-  blobs. The pool is a soft mound of the same wax (≈ 0.07 lamp heights
+  rather than many equal ones. At the default heat (3) the lamp aims for
+  `≈ 2.8 × A_region` blobs, clamped to 3–16. Heat scales the target by
+  `1 + 0.4 × (heat − 3)` (×0.6 at heat 1, ×1.4 at heat 5), and the result
+  is clamped to 2–40. The pool is a soft mound of the same wax (≈ 0.07 lamp heights
   on average, never below 0.045; heaped about 1.5× in the middle of each
   ≈ 0.9-wide mound, thinner at the walls), glowing hot where it is deep
   and cooler at its skin. It buds mostly off the mound tops, and sooner
@@ -531,8 +450,8 @@ otherwise **2.0**. Recompute on every resize.
   and teardrop along their motion, and join the pool with a skirt that
   draws in to a neck as a bud lets go (`sim/field.rs`). Lobes need
   resolution: a blob under ~2.5 sample pixels in radius draws as one
-  round bump, with lobes fading in up to 5 px, so small lamps (80×24
-  glass) show round droplets, not torn clumps. The pool is drawn at
+  round bump, with lobes fading in up to 5 px, so small lamps show round
+  droplets, not torn clumps. The pool is drawn at
   least 2 sample rows deep (its mean lifted to that, mounds on top).
 
 ---
@@ -543,14 +462,14 @@ otherwise **2.0**. Recompute on every resize.
 The switch is instant: the next frame shows the new layout, and the sim is
 untouched (same blobs, same phase).
 
-* **Just the lamp.** No status bar, no panel, no hints, no borders. Glass
-  is centred (bleed fills the screen), with the same frame auto-rule.
-* **Tiny optional clock** (`minimal.clock = "under" | "corner" | "off"`,
-  default `under`): `14:32` in `dim`, centred on the last row under the
-  lamp base. In bleed, or when there's no spare row, it becomes the
-  corner chip. A running pomodoro replaces it with `▸ 18:24` in the phase
-  colour; a break also says so, `▸ break 4:12`, since phase colours can
-  be near twins (and are one colour in 16 / none).
+* **Just the lamp.** No status bar, no panel, no hints, no borders. The
+  lamp fills the screen.
+* **Tiny optional clock** (`minimal.clock = "corner" | "off"`, default
+  `corner`): the clock chip in the bottom-right corner. A running pomodoro
+  replaces it with `▸ 18:24` in the phase colour, even with the clock
+  off; a break also says so, `▸ break 4:12`, since phase colours can be
+  near twins (and are one colour in 16 / none). The old value `under`
+  (under the glass lamp) loads as `corner`.
 * Every key still works. Toasts still appear (that's the only feedback
   minimal mode gives). `?` still opens help, and the pickers still open:
   minimal mode drops the resting chrome, not the overlays.
@@ -559,30 +478,30 @@ untouched (same blobs, same phase).
 **Minimal — 80×24:**
 
 ```
-
-                                      ▓▓▓
-                                     ▓▓▓▓▓
-                                    ▓▓▓▓▓▓▓
-                                    ░▄▄░░░░
-                                   ▄████░░░░
-                                   ░████░░░░
-                                   ░░░░░░▄▄░
-                                  ░░░░░░████░
-                                  ░░▄▄▄▄██▀▀░
-                                  ░██████░░░░
-                                 ░░██████░░░░░
-                                 ░░░▀█▀▀░░▄▄▄░
-                                 ░░░░░░░░░██▀░
-                                 ░▄██▄░░░░░░░░
-                                  ░██▀░░░░░░░
-                                  ███████████
-                                  ▓▓▓▓▓▓▓▓▓▓▓
-                                  ▓▓▓▓▓▓▓▓▓▓▓
-                                 ▓▓▓▓▓▓▓▓▓▓▓▓▓
-                                ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-                               ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-
-                                     14:32
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░▄▄██████▄▄░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░▄███████████▄░░░░░░░░░░░░░░░░░░░░░░░▄████▄▄░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░██████████████░░░░░░░░░░░░░░░░░░░░██████████░░░░░░░░░░░░░░░░
+░░░░▄████▄░░░░░░░░░░██████████████░░░░░░░░░░░░░░░░░░░████████████░░░░░░░░░░░░░░░
+░░▄████████░░░░░░░░░█████████████░░░░░░░░░░░░░░░░░░░█████████████░░░░░░░░░░░░░░░
+░▄██████████░░░░░░░▄███████▀▀▀▀░░░░░░░░░░░░░░░░░░░░░█████████████░░░░░░░░░░░░░░░
+░███████████░░░░░░░███████░░░░░░░░░░░░░░░░░░░░░░░░░░█████████████░░░░░░░░░░░░░░░
+░██████████▀░░░░░░░███████░░░░░▄▄▄▄▄▄░░░░░░░░░░░░░░░███████████▀░░░░░░░░░░░░░░░░
+░█████████▀░░░░░░░░████████░▄██████████▄▄░░░░░░░░░░░▀████████▀░░░░░░░░░░░░░░░░░░
+░░▀██████▀░▄▄▄▄▄░▄███████████████████████▄░░░░░░░░░░░░▀▀▀▀▀▀░░░░░░░░░░░░░░░░░░░░
+░░░░▀▀▀▀░████████████████████████████████▀░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░██████████████████░▀██████████▀▀░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░██████████████████░░░░░▀▀▀▀░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░██████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░█████████████████▀░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░███████████████▀░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░██████████████▄░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▄▄▄░░░░░░░░░░░░░░░░░░░░
+░░░░░░▄▄▄▄███████████████████▄▄▄▄░░░░░░░░░░░░░░▄▄▄█████████████████▄▄▄▄▄▄▄▄░░░░░
+█████████████████████████████████████████████████████████████████████████ 13:46
 ```
 
 ---
@@ -593,11 +512,11 @@ untouched (same blobs, same phase).
 
 One row, the last row of the terminal. **It's a whisper, not a bar:** no
 background fill, no reverse video, no separators other than spacing.
-Inset `max(1, horizontal margin)` cols on each side.
+Inset by the side margin (§1.3) on each side.
 
 ```
-  ● braille · lava                 s style  c clock  p palette  ␣ pomo  ? help
-  └─ left ────────┘                └─ right: hints ─────────────────────────┘
+  ● braille · lava       s style  c clock  p palette  m minimal  ␣ pomo  ? help
+  └─ left ────────┘      └─ right: hints ──────────────────────────────────────┘
 ```
 
 * **Left:** `●` in `accent`, then the style name in `text`, then
@@ -608,18 +527,18 @@ Inset `max(1, horizontal margin)` cols on each side.
   is active or the frame takes > 80 % of its budget, §7).
 * **Right:** hints in `dim`, each formatted `key label` with the key in
   `text`. The full list in display order is `s style  c clock  p palette
-  f frame  l light  m minimal  ␣ pomo  ? help`. The bar fits as many as
-  possible while keeping a gap of at least 4 cols to the left segment.
-  Hints drop in this order: `m`, `l`, `f`, `␣`, `p`, `c`, `s`. `? help`
+  m minimal  ␣ pomo  ? help`. The bar fits as many as possible while
+  keeping a gap of at least 4 cols to the left segment. Hints drop in
+  this order: `m`, `␣`, `p`, `c`, `s`. `? help`
   always goes last.
 * The pomodoro is **not** repeated in the status bar. It lives in the
   panel or chip.
 
 ### 4.2 Toasts
 
-* Appear centred in the **top row of the lamp region** (glass: just above
-  the cap; bleed: row 0), with a 1-cell `bg` pad on each side.
-* Format: `‹name›  ‹i›/‹n›` for cycling (`braille  6/12`), or a short
+* Appear centred in the **top row of the lamp region**, with a 1-cell
+  `bg` pad on each side.
+* Format: `‹name›  ‹i›/‹n›` for cycling (`braille  4/9`), or a short
   lowercase sentence (`press r again to reset`).
 * Last 1.4 s. The final 400 ms fade `text`→`bg` in truecolor. In 256 and
   16 colour they just vanish. A new toast replaces the old one
@@ -654,33 +573,34 @@ The form depends on the terminal size (`ui/help/sheet.rs`):
 * `?`, `esc` or `q` closes it. While help is open, `q` closes help and
   does *not* quit.
 
-80×24, captured from the app:
+80×24, captured from the app (`--color none`; the panel stays hidden while
+the sheet would touch it, §8.2):
 
 ```
 
-                       ▐███▌
-                       █████
-        ╭ keys ────────────────────────────────────────────────────────╮
-        │  lamp                          clock & pomodoro              │
-        │  s    next style               c       next face             │
-        │  S    style picker             C       face picker           │
-        │  p    next palette             t       show/hide clock       │
-        │  P    palette picker           T       12h / 24h             │
-        │  f    frame: auto/glass/bleed  ␣       start / pause         │
-        │  l    lighting                 n       skip phase            │
-        │  [ ]  heat − +                 r r     reset pomodoro        │
-        │  - +  speed                                                  │
-        │  z    freeze                   app                           │
-        │  0    reset heat & speed       m       minimal               │
-        │  R    reseed wax               ?       this help             │
-        │                                q       quit · ctrl-c         │
-        │                                b       status bar            │
-        │                                d       debug hud             │
-        │                                ctrl-l  redraw                │
-        ╰─────────────────────────────────────────────────── esc close ╯
-                 ▐███████████████▌
 
-  ● braille · lava        s style  c clock  p palette  f frame  ␣ pomo  ? help
+
+        ╭ keys ────────────────────────────────────────────────────────╮
+        │  lamp                         clock & pomodoro               │
+        │  s    next style              c       next face              │
+        │  S    style picker            C       face picker            │
+        │  p    next palette            t       show/hide clock        │
+        │  P    palette picker          T       12h / 24h              │
+        │  [ ]  heat − +                ␣       start / pause          │
+        │  - +  speed                   n       skip phase             │
+        │  z    freeze                  r r     reset pomodoro         │
+        │  0    reset heat & speed                                     │
+        │  R    reseed wax              app                            │
+        │                               m       minimal                │
+        │                               ?       this help              │
+        │                               q       quit · ctrl-c          │
+        │                               b       status bar             │
+        │                               d       debug hud              │
+        │                               ctrl-l  redraw                 │
+        ╰─────────────────────────────────────────────────── esc close ╯
+ ⣀⣀⣀⣀⣀⣠⣤⣴⣶⣶⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⣦⣤⣀⣀
+⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⣶⣤⣤⣤
+  ● braille · lava      s style  c clock  p palette  m minimal  ␣ pomo  ? help
 ```
 
 ### 4.4 Pickers (`S` style, `C` face, `P` palette)
@@ -689,7 +609,7 @@ The form depends on the terminal size (`ui/help/sheet.rs`):
   or clock right away. `⏎` keeps it, `esc` reverts to what was active
   when the picker opened.
 * **≥ 80 × 16: a sheet**, width 26, height `items + 6` (capped at
-  `rows − 2`, scrolls), inset from the side by the horizontal margin and
+  `rows − 2`, scrolls), inset from the side by the side margin (§1.3) and
   vertically centred above the status bar. Rounded `metal` border, title
   (`style`, `clock`, `palette`) in `accent`, cursor `▸` + name in
   `accent`, the item that was active when it opened marked with a dim `·`,
@@ -712,32 +632,32 @@ The form depends on the terminal size (`ui/help/sheet.rs`):
 * The status bar's right side switches to picker hints: `↑↓ preview  ⏎
   keep  esc revert`.
 
-80×24, captured from the app:
+80×24, captured from the app (`--color none`):
 
 ```
 
-                       ▐███▌
-                       █████                        ╭ style ─────────────────╮
-                      ▐█████▌                       │                        │
-                                                    │   solid                │
-                     ▐       ▌                      │   outline              │
-                     ▟ ⢠⣶⣶⣦⡀ ▙                      │   heatmap              │
-                       ⠸⣽⣿⡿⠃                        │   ascii                │
-                    ▐       ⢀ ▌                     │   dither               │
-                    ▟     ⢰⢽⣷⣿▙                     │ ▸ braille ·            │
-                          ⠸⡿⢿⢟⠝                     │   halftone             │
-                   ▐       ⠈⠉⠁ ▌                    │   crt                  │
-                   ▟ ⢀⢤⡀  ⣔⣽⣽⣽⢦▙                    │   synthwave            │
-                     ⢿⢿⡿ ⠐⣽⢿⣿⣿⢽                     │   matrix               │
-                   ▐  ⠉   ⠈⠛⠛⠓⠁▌                    │   topo                 │
-                         ⢀⡀                         │   chrome               │
-                    ▐⣤⣤⣤⣤⣿⣷⣤⣀⣀▌                     │                        │
-                    ▐█████████▌                     │ ⏎ keep   esc revert    │
-                   ▐███████████▌                    │                        │
-                   █████████████                    ╰────────────────────────╯
-                  ███████████████
-                 ▐███████████████▌
 
+
+
+             ⢀⣔⣶⣿⣿⣿⣷⣶⣦⢄⡀                            ╭ style ─────────────────╮
+            ⣴⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣦⡀                          │                        │
+           ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣝⡄          ⢀⣠⣴⣶⣶⣶⣖⢤⢄      │   solid                │
+           ⠸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⡇        ⢠⣶⣿⣿⣿⣿⣿⣿⣿⣿⣷⣕⢄    │   outline              │
+            ⠹⣽⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⢿⡵⠁       ⣰⣽⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣝⡄   │   ascii                │
+              ⠙⠻⠿⣿⣿⣿⣿⣿⠿⠝⠋  ⣠⣤⣤⣤⣤⢤⣼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇   │ ▸ braille ·            │
+                         ⢠⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡵⠁   │   halftone             │
+                         ⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⢿⠕⠁    │   synthwave            │
+                   ⢀⣤⣶⣶⣶⣶⣽⣿⣿⣿⣿⣿⣿⣿⣿⣿⢿⣿⢿⣿⣿⣿⣿⢿⡿⠓⠁      │   matrix               │
+                 ⢀⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⢿⠁ ⠉⠑⠛⠓⠉⠁         │   topo                 │
+                 ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠇                 │   chrome               │
+                 ⢸⣿⣿⣿⣿⣿⣿⣿⢟⢝⢿⣿⣿⣿⣿⢿⠝                  │                        │
+                 ⢸⣿⣿⣿⣿⣿⣿⣿⣷⣷⣝⢝⣝⠿⠝⠁                   │ ⏎ keep   esc revert    │
+                 ⠈⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇                       │                        │
+                  ⢹⣿⣿⣿⣿⣿⣿⣿⣿⣿⠁                       ╰────────────────────────╯
+                   ⠻⣿⣿⣿⣿⣿⣿⣿⣿⣀⣀⣀⣀⣀⣀⣀⣀
+                ⣀⣀⣠⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣶⣤⣀⡀
+ ⣀⣀⣀⣀⣀⣠⣤⣴⣶⣶⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⣦⣤⣀⣀
+⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⣶⣤⣤⣤
   ● braille · lava                              ↑↓ preview  ⏎ keep  esc revert
 ```
 
@@ -788,8 +708,7 @@ The colon never blinks (motion belongs to the lamp). Seconds appear only
 in L/XL variants and the `text` face's 12h/24h follows `T`.
 
 **Phase-change flash.** When a pomodoro phase ends on its own: the
-lamp's `metal` parts pulse toward `accent` (in bleed, the liquid tint
-pulses, peaking at 35 % toward `accent`), one `sin` swell over 600 ms; a
+lamp's liquid tint pulses, peaking at 35 % toward `accent`, one `sin` swell over 600 ms; a
 toast says `break · 5:00`, and the terminal bell sounds if
 `pomodoro.bell = true` (default true). Skipping a phase with `n` only
 toasts: no flash, no bell.
@@ -805,10 +724,10 @@ and `render/` hard-codes a colour.
 
 | Role | Used for |
 |---|---|
-| `bg` | app background outside the glass |
-| `liquid` | glass interior / bleed background |
+| `bg` | app background: behind the chrome, around the panel |
+| `liquid` | the lamp's fluid, behind the wax |
 | `wax_cool` `wax_mid` `wax_hot` | 3-stop temperature gradient (cool → hot). Single-colour styles use `wax_mid`, or lerp by temperature |
-| `metal` | cap, base, overlay borders |
+| `metal` | overlay borders |
 | `text` | primary text |
 | `dim` | secondary text, hints, idle states |
 | `accent` | **the one accent**: selection cursor, running pomodoro, `●`, toast keys |
@@ -891,7 +810,7 @@ as the counterpoint.
 | dim | `#8A73A3` | 97 | DarkGray |
 | accent | `#2DE2E6` | 44 | LightCyan |
 
-**mono**: graphite. Grayscale only. It suits dither/halftone/braille and
+**mono**: graphite. Grayscale only. It suits halftone/braille and
 e-ink moods.
 
 | role | hex | 256 | 16 |
@@ -940,7 +859,7 @@ Detection order, overridable with `--color=auto|truecolor|256|16|none` /
 |---|---|---|---|
 | truecolor | lerp across the 3 wax stops (a 64-step ramp LUT at every depth); blended colours are rounded to multiples of 4 per channel, so sub-visible drift doesn't repaint cells | `bg` painted (unless `theme.transparent = true`) | fades, dimming, glow all on |
 | 256 | blend in RGB, then match to the nearest xterm index by a hue- and lightness-weighted OKLab distance over the 6×6×6 cube and grey ramp only (the 16 system colours are themed by the terminal, so never picked); cached per 6-bit RGB bucket. **Hue guard:** a chromatic index more than 30° off the input's hue is never picked, alone or as a dither end (greys always may be), so dark orange never goes olive and brown is never dithered from red and green dots. Dark tints the cube lacks (colours that lose their hue when snapped to one index) are ordered-dithered between the two best indices with the 8×8 Bayer matrix, fixed to the lamp in screen space (`render/dither256.rs`, `Theme::dithering`). Unmixed roles use the §5.2 index | `bg` painted (index above) | toast fade → instant; help dim → cleared rect |
-| 16 | 3 discrete steps; styles add glyph density (`░▒▓█`) to show temperature | always `default` | glass gets a thin `▕ │ ▏` edge in `metal` (§2.1); lighting adds density, not colour |
+| 16 | 3 discrete steps; styles add glyph density (`░▒▓█`) to show temperature | always `default` | |
 | none | no colour at all; temperature shown only through glyph density and shape | `default` | `accent` → bold; `dim` → plain |
 
 Every style must stay legible in **16** and **none**. That's a snapshot
@@ -969,8 +888,6 @@ so they can't drift.
 | `s` / `S` | next style / style picker | toast shows `name  i/n` |
 | `c` / `C` | next clock face / face picker | |
 | `p` / `P` | next palette / palette picker | |
-| `f` | frame: auto → glass → bleed | toast shows the *resolved* frame when it differs (`auto · glass`, forced glass too small: `glass · bleed`; else just `glass`) |
-| `l` | lighting on/off | |
 | `t` | clock shown/hidden | hides the face in the panel/chip; the pomodoro stays |
 | `T` | 12h / 24h | |
 | `space` | pomodoro start / pause / resume | starts a focus phase if idle |
@@ -1025,9 +942,7 @@ and help, click a picker item to preview, double-click to keep.
 * Handle `Event::Resize` at once: recompute `layout()`, re-derive
   `cell_aspect`, and draw the new geometry on the **next frame**. Never
   draw a frame with stale geometry, and do one full clear + repaint.
-* Glass: the sim is untouched (only sampling changes), so the lamp just
-  gets crisper or coarser.
-* Bleed: walls ease to the new width over 250 ms (§2.2).
+* The sim's walls ease to the new width over 250 ms (§2.2).
 * Coalesce resize storms: when multiple resize events arrive in one poll
   batch, only the last one counts.
 
@@ -1050,13 +965,13 @@ and help, click a picker item to preview, double-click to keep.
 The debug HUD shows when this is active (the whole readout turns
 `wax_hot`, §4.1).
 
-**Measured** (lava-ebq.35, `main` before v1, Apple M5 under background
-load 3–5, real pty runs at 60 fps in glass): launch → first frame ≈ 30 ms;
-≈ 2.3 % of a core at 80×24 and 4.6–6.5 % at 200×60 (solid/braille, lit or
-not); output ≈ 10 KB/s (19 lit) at 80×24 and ≈ 55 KB/s (107 lit) at 200×60
-in solid, ≈ 5 / 21 KB/s in braille; lamp render 0.02–0.16 ms per frame at
-80×24 and 0.13–0.81 ms at 200×60 truecolor for every style, lit or unlit
-(0.17–0.87 ms in 256 colours; `bench_lamp`). All within the targets
+**Measured** (lava-ebq.35, `main` before v1, so with the glass frame since
+removed; Apple M5 under background load 3–5, real pty runs at 60 fps):
+launch → first frame ≈ 30 ms; ≈ 2.3 % of a core at 80×24 and 4.6–4.9 %
+at 200×60 (solid/braille); output ≈ 10 KB/s at 80×24 and ≈ 55 KB/s at
+200×60 in solid, ≈ 5 / 21 KB/s in braille. Lamp render on v1.1
+(`bench_lamp`): 0.02–0.14 ms per frame at 80×24 and 0.12–0.76 ms at
+200×60 for every style, truecolor or 256 colours. All within the targets
 above. Details in the README.
 
 Speed changes (`-`/`+`/`0`) ease in over a fraction of a second rather
@@ -1083,8 +998,8 @@ than jumping.
 5. **Only the lamp moves.** No spinners, no blinking colon, no animated
    chrome. The exceptions are the pomodoro bar's progress, toast fades and
    the phase-change flash, all of which carry information.
-6. **Centred, proportional compositions.** Margins and gutters scale with
-   the window. Odd leftover cells always go right/bottom, so nothing
+6. **Proportional compositions.** The panel and margins scale with the
+   window. Odd leftover cells always go right/bottom, so nothing
    jitters.
 7. **Lowercase, terse labels**: `braille`, `ultraviolet`, `focus`,
    `esc close`. No title case, no exclamation marks, no emoji.
@@ -1108,14 +1023,12 @@ cell_aspect = 2.0        # used only when the terminal doesn't report pixels
 
 [lamp]
 style = "solid"
-frame = "auto"           # auto | glass | bleed
-lighting = false
 heat = 3                 # 1..5
 speed = 1.0              # 0.25 | 0.5 | 1 | 2 | 4
 
 [theme]
 palette = "lava"
-transparent = false      # true = never paint bg outside the glass
+transparent = false      # true = never paint bg (the terminal's own shows)
 
 [clock]
 face = "blocks"
@@ -1134,7 +1047,7 @@ mode = "full"            # full | minimal
 status_bar = true
 
 [minimal]
-clock = "under"          # under | corner | off
+clock = "corner"         # corner | off
 
 [input]
 mouse = false
@@ -1144,6 +1057,11 @@ Out-of-range values are clamped rather than rejected: `fps` 1–240,
 `cell_aspect` 1.6–2.6 (NaN → 2.0), `heat` 1–5, `speed` snapped to the
 nearest step (≤ 0 or non-finite → 1), pomodoro minutes 1–1440, `cycles`
 1–12. The old style name `glass` is accepted as `chrome`.
+
+Retired in v1.1, and quietly ignored in an old file (no toast; the next
+save takes them out): `lamp.frame`, `lamp.lighting`. A file naming a
+removed style (`heatmap`, `dither`, `crt`) gets `solid`, also without a
+toast; on the command line those names are unknown, like any other.
 
 CLI: `--minimal`/`-m`, `--fps <n>`, `--style <name>`, `--palette <name>`,
 `--color <depth>`, `--seed <u64>`, `--config <path>` (use this file
@@ -1173,7 +1091,5 @@ keeping the file's permissions).
 
 ## 10. Out of scope for v1 (ideas, not commitments)
 
-* **Lamp shelf:** on ultra-wide screens in glass mode, 2–3 lamps side by
-  side, each with its own seed and palette.
 * Kitty/sixel graphics backend for true-pixel wax.
 * Ambient mode: auto-cycle styles/palettes every N minutes.

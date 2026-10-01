@@ -226,22 +226,20 @@ class Shot:
         self.app, self.frames, self.env = args.split(), frames, []
 
 
-STYLES = "solid outline heatmap ascii dither braille halftone crt synthwave matrix topo chrome".split()
+STYLES = "solid outline ascii braille halftone synthwave matrix topo chrome".split()
 PALETTES = "lava ultraviolet abyss toxic synthwave mono paper ansi".split()
-TILE = '[ui];mode="minimal";[minimal];clock="off";[lamp];lighting=true;'
+TILE = '[ui];mode="minimal";[minimal];clock="off";[lamp];'
 SHOTS = {
-    "hero": Shot(120, 36, '[lamp];style="solid";lighting=true', "0.5: ", frames=360),
-    "glass": Shot(100, 28, '[lamp];style="heatmap";lighting=true;frame="glass"', "0.5: ", "--seed 5"),
-    "bleed": Shot(100, 28, '[lamp];style="heatmap";lighting=true;frame="bleed"', "0.5: ", "--seed 5"),
-    "minimal": Shot(80, 24, '[lamp];style="braille";lighting=true;[ui];mode="minimal";[theme];palette="ultraviolet"', args="--seed 3"),
-    "help": Shot(100, 30, '[lamp];style="solid";lighting=true', "1:?", frames=240),
-    "picker": Shot(100, 30, '[lamp];style="solid";lighting=true;[theme];palette="synthwave"', "1:S,2:j,2.5:j", "--seed 4"),
-    "portrait": Shot(36, 56, '[lamp];style="dither";lighting=true;[theme];palette="abyss"', "0.5: ", "--seed 6"),
-    "tiny": Shot(26, 10, '[lamp];style="solid";lighting=true'),
+    "hero": Shot(120, 36, '[lamp];style="solid"', "0.5: ", frames=360),
+    "minimal": Shot(80, 24, '[lamp];style="braille";[ui];mode="minimal";[theme];palette="ultraviolet"', args="--seed 3"),
+    "help": Shot(100, 30, '[lamp];style="solid"', "1:?", frames=240),
+    "picker": Shot(100, 30, '[lamp];style="solid";[theme];palette="synthwave"', "1:S,2:j,2.5:j", "--seed 4"),
+    "portrait": Shot(36, 56, '[lamp];style="halftone";[theme];palette="abyss"', "0.5: ", "--seed 6"),
+    "tiny": Shot(26, 10, '[lamp];style="solid"'),
     "color16": Shot(80, 24, '[lamp];style="ascii"', args="--seed 2 --color 16"),
 }
 TILES = {f"style-{s}": Shot(34, 30, TILE + f'style="{s}"') for s in STYLES}
-TILES |= {f"palette-{p}": Shot(34, 30, TILE + f'style="heatmap";[theme];palette="{p}"') for p in PALETTES}
+TILES |= {f"palette-{p}": Shot(34, 30, TILE + f'style="solid";[theme];palette="{p}"') for p in PALETTES}
 
 
 def main(names):
@@ -263,7 +261,7 @@ def main(names):
         for out in ex.map(one, jobs.items()):
             print(out, os.path.getsize(out))
     if "styles" in want:
-        montage(os.path.join(HERE, "styles.png"), 6, [(s, f"{tmp}/style-{s}.png") for s in STYLES])
+        montage(os.path.join(HERE, "styles.png"), 5, [(s, f"{tmp}/style-{s}.png") for s in STYLES])
     if "palettes" in want:
         montage(os.path.join(HERE, "palettes.png"), 8, [(p, f"{tmp}/palette-{p}.png") for p in PALETTES])
 

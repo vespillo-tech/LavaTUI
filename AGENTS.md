@@ -130,8 +130,9 @@ bd prime                # Refresh Beads context
 
 A terminal lava lamp. Fluid, physically-plausible wax blobs (heat rises,
 cools, sinks, merges, splits) drawn in many swappable render styles
-(outline, heatmap, ASCII, dither, braille, halftone, …), with an optional
-very basic lighting/glow pass. Ships with a selectable-style clock and a
+(solid, outline, ASCII, braille, halftone, synthwave, …), filling the
+window edge to edge (no lamp silhouette, no lighting: both were dropped in
+v1.1, along with the heatmap, dither and crt styles). Ships with a selectable-style clock and a
 pomodoro timer, a full TUI (panels, status bar, help, keybinds) and a
 minimalist "just the lamp" mode. It's a "vibe app": looks and design matter
 as much as the code.
@@ -158,8 +159,7 @@ cargo test                           # unit tests (sim, render, layout sweep, ke
 cargo fmt --check                    # formatting gate
 cargo clippy --all-targets -- -D warnings   # lint gate
 cargo test --release -- --ignored --nocapture bench_fill   # field sampler + step timing
-cargo test --release -- --ignored --nocapture bench_lamp   # per-style frame time + bytes/frame (lit / unlit)
-cargo test --release -- --ignored --nocapture bench_light  # lighting pass alone
+cargo test --release -- --ignored --nocapture bench_lamp   # per-style frame time + bytes/frame
 UPDATE_SNAPSHOTS=1 cargo test        # rewrite render + layout snapshots (review the diff!)
 ```
 
@@ -189,7 +189,10 @@ numbers); `docs/design.md` is the layout/visual contract.
                 value is ignored with a toast and the rest kept; a syntax
                 error → defaults + toast), save (anything a save would drop
                 is first copied to `config.toml.bak`; saves keep comments,
-                follow symlinks and are atomic).
+                follow symlinks and are atomic). Settings older versions had
+                (`RETIRED_KEYS`: `lamp.frame`, `lamp.lighting`) load without
+                a toast and a save takes them out; a removed style name
+                (`RETIRED_STYLES`) quietly becomes `solid`.
 - `app/`      — `mod.rs` is the loop only: poll input until the frame
                 deadline → `Model::update(action)` (any input draws at once;
                 queued events are drained first, as one burst that
@@ -216,7 +219,7 @@ numbers); `docs/design.md` is the layout/visual contract.
                 `pickers.rs`: `PickerKind`/`Picker`, picker keys and clicks,
                 live preview / keep / revert. `tick` advances
                 pomodoro/toasts/flash/eased speed/sim steps,
-                recomputes the layout, matches the sim's `Shape` to the frame,
+                recomputes the layout, feeds the lamp's aspect to the sim,
                 and does the debounced (1 s) save. Fps: 10 unfocused; frozen
                 frames sleep until the clock / pomodoro readout changes
                 (`idle_until`); `frame_drawn` feeds adaptive quality.
@@ -228,8 +231,9 @@ numbers); `docs/design.md` is the layout/visual contract.
                 sample grid, then half fps; recovers with hysteresis and
                 backoff so it never flaps).
 - `sim/`      — wax simulation (pure, seeded, deterministic). `World::new(seed,
-                aspect, Shape)` + `step(dt)` at the fixed `dt` (`SIM_HZ = 120`).
-                World units: height 1, width = visual aspect, x centred on 0.
+                aspect)` + `step(dt)` at the fixed `dt` (`SIM_HZ = 120`).
+                World units: height 1, width = visual aspect, x centred on 0;
+                a straight-walled tank whose walls ease to a new width.
                 Pool on the heater buds blobs; heat/buoyancy/drag/cohesion,
                 merge + split, melt back into the pool; wax area conserved.
                 `field.rs`: `Field::prepare(&world, alpha)` once per frame,
@@ -238,42 +242,33 @@ numbers); `docs/design.md` is the layout/visual contract.
                 fill for its pixel size: lobes fade out on blobs only a few
                 pixels across and the pool is drawn >= `MIN_POOL_PIXELS`
                 deep. Randomness: `rng.rs` (`Rng`, stateless `hash`).
-                `controls.rs`: heat, reseed, heat pulse, `SimSpeed`,
-                `set_shape` (glass ↔ bleed: melts the wax into the pool and
-                re-buds, like reseed). Model
+                `controls.rs`: heat, reseed, heat pulse, `SimSpeed`. Model
                 notes and all tuning constants are at the top of `sim/mod.rs`
                 (incl. `WAX_TEMP`, the span renderers map onto wax colours).
                 Accessors only tests read are `#[cfg(test)]`.
-- `silhouette.rs` — the glass lamp's shape (§2.1), defined once: bottle
-                profile (0.56 foot → 0.78 bulge 28 % up → 0.40 neck), cap
-                and base widths and row shares, bottle inset, lamp / bottle
-                aspect, and `wall` / `row_span` (a row's inside span in half
-                columns). The sim's walls, the layout's cap/bottle/base
-                split, `ui::glass` and the render mask all read it.
 - `theme/`    — palettes + colour depth: the only place colours are decided.
                 `Palette` (9 `Role`s × 8 palettes from design §5.2, hex/256/16),
                 `ColorDepth::detect()` (NO_COLOR → COLORTERM → TERM, §5.3),
                 `Theme::new(palette, depth)`; `theme.with_role(role, paint)`
-                repaints one role (ramps follow), e.g. the bleed phase-change
-                flash. Styles ask for `Ink::Role(r)`,
-                `Ink::Wax(t)` (cool→mid→hot) or `Ink::Heat(t)` (liquid→hot) via
+                repaints one role (ramps follow), e.g. the phase-change flash
+                (liquid toward accent). Styles ask for `Ink::Role(r)` or
+                `Ink::Wax(t)` (cool→mid→hot) via
                 `theme.color(ink)` / `theme.paint(ink).mix(..).scale(..).color()`;
                 16/none never blend (dominant side wins), 256 snaps to xterm.
                 `theme.background(transparent)` is the app background (`bg`,
-                or `TERMINAL_DEFAULT` when `theme.transparent`): the lamp's
-                outside, the base fill and every bit of chrome use it, so
-                transparent paints no `bg` anywhere. `fade_to_bg` dims what
+                or `TERMINAL_DEFAULT` when `theme.transparent`): every bit of
+                chrome uses it, so transparent paints no `bg` anywhere. `fade_to_bg` dims what
                 a sheet covers. No `Color::` outside `theme/` except
                 `render/cell.rs` and tests. The paint path's small helpers
                 are `#[inline]` (they sit in every style's pixel loop);
                 `fallback` deliberately isn't (see its doc).
 - `render/`   — render pipeline. `LampView { field, style, theme, time,
-                lighting, options }` is a `StatefulWidget` (`LampOptions`:
-                `reduced` grid for adaptive quality, `transparent`; state
+                options }` is a `StatefulWidget` (`LampOptions`: `reduced`
+                grid for adaptive quality; state
                 `LampState` = reused scratch buffers); it samples the field
                 at the style's `Grid` (half-block 1×2, braille 2×4, …; >400k
-                samples → coarse fill + bilinear upsample), builds the glass mask, runs the optional
-                lighting pass, then calls the style's `draw(&Canvas, buf)`.
+                samples → coarse fill + bilinear upsample), then calls the
+                style's `draw(&Canvas, buf)`.
                 In 256-colour mode a final pass (`render/dither256.rs`) turns
                 blended RGB into xterm indices, Bayer-dithering dark tints the
                 cube lacks (`Theme::dithering`/`Theme::dither`).
@@ -282,57 +277,29 @@ numbers); `docs/design.md` is the layout/visual contract.
                 listed in `styles::ALL` as `StyleEntry::of::<S>()` (cycle
                 order; `StyleId` looks up by name; `styles::ALIASES` maps
                 old names, e.g. `glass` → `chrome`). `canvas.rs`: `Canvas`
-                (samples, mask, light, theme, time, its `area`) and the
+                (samples, theme, time, its `area`) and the
                 shared cell loops: `for_each_cell(buf, |at, cell|)` (an
-                `At` carries the cell, its top-left pixel, backdrop ink and
-                base colour), `draw_half_blocks(buf, |x, y| Option<Color>)`,
+                `At` carries the cell, its top-left pixel and the liquid's
+                colour, `base`; `LIQUID` is the ink behind the wax), `draw_half_blocks(buf, |x, y| Option<Color>)`,
                 `cell_at` / `cell_mut` for styles that walk their own order
                 (matrix, column by column). `cell.rs`: `half_block`,
                 `braille_dots(cx, cy, |x, y| bool)`, `blank` / `glyph` /
                 `mark`. Level helpers in `mod.rs`: `coverage` (quantised AA
-                edge), `soft_edge`, `wax_heat`, `lit`, `bayer`,
+                edge), `soft_edge`, `wax_heat`, `bayer`,
                 `smoothstep`; in `styles/mod.rs`: `is_edge`, `quantise`,
-                `stepped_heat` (16 wax steps), `hash`. `walls.rs`: the bottle's
-                walls at half-column / half-row precision; the mask is per
-                cell row (cut cells count as inside), then `smooth`
-                reshapes cut cells into quadrant glyphs (blending themes;
-                `ui::glass` draws `▕ │ ▏` otherwise). Snapshots:
+                `stepped_heat` (16 wax steps), `hash`. Snapshots:
                 `render/snapshots/` (`UPDATE_SNAPSHOTS=1 cargo test` to rewrite, then review).
-- `light/`    — `Lighting` trait + `Lamplight`, the lighting pass (lava-5ak).
-                Fills a per-sample brightness buffer (1.0 = unlit) that styles
-                read via `Canvas::light`: dome normals from depth + density
-                gradient → half-Lambert key light (up-left) + small specular,
-                flattened on hot wax; glow from the kernel tail of hot wax;
-                warm base light in the bottom third. One sweep down the
-                rows in 16-px runs that pay only for what reaches them
-                (open / glow tail / wax), every loop a vectorised zip, no
-                heap scratch; on fine grids (height ≥ 160, i.e. braille at
-                200×60) the dome shading comes from a half-res node grid,
-                interpolated (lava-je6). Output quantised (bandwidth).
-                Hot-loop rule: `f32::clamp` and float `max` folds don't
-                vectorise; use `max().min()` and integer-bit maxima.
-                Blending styles apply it with `paint.shade(light)` (eases
-                brightening by lightness; `scale` stays a plain multiply for a
-                style's own effects); glyph depths use `render::lit` to shift
-                density instead (§5.3). Styles with their own key light
-                (chrome) take it on the liquid only. `LampView` resets light
-                to 1.0 outside the glass. Tuning at the top of the file.
-                `ui::draw` passes it when `lamp.lighting` is on (`l` toggles);
-                `ui::glass` then adds the §2.1 highlight streak.
 - `clock/`    — clock faces (`Face` trait + `FACES` registry: blocks, segment,
                 analog, binary, words, text; each lists fixed-size `Form`s and
                 `fit()` picks the largest that fits) and the pomodoro state
                 machine (`Pomodoro`, pure, `Instant` passed in) +
                 `PomodoroWidget`. Faces leave spaces transparent.
 - `ui/`       — the only terminal-facing code. `layout.rs`: the pure
-                `layout(area, &LayoutInput) -> Layout` of design §1 (frame
-                glass/bleed, margins, right/bottom panel, chip, status row,
-                toast row; hide order date → margins → face size → glass →
-                panel). `keymap.rs`: the single `KEYMAP` table that drives
+                `layout(area, &LayoutInput) -> Layout` of design §1 (the lamp
+                rect, right/bottom panel, chip, status row, toast row; hide
+                order date → face size → panel). `keymap.rs`: the single `KEYMAP` table that drives
                 both dispatch (`action_for(event, InputMode)`) and the help
-                overlay. `mod.rs` draws back to front; `glass.rs` (cap/base in
-                shaded metal with half-cell edges, `▕ ▏` walls in 16/none),
-                `panel.rs` (face + date + pomodoro, chip), `chrome.rs` (status
+                overlay. `mod.rs` draws back to front; `panel.rs` (face + date + pomodoro, chip), `chrome.rs` (status
                 bar + hint fitting, HUD, toasts), `help/` (`sheet.rs`: the
                 pure geometry the model also reads — form per size, lines,
                 body rect, `footprint`, `max_scroll`; `mod.rs` draws),
@@ -358,7 +325,7 @@ never drift apart; there is no direct crossterm dependency.
   (+ `cell::braille_dots` / `mark`), colours only via `c.theme`. Then
   `mod <name>;` and one `StyleEntry::of::<<name>::X>()` line in
   `styles::ALL`. The style tests (every style at every depth, snapshots,
-  lighting, stays-in-area, time-purity) pick it up; run
+  stays-in-area, time-purity) pick it up; run
   `UPDATE_SNAPSHOTS=1 cargo test`, review the new snapshots, and check
   `bench_lamp`. Renamed a style? Add the old name to `styles::ALIASES`.
 - **A clock face**: `clock/<name>.rs` implementing `Face` (`name`,
@@ -379,7 +346,6 @@ never drift apart; there is no direct crossterm dependency.
 - New render styles / clock faces / keys plug in via a trait or table +
   registry (see "Adding things"); no match-arms sprinkled across the
   codebase.
-- Colours are decided only in `theme/`; geometry of the lamp only in
-  `silhouette.rs`.
+- Colours are decided only in `theme/`.
 - Fixed simulation timestep, decoupled from render frame rate.
 - Gate before handing off: `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`.
