@@ -239,7 +239,10 @@ fn coarse_dome_matches_exact() {
             // within a pixel or two (a small blob's highlight, a neck's
             // saddle, see `FINE`), which nodes two pixels apart can't
             // hold. The dome itself has no creases, so those are few and
-            // only a few steps off.
+            // only a few steps off. Lobed blobs (sim::field) have necks and
+            // saddles all over, so about 1 % of pixels are a step off, 1 in
+            // 1 500 more than that, and a crease can be a few steps further
+            // off (6 / 24 on a braille dot).
             let (mut moved, mut far, mut most) = (0, 0, 0.0f32);
             for (e, c) in exact.iter().zip(&coarse) {
                 let d = (e - c).abs();
@@ -247,13 +250,13 @@ fn coarse_dome_matches_exact() {
                 far += usize::from(d > 1.5 * step);
                 most = most.max(d);
             }
-            assert!(moved * 100 < w * h, "seed {seed}: {moved} pixels moved");
+            assert!(moved * 50 < w * h, "seed {seed}: {moved} pixels moved");
             assert!(
-                far * 3_000 < w * h,
+                far * 1_000 < w * h,
                 "seed {seed}: {far} pixels moved > a step"
             );
             assert!(
-                most <= 4.5 * step,
+                most <= 6.5 * step,
                 "seed {seed}: off by {} steps",
                 most / step
             );

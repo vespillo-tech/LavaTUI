@@ -488,7 +488,7 @@ The sim lives in **world units**, independent of the terminal:
   glass mode, only the sampling does.
 * Bleed: world width follows the region. On resize the walls **ease** to
   the new width over 250 ms (the sim pushes blobs, so nothing teleports),
-  and total wax volume is kept at a constant **≈ 26 % of world area** by
+  and total wax volume is kept at a constant **≈ 30 % of world area** by
   slowly growing/shrinking the bottom pool (no blobs pop in or out).
 
 ### 2.3 Cell aspect
@@ -509,11 +509,18 @@ otherwise **2.0**. Recompute on every resize.
   influence box. Cost scales with *blob area*, not blobs × pixels.
 * Blob count is set by the world, not the window: a few big, varied blobs
   rather than many equal ones. At the default heat (3), glass aims for
-  **5** (radii spanning 3:1 or more) and bleed for `≈ 3.5 × A_region`,
-  clamped to 3–20. Heat scales the target by `1 + 0.4 × (heat − 3)`
-  (×0.6 at heat 1, ×1.4 at heat 5), and the result is clamped to 2–40, so
-  glass runs about 3–7 blobs. The pool stays thin (≈ 0.045 lamp heights,
-  never below 0.022) and buds sooner the deeper it gets.
+  **4** (radii spanning 3:1 or more, now and then one a third to half the
+  bottle wide) and bleed for `≈ 2.8 × A_region`, clamped to 3–16. Heat
+  scales the target by `1 + 0.4 × (heat − 3)` (×0.6 at heat 1, ×1.4 at
+  heat 5), and the result is clamped to 2–40, so glass runs about 2–6
+  blobs. The pool is a soft mound of the same wax (≈ 0.07 lamp heights
+  on average, never below 0.045; heaped about 1.5× in the middle of each
+  ≈ 0.9-wide mound, thinner at the walls), glowing hot where it is deep
+  and cooler at its skin. It buds mostly off the mound tops, and sooner
+  the deeper it gets.
+* Blobs are drawn lumpy (a main bump plus slowly orbiting lobes), stretch
+  and teardrop along their motion, and join the pool with a skirt that
+  draws in to a neck as a bud lets go (`sim/field.rs`).
 
 ---
 

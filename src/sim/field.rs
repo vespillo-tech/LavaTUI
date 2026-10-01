@@ -11,12 +11,17 @@
 //! with a neck instead of just overlapping. The pool adds a soft slab along
 //! the base.
 //!
-//! Moving blobs are drawn as teardrops: the half of the ellipse ahead of
-//! the motion is shortened and the half behind lengthened by the same
-//! amount (`TAPER`), which keeps the area, so a rising blob trails a tail
-//! and one coming off the pool shows a neck.
+//! A blob is drawn as a main bump plus two or three smaller lobes whose
+//! offsets slowly orbit and breathe (fixed by the blob's id, so it costs no
+//! sim state), so outlines are lumpy and keep changing while the union
+//! still covers about the blob's area. Moving blobs are drawn as teardrops:
+//! the half of each ellipse ahead of the motion is shortened and the half
+//! behind lengthened by the same amount (`TAPER`), which keeps the area, so
+//! a rising blob trails a tail. Buds and melting blobs get a skirt joining
+//! them to the pool: a broad bulge that draws in to a neck as a bud lets
+//! go. The pool is coloured hot where it is deep and cooler at its skin.
 
-use super::{Shape, World, ambient_temp, pool_surface};
+use super::{Phase, Shape, World, ambient_temp, pool_surface};
 
 /// Density at a wax surface. Inside is `>= SURFACE`; a lone blob peaks at
 /// about 1.05 and overlaps go higher, so clamp before mapping to colour.
@@ -31,10 +36,24 @@ const PEAK: f32 = {
 };
 /// Half-thickness of the pool's soft surface.
 const POOL_BAND: f32 = 0.035;
+/// The pool's colour: a cooler skin at the surface, glowing up to the
+/// pool's own temperature this deep (lamp heights).
+const POOL_SKIN_TEMP: f32 = 0.66;
+const POOL_GLOW_DEPTH: f32 = 0.12;
+/// Blob shape: a main bump plus satellite lobes (radius multiples), all
+/// scaled by `LOBE_SCALE` so the union covers about the blob's own area.
+const MAIN_LOBE: f64 = 0.8;
+const LOBE_SIZE: (f64, f64) = (0.55, 0.75);
+const LOBE_DIST: (f64, f64) = (0.28, 0.45);
+const LOBE_SCALE: f64 = 0.955;
+/// Skirt joining a bud to the pool: its half-width in blob radii when the
+/// bud starts and when it lets go, and how far grown a melting blob's is.
+const SKIRT: (f64, f64) = (0.9, 0.35);
+const MELT_SKIRT: f64 = 0.3;
 /// Teardrop taper per unit of vertical speed (lamp heights / s), and its
-/// cap: a hot blob at full speed is about 0.6 / 1.4 front / back.
-const TAPER: f64 = 7.0;
-const MAX_TAPER: f64 = 0.4;
+/// cap: a hot blob at full speed is about 0.4 / 1.6 front / back.
+const TAPER: f64 = 10.0;
+const MAX_TAPER: f64 = 0.5;
 /// Weight given to the liquid's temperature when blending, so `temp` fades
 /// smoothly from wax to liquid at the edges.
 const LIQUID_WEIGHT: f32 = 0.02;
@@ -74,6 +93,8 @@ pub struct Field {
     view_width: f32,
     wall_width: f64,
     pool_level: f64,
+    /// Width of the container's floor, under the pool.
+    floor: f64,
     time: f64,
 }
 
@@ -83,31 +104,47 @@ impl Field {
     pub fn prepare(&mut self, world: &World, alpha: f64) {
         let alpha = alpha.clamp(0.0, 1.0);
         self.kernels.clear();
-        self.kernels.extend(world.blobs.iter().map(|blob| {
+        let time = world.time - (1.0 - alpha) * world.last_dt;
+        let pool_level =
+            world.prev_pool_level + (world.pool_level() - world.prev_pool_level) * alpha;
+        let floor = world.bottom_width();
+        for blob in &world.blobs {
             let pose = blob.prev.lerp(blob.pose(), alpha);
-            let reach = f64::from(SUPPORT) * pose.radius;
-            let (reach_x, reach_y) = (reach / pose.stretch, reach * pose.stretch);
             // Rising: the tail hangs below; sinking: it trails above.
             let taper = (TAPER * blob.vy).clamp(-MAX_TAPER, MAX_TAPER);
-            let (reach_up, reach_down) = (reach_y * (1.0 - taper), reach_y * (1.0 + taper));
-            Kernel {
-                x: pose.x as f32,
-                y: pose.y as f32,
-                inv_x2: (1.0 / (reach_x * reach_x)) as f32,
-                inv_up2: (1.0 / (reach_up * reach_up)) as f32,
-                inv_down2: (1.0 / (reach_down * reach_down)) as f32,
-                reach_x: reach_x as f32,
-                reach_up: reach_up as f32,
-                reach_down: reach_down as f32,
-                temp: blob.temp as f32,
+            let temp = blob.temp as f32;
+            let r = pose.radius;
+            let kernel =
+                |x: f64, y: f64, radius: f64| Kernel::new(x, y, radius, pose.stretch, taper, temp);
+            self.kernels
+                .push(kernel(pose.x, pose.y, LOBE_SCALE * MAIN_LOBE * r));
+            for lobe in lobes(blob.id, time) {
+                let (dx, dy) = (lobe.dx * r / pose.stretch, lobe.dy * r * pose.stretch);
+                self.kernels
+                    .push(kernel(pose.x + dx, pose.y + dy, LOBE_SCALE * lobe.size * r));
             }
-        }));
+            // Attached to the pool: a skirt of wax joins the two, a broad
+            // bulge while a bud swells that draws in to a neck as it lets go.
+            let grown = match blob.phase {
+                Phase::Budding { target } => (r / target).min(1.0),
+                Phase::Melting => MELT_SKIRT,
+                Phase::Free => continue,
+            };
+            let surface = pool_surface(pool_level, pose.x, floor, time);
+            let bottom = pose.y - r * pose.stretch;
+            let width = r * (SKIRT.0 + (SKIRT.1 - SKIRT.0) * grown);
+            let height = (0.5 * (bottom - surface) + 0.5 * width).max(0.6 * width);
+            let (x, y) = (pose.x, surface.max(0.5 * (surface + bottom)));
+            let radius = (width * height).sqrt();
+            let skirt = Kernel::new(x, y, radius, height / radius, 0.0, temp);
+            self.kernels.push(skirt);
+        }
         self.shape = world.shape;
         self.view_width = world.view_width as f32;
         self.wall_width = world.wall_width;
-        self.pool_level =
-            world.prev_pool_level + (world.pool_level() - world.prev_pool_level) * alpha;
-        self.time = world.time - (1.0 - alpha) * world.last_dt;
+        self.pool_level = pool_level;
+        self.time = time;
+        self.floor = floor;
     }
 
     /// Viewport width in world units (the lamp's visual aspect).
@@ -134,7 +171,7 @@ impl Field {
             }
         }
         if self.in_container(f64::from(x), f64::from(y)) {
-            let surface = pool_surface(self.pool_level, f64::from(x), self.time) as f32;
+            let surface = pool_surface(self.pool_level, f64::from(x), self.floor, self.time) as f32;
             add_pool(&mut acc, surface - y);
         }
         finish(&mut acc, ambient_temp(f64::from(y)) as f32);
@@ -185,11 +222,14 @@ impl Field {
         }
 
         // Pool: only the rows its surface can reach.
-        let top = (self.pool_level + 1.5 * super::POOL_WAVE) as f32 + POOL_BAND;
+        let top = ((self.pool_level + 1.3 * super::POOL_MOUND * super::MOUND_DEPTH)
+            + 1.6 * super::POOL_WAVE) as f32
+            + POOL_BAND;
         if let Some((j0, _)) = span((1.0 - top) / px_h, rows as f32, rows) {
             for i in 0..cols {
                 let x = x_at(i);
-                let surface = pool_surface(self.pool_level, f64::from(x), self.time) as f32;
+                let surface =
+                    pool_surface(self.pool_level, f64::from(x), self.floor, self.time) as f32;
                 for j in j0..rows {
                     let y = y_at(j);
                     if self.in_container(f64::from(x), f64::from(y)) {
@@ -213,6 +253,24 @@ impl Field {
 }
 
 impl Kernel {
+    /// A bump `radius` across (equal-area), `stretch`ed and `taper`ed.
+    fn new(x: f64, y: f64, radius: f64, stretch: f64, taper: f64, temp: f32) -> Self {
+        let reach = f64::from(SUPPORT) * radius;
+        let (reach_x, reach_y) = (reach / stretch, reach * stretch);
+        let (reach_up, reach_down) = (reach_y * (1.0 - taper), reach_y * (1.0 + taper));
+        Kernel {
+            x: x as f32,
+            y: y as f32,
+            inv_x2: (1.0 / (reach_x * reach_x)) as f32,
+            inv_up2: (1.0 / (reach_up * reach_up)) as f32,
+            inv_down2: (1.0 / (reach_down * reach_down)) as f32,
+            reach_x: reach_x as f32,
+            reach_up: reach_up as f32,
+            reach_down: reach_down as f32,
+            temp,
+        }
+    }
+
     /// Vertical part of the squared elliptical distance at offset `dy`.
     #[inline]
     fn qy(&self, dy: f32) -> f32 {
@@ -243,13 +301,58 @@ fn add_kernel(s: &mut Sample, k: &Kernel, q2: f32) {
     }
 }
 
-/// `depth` = how far below the pool surface (negative above it).
+/// `depth` = how far below the pool surface (negative above it). The pool
+/// glows hot where it is deep, over the heater, and shows a cooler skin.
 #[inline]
 fn add_pool(s: &mut Sample, depth: f32) {
-    let t = (depth / POOL_BAND * 0.5 + 0.5).clamp(0.0, 1.0);
-    let w = t * t * (3.0 - 2.0 * t);
+    let w = smooth01(depth / POOL_BAND * 0.5 + 0.5);
+    let hot = super::POOL_TEMP as f32;
+    let temp = POOL_SKIN_TEMP + (hot - POOL_SKIN_TEMP) * smooth01(depth / POOL_GLOW_DEPTH);
     s.density += w;
-    s.temp += w * super::POOL_TEMP as f32;
+    s.temp += w * temp;
+}
+
+#[inline]
+fn smooth01(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// One satellite of a blob's main bump, in units of the blob's radius
+/// (before stretch).
+struct Lobe {
+    dx: f64,
+    dy: f64,
+    size: f64,
+}
+
+/// A blob's lobes at `time`: two or three smaller bumps around the main one
+/// whose offsets slowly orbit and breathe, so the outline is lumpy and
+/// keeps changing. Fixed by the blob's id: no sim state, deterministic.
+fn lobes(id: u64, time: f64) -> impl Iterator<Item = Lobe> {
+    let mut h = hash(id);
+    let count = 2 + (h % 2) as usize;
+    (0..count).map(move |_| {
+        h = hash(h);
+        let unit = |bits: u32| f64::from((h >> bits) as u16) / 65536.0;
+        let spin = (0.03 + 0.07 * unit(0)) * if h & (1 << 63) != 0 { 1.0 } else { -1.0 };
+        let angle = 2.0 * std::f64::consts::PI * unit(16) + spin * time;
+        let breathe = 1.0 + 0.2 * (time * (0.1 + 0.15 * unit(32)) + 6.0 * unit(48)).sin();
+        let dist = LOBE_DIST.0 + (LOBE_DIST.1 - LOBE_DIST.0) * unit(40);
+        Lobe {
+            dx: angle.cos() * dist * breathe,
+            dy: angle.sin() * dist * breathe,
+            size: LOBE_SIZE.0 + (LOBE_SIZE.1 - LOBE_SIZE.0) * unit(24),
+        }
+    })
+}
+
+/// SplitMix64 finaliser.
+fn hash(x: u64) -> u64 {
+    let mut z = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
 }
 
 #[inline]

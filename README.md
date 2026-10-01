@@ -240,8 +240,9 @@ intact.
 
 ## Performance
 
-These numbers were measured on main (`633113d`) on an Apple M5 laptop
-under background load (load average 5–8), so treat them as rough.
+These numbers were measured on an Apple M5 laptop under background load
+(load average 4–8), so treat them as rough. The render times below are
+from after the lumpy-wax pass (lava-ebq.30); the rest are from `633113d`.
 
 | Measurement | Result |
 |---|---|
@@ -256,15 +257,15 @@ field sampling plus the style draw and lighting, as measured by
 
 | Style | Unlit | Lit | | Style | Unlit | Lit |
 |---|---|---|---|---|---|---|
-| solid | 0.34 ms | 0.43 ms | | halftone | 0.13 ms | 0.16 ms |
-| outline | 0.32 ms | 0.40 ms | | crt | 0.38 ms | 0.43 ms |
-| heatmap | 0.44 ms | 0.51 ms | | synthwave | 0.48 ms | 0.53 ms |
-| ascii | 0.14 ms | 0.18 ms | | matrix | 0.11 ms | 0.13 ms |
-| dither | 0.27 ms | 0.33 ms | | topo | 0.56 ms | 0.67 ms |
-| braille | 0.34 ms | 0.42 ms | | chrome | 0.44 ms | 0.50 ms |
+| solid | 0.37 ms | 0.43 ms | | halftone | 0.15 ms | 0.19 ms |
+| outline | 0.41 ms | 0.50 ms | | crt | 0.41 ms | 0.47 ms |
+| heatmap | 0.44 ms | 0.49 ms | | synthwave | 0.50 ms | 0.55 ms |
+| ascii | 0.15 ms | 0.19 ms | | matrix | 0.13 ms | 0.14 ms |
+| dither | 0.29 ms | 0.35 ms | | topo | 0.72 ms | 0.82 ms |
+| braille | 0.39 ms | 0.47 ms | | chrome | 0.46 ms | 0.51 ms |
 
-Every style stays under 0.7 ms at 200×60. The design target is 8 ms. At
-80×24, every style takes 0.02–0.13 ms. If frames ever get slow, adaptive
+Every style stays under 0.85 ms at 200×60. The design target is 8 ms. At
+80×24, every style takes 0.02–0.15 ms. If frames ever get slow, adaptive
 quality first lowers the sample grid and then drops to 30 fps. It
 recovers on its own and never changes your settings.
 
