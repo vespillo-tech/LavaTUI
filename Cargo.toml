@@ -12,7 +12,7 @@ directories = "6.0.0"
 getrandom = "0.3"
 jiff = "0.2.37"
 keyring = "4.2"
-ratatui = "0.30.2"
+ratatui = { version = "0.30.2", features = ["unstable-backend-writer"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha2 = "0.10"

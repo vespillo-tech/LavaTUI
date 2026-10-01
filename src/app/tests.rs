@@ -427,3 +427,41 @@ fn terminal_replies_are_not_keys() {
     assert_eq!(m.settings.lamp.heat, heat + 1);
     assert!(m.frozen);
 }
+
+/// An actual input burst redraws at once without moving the scheduled grid.
+#[test]
+fn input_redraw_keeps_the_scheduled_next_frame() {
+    let (mut model, t0) = model("input-grid", 80, 24);
+    let mut pacer = FramePacer::new(60, t0);
+    let deadline = pacer.deadline();
+    let mut input = Burst {
+        now: t0 + Duration::from_millis(10),
+        events: [Event::Key(KeyEvent::new(
+            KeyCode::Char(']'),
+            KeyModifiers::NONE,
+        ))]
+        .into(),
+    };
+    assert!(
+        wait_for_input(
+            &mut input,
+            &mut ReplyFilter::default(),
+            &mut model,
+            deadline
+        )
+        .unwrap()
+    );
+    pacer.frame_done(input.now + Duration::from_millis(1));
+    assert_eq!(pacer.deadline(), deadline);
+    assert!(pacer.deadline() - input.now < Duration::from_millis(7));
+}
+
+#[test]
+fn cleanup_ends_sync_and_shows_cursor_without_using_the_frame_buffer() {
+    if !output::ansi_output() {
+        return;
+    }
+    let mut bytes = Vec::new();
+    restore_modes(&mut bytes).unwrap();
+    assert!(bytes.ends_with(b"\x1b[?2026l\x1b[?25h"));
+}

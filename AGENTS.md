@@ -168,6 +168,9 @@ headlessly, run it under a pty with a window size set (e.g. Python `pty.fork`
 + `TIOCSWINSZ`) and `--frames N`; `script` alone gives a 0x0 pty. Keep
 draining the pty until the child exits, or it blocks writing and never
 reads your quit key; on macOS a read on the master after exit is EOF/EIO.
+`tools/trace_frames.py --output /tmp/lavatui-traces` runs five-minute
+sized pty sessions and summarizes frame intervals/spike locations; see
+`docs/perf/frame-trace.md` for the trace columns and measurement limits.
 `docs/screenshots/capture.py` does exactly this (pyte + Pillow) and
 regenerates the README screenshots; rerun it after visible changes.
 `README.md` is the user-facing overview (features, keys, config, perf
@@ -225,14 +228,23 @@ numbers); `docs/design.md` is the layout/visual contract.
                 live preview / keep / revert. `tick` advances
                 pomodoro/toasts/flash/eased speed/sim steps,
                 recomputes the layout, feeds the lamp's aspect to the sim,
-                and does the debounced (1 s) save. Fps: 10 unfocused; frozen
+                and queues the debounced (1 s) save. `model/saving.rs` owns
+                the config Store on a worker: frames only try-send/try-receive;
+                quit flushes the last change and joins after drawing stops.
+                `output.rs` batches each frame (including resize clears) in
+                one reusable byte buffer, wrapped in DEC 2026 synchronized
+                updates (passthrough on legacy non-ANSI Windows consoles);
+                panic/error cleanup also ends synchronization and shows the cursor.
+                `--trace <path>` / `LAVATUI_TRACE` records frame CSV in memory
+                and writes it on normal/error exit (not panic). Fps: 10 unfocused; frozen
                 frames sleep until the clock / pomodoro readout changes
                 (`idle_until`); `frame_drawn` feeds adaptive quality.
 - `timing.rs` — pure loop timing: `FixedStep` (accumulator, no per-frame
                 cap: sim time tracks real time × speed at any fps; only a
                 > 1.5 s `STALL` is cut short; `alpha()` for interpolation),
-                `FramePacer` (fixed-grid frame deadlines, resyncs when
-                late), `FpsMeter` (EMA), `Quality` (§7 adaptive quality: reduced
+                `FramePacer` (fixed-grid frame deadlines, skips expired slots
+                when late; immediate input redraws keep the grid),
+                `FpsMeter` (EMA), `Quality` (§7 adaptive quality: reduced
                 sample grid, then half fps; recovers with hysteresis and
                 backoff so it never flaps).
 - `sim/`      — wax simulation (pure, seeded, deterministic). `World::new(seed,
@@ -387,4 +399,10 @@ never drift apart; there is no direct crossterm dependency.
   codebase.
 - Colours are decided only in `theme/`.
 - Fixed simulation timestep, decoupled from render frame rate.
+- Worker integration: create media/lyrics/Spotify workers before the frame
+  loop; frame/input handlers only consume ready snapshots or send commands.
+  No process spawning, HTTP, keyring, filesystem I/O, blocking receives or
+  worker joins on that path. If a shared snapshot needs a lock, never hold
+  it across I/O or backend calls; bound event draining per frame. Join only
+  after drawing stops. Keep fake backends for deterministic model tests.
 - Gate before handing off: `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`.
