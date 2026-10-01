@@ -527,3 +527,26 @@ fn same_seed_and_controls_same_lamp() {
     assert_eq!(a.pool_area.to_bits(), b.pool_area.to_bits());
     assert_ne!(a.blobs, c.blobs);
 }
+
+#[test]
+fn switching_shape_keeps_the_lamp_and_eases_volume() {
+    let mut world = World::new(7, 2.0, Shape::Tank);
+    world.prewarm(600, DT);
+    let blobs = world.blobs().len();
+    let wax = world.wax_area();
+    world.set_shape(Shape::Bottle, 0.5);
+    assert_eq!(world.shape, Shape::Bottle);
+    assert_eq!(world.blobs().len(), blobs, "no blob pops on a shape switch");
+    world.step(DT);
+    assert_close(world.wax_area(), wax, wax * 0.01);
+    world.run(120 * 20);
+    let target = FILL * Shape::Bottle.area(0.5);
+    assert_close(world.wax_area(), target, target * 0.1);
+    for blob in world.blobs() {
+        assert!(
+            blob.x.abs() <= 0.25 + 1e-6,
+            "blob outside the bottle: {}",
+            blob.x
+        );
+    }
+}

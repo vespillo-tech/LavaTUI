@@ -68,10 +68,6 @@ impl StyleId {
         (0..styles::ALL.len()).map(StyleId)
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "config / --style land with lava-xxx")
-    )]
     pub fn by_name(name: &str) -> Option<StyleId> {
         Self::all().find(|id| id.style().name() == name)
     }
@@ -81,7 +77,6 @@ impl StyleId {
     }
 
     /// Position in the cycle (0-based), for `name  i/n` toasts.
-    #[cfg_attr(not(test), expect(dead_code, reason = "toasts land with lava-xxx"))]
     pub fn index(self) -> usize {
         self.0
     }
@@ -90,7 +85,7 @@ impl StyleId {
         StyleId((self.0 + 1) % styles::ALL.len())
     }
 
-    #[cfg_attr(not(test), expect(dead_code, reason = "picker lands with lava-xxx"))]
+    #[cfg_attr(not(test), expect(dead_code, reason = "pickers move by index"))]
     pub fn prev(self) -> StyleId {
         StyleId((self.0 + styles::ALL.len() - 1) % styles::ALL.len())
     }

@@ -15,7 +15,7 @@
 use std::ops::RangeInclusive;
 use std::time::Duration;
 
-use super::{Phase, World};
+use super::{Phase, Shape, World};
 
 /// Heat levels, and the one a fresh lamp (and the `0` reset key) uses.
 pub const HEAT_LEVELS: RangeInclusive<u8> = 1..=5;
@@ -80,15 +80,22 @@ impl SimSpeed {
     const NORMAL: usize = 2;
 
     /// One notch faster (saturates at ×4).
-    #[cfg_attr(not(test), expect(dead_code, reason = "bound to keys by lava-xxx"))]
     pub fn faster(self) -> Self {
         Self((self.0 + 1).min(Self::FACTORS.len() - 1))
     }
 
     /// One notch slower (saturates at ×0.25).
-    #[cfg_attr(not(test), expect(dead_code, reason = "bound to keys by lava-xxx"))]
     pub fn slower(self) -> Self {
         Self(self.0.saturating_sub(1))
+    }
+
+    /// The notch nearest `factor` (config files store the multiplier).
+    pub fn from_factor(factor: f64) -> Self {
+        let distance = |f: f64| (f.ln() - factor.max(1e-3).ln()).abs();
+        let nearest = (0..Self::FACTORS.len())
+            .min_by(|&a, &b| distance(Self::FACTORS[a]).total_cmp(&distance(Self::FACTORS[b])))
+            .unwrap_or(Self::NORMAL);
+        Self(nearest)
     }
 
     /// The multiplier, for display (`speed ×2`).
@@ -97,6 +104,10 @@ impl SimSpeed {
     }
 
     /// Real time → sim time.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the app eases between notches via factor()")
+    )]
     pub fn scale(self, elapsed: Duration) -> Duration {
         elapsed.mul_f64(self.factor())
     }
@@ -110,13 +121,11 @@ impl Default for SimSpeed {
 
 impl World {
     /// The chosen heat level (what the UI shows). The sim eases toward it.
-    #[cfg_attr(not(test), expect(dead_code, reason = "bound to keys by lava-xxx"))]
     pub fn heat(&self) -> u8 {
         self.heat_target
     }
 
     /// Choose a heat level, clamped to [`HEAT_LEVELS`].
-    #[cfg_attr(not(test), expect(dead_code, reason = "bound to keys by lava-xxx"))]
     pub fn set_heat(&mut self, level: u8) {
         self.heat_target = level.clamp(*HEAT_LEVELS.start(), *HEAT_LEVELS.end());
     }
@@ -124,7 +133,6 @@ impl World {
     /// Melt every blob into the pool, then bud a new lamp from `seed`. The
     /// melt takes under ~2 s and wax is conserved throughout. Calling it
     /// again mid-reseed restarts the melt with the newer seed.
-    #[cfg_attr(not(test), expect(dead_code, reason = "bound to keys by lava-xxx"))]
     pub fn reseed(&mut self, seed: u64) {
         self.rng = super::Rng::new(seed);
         self.reseed = Some(Reseed::Melting);
@@ -134,8 +142,24 @@ impl World {
         }
     }
 
+    /// Switch the container (glass bottle ↔ bleed tank) at a new `aspect`.
+    /// The two can differ several times over in area, so the wax melts back
+    /// into the pool (as in [`World::reseed`], ~2 s), the pool eases to the
+    /// new volume and buds a fresh lamp. Nothing pops or teleports.
+    pub fn set_shape(&mut self, shape: Shape, aspect: f64) {
+        if shape != self.shape {
+            let seed = self.rng.next_u64();
+            self.reseed(seed);
+            self.shape = shape;
+            let width = aspect.clamp(super::ASPECT_RANGE.0, super::ASPECT_RANGE.1);
+            self.view_width = width;
+            self.wax_target = super::FILL * shape.area(width);
+        }
+        self.set_aspect(aspect);
+    }
+
     /// True from [`World::reseed`] until the new lamp has budded.
-    #[cfg_attr(not(test), expect(dead_code, reason = "read by the UI (lava-xxx)"))]
+    #[cfg_attr(not(test), expect(dead_code, reason = "for a future HUD line"))]
     pub fn is_reseeding(&self) -> bool {
         self.reseed.is_some()
     }
@@ -143,10 +167,6 @@ impl World {
     /// Warm the wax around (`u`, `v`): normalised viewport coordinates, `v`
     /// down, exactly as in [`super::Field::sample`]. Nearby blobs heat up
     /// over the next second and rise; a pulse on the pool raises a bud.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "bound to the mouse by lava-xxx")
-    )]
     pub fn heat_pulse(&mut self, u: f64, v: f64) {
         let (x, y) = ((u - 0.5) * self.view_width, 1.0 - v);
         if !(x.is_finite() && y.is_finite()) {
@@ -233,6 +253,10 @@ mod tests {
             speed = speed.faster();
             assert_eq!(speed.factor(), expected);
         }
+        assert_eq!(SimSpeed::from_factor(2.0).factor(), 2.0);
+        assert_eq!(SimSpeed::from_factor(0.3).factor(), 0.25);
+        assert_eq!(SimSpeed::from_factor(100.0).factor(), 4.0);
+        assert_eq!(SimSpeed::from_factor(-1.0).factor(), 0.25);
         for expected in [2.0, 1.0, 0.5, 0.25, 0.25] {
             speed = speed.slower();
             assert_eq!(speed.factor(), expected);

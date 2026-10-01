@@ -11,9 +11,6 @@
 //! and finally falling back to plain text (`14:32`, 5×1). Below 5×1 nothing
 //! is drawn at all: a face never truncates or overflows.
 
-// Not wired into the UI yet (lava-xxx does that); tests exercise it all.
-#![allow(dead_code, unused_imports)]
-
 mod analog;
 mod binary;
 mod blocks;
@@ -27,10 +24,10 @@ mod words;
 pub use analog::Analog;
 pub use binary::Binary;
 pub use blocks::Blocks;
-pub use pomodoro::{Phase, PhaseEnd, Pomodoro, PomodoroConfig, Status, format_remaining};
+pub use pomodoro::{PhaseEnd, Pomodoro, PomodoroConfig, Status, format_remaining};
 pub use pomodoro_view::{PomodoroStyle, PomodoroWidget};
 pub use segment::Segment;
-pub use text::Text;
+pub use text::{Text, readout};
 pub use words::Words;
 
 use ratatui::buffer::Buffer;

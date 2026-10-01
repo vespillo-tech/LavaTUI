@@ -468,7 +468,7 @@ on every resize.
 
 ## 3. Minimal mode
 
-`m` toggles it; `--minimal` (short `-m` to be added) starts in it; it's persisted in config.
+`m` toggles it; `--minimal` / `-m` starts in it; it's persisted in config.
 The switch is instant: the next frame shows the new layout, and the sim is
 untouched (same blobs, same phase).
 
@@ -665,14 +665,17 @@ discoverable.
 panel uses the largest one that fits its inner rect. Anything that can't
 fit falls back to `text` (`14:32`, 5×1), which always fits.
 
+Sizes are the real ones from `src/clock` (24h, no seconds; seconds add
+width only in L/XL, where the panel allows them):
+
 | Face | S | M | L | XL |
 |---|---|---|---|---|
-| `blocks` (default) | — | 3×5 font, half-blocks: 19×3 | ×2: 37×5 | ×3 (Huge only): 55×8 |
-| `segment` | 13×1 (`▖▗` mini) | 19×3 | 31×5 | 45×7 |
+| `blocks` (default) | — | 3×5 font, half-blocks: 17×3 | ×2: 34×5 (with seconds 54×5) | ×3 (Huge only): 51×8 |
+| `segment` | — | 17×3 | 21×5 (with seconds 33×5) | 33×7 |
 | `analog` | — | 15×8 | 23×12 | 31×16 (circle aspect-corrected) |
-| `binary` | 11×4 | 17×6 | — | — |
-| `words` | 18×3 | 24×4 | 32×4 | — |
-| `text` | 5×1 | — | — | — |
+| `binary` | 9×4 | 12×6 | — | — |
+| `words` | 16×3 | 24×2 | 21×10 (word grid) | — |
+| `text` | 5×1 (`14:32`; 12h ` 2:32 pm` 8×1) | — | — | — |
 
 The colon never blinks (motion belongs to the lamp). Seconds appear only
 in L/XL variants and the `text` face's 12h/24h follows `T`.
@@ -850,8 +853,8 @@ so they can't drift.
 | `?` | toggle help | |
 | `q` | quit | closes the overlay instead when one is open |
 | `ctrl-c` | quit | always, from anywhere |
-| `esc` | close overlay / cancel picker | no-op otherwise: **esc never quits** (esc is muscle memory for "close this"; an accidental quit loses pomodoro state). The scaffold currently quits on esc, and `lava-xxx` must change that |
-| `m` | minimal mode on/off | also `--minimal` (add short `-m`) |
+| `esc` | close overlay / cancel picker | no-op otherwise: **esc never quits** (esc is muscle memory for "close this"; an accidental quit loses pomodoro state) |
+| `m` | minimal mode on/off | also `--minimal` / `-m` |
 | `b` | status bar on/off | full mode only |
 | `s` / `S` | next style / style picker | toast shows `name  i/n` |
 | `c` / `C` | next clock face / face picker | |
@@ -1001,10 +1004,17 @@ clock = "under"          # under | corner | off
 mouse = false
 ```
 
-CLI: `--minimal`, `--fps <n>` (exist today; add short `-m`, plus hidden `--frames`),
-and planned `--style <name>`, `--palette <name>`, `--color <depth>`,
-`--seed <u64>`. Flags override config for the
-session only. They're never written back.
+CLI: `--minimal`/`-m`, `--fps <n>`, `--style <name>`, `--palette <name>`,
+`--color <depth>`, `--seed <u64>`, `--config <path>` (use this file
+instead of the XDG one), plus hidden `--frames`. Flags override config for
+the session only. They're never written back (until you change that
+setting in the app, which then saves as usual).
+
+The file lives at `$XDG_CONFIG_HOME/lavatui/config.toml`, else the
+platform config dir (`~/.config/lavatui/` on Linux, `~/Library/Application
+Support/lavatui/` on macOS). It is saved 1 s after the last change and on
+quit. A missing file means defaults; a corrupt one means defaults plus a
+toast, and it is moved to `config.toml.bak` before the first save.
 
 ---
 

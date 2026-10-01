@@ -141,6 +141,7 @@ as much as the code.
 - **Rust** (stable, edition 2024) — single binary crate `lavatui`
 - **ratatui** + **crossterm** for terminal UI / input
 - **serde** + **toml** for config (XDG config dir via `directories`)
+- **jiff** for local wall-clock time (clock faces, date line)
 - Tests: built-in `cargo test`; pure logic (sim, clock, pomodoro) kept
   terminal-free so it is unit-testable
 
@@ -149,30 +150,52 @@ as much as the code.
 ```bash
 cargo build                          # debug build
 cargo run --release                  # run the lamp (release: the sim wants the speed)
-cargo run --release -- --minimal     # just the lamp, no chrome
+cargo run --release -- -m            # just the lamp, no chrome (--minimal)
 cargo run --release -- --fps 30      # target render fps (1..=240, default 60)
+cargo run --release -- --config /tmp/x.toml   # use a scratch config file
 cargo run --release -- --frames 300  # hidden: exit after N frames (smoke test / timing)
-cargo test                           # unit tests (timing, keymap, CLI)
+cargo test                           # unit tests (sim, render, layout sweep, keymap, model, config)
 cargo fmt --check                    # formatting gate
 cargo clippy --all-targets -- -D warnings   # lint gate
 cargo test --release -- --ignored --nocapture bench_fill   # field sampler + step timing
 cargo test --release -- --ignored --nocapture bench_lamp   # per-style frame time + bytes/frame
-UPDATE_SNAPSHOTS=1 cargo test        # rewrite render snapshots (review the diff!)
+UPDATE_SNAPSHOTS=1 cargo test        # rewrite render + layout snapshots (review the diff!)
 ```
 
 The binary needs a real TTY (it errors out cleanly without one). To smoke-test
 headlessly, run it under a pty with a window size set (e.g. Python `pty.fork`
-+ `TIOCSWINSZ`) and `--frames N`; `script` alone gives a 0x0 pty.
++ `TIOCSWINSZ`) and `--frames N`; `script` alone gives a 0x0 pty. Keep
+draining the pty until the child exits, or it blocks writing and never
+reads your quit key; on macOS a read on the master after exit is EOF/EIO.
 
 ## Architecture Overview
 
 - `main.rs`   — parse CLI, `ratatui::try_init` (raw mode, alt screen, panic
                 hook that restores the terminal), run app, `ratatui::restore`.
-- `cli.rs`    — clap derive flags (`--minimal`, `--fps`, hidden `--frames`)
-                folded into `Config`.
-- `config/`   — `Config` + defaults. TOML load/save (XDG dir) still TODO.
-- `app.rs`    — the loop: wait for input until the next frame deadline →
-                run N fixed sim steps → draw. Tiny on purpose.
+- `cli.rs`    — clap derive flags (`-m/--minimal`, `--fps`, `--style`,
+                `--palette`, `--color`, `--seed`, `--config`, hidden
+                `--frames`) → `config::Session` (session-only overrides).
+- `config/`   — `Settings`: the persisted TOML surface of design §9 (serde,
+                every field defaulted, `sanitized()` clamps). `Session` layers
+                CLI flags on top; `to_persist` puts the file's values back for
+                fields a flag still holds, so flags are never written back.
+                `store.rs`: XDG path (`$XDG_CONFIG_HOME/lavatui/config.toml` or
+                the `directories` config dir), load (missing → defaults,
+                corrupt → defaults + toast message, backed up to `.bak` on
+                first save), atomic save.
+- `app/`      — `mod.rs` is the loop only: poll input until the frame
+                deadline → `Model::update(action)` (any input draws at once;
+                queued events are drained first) → `Model::tick(now, area,
+                local_time)` → `ui::draw`. It owns the terminal, reads local
+                time (jiff) and cell aspect (`window_size` pixels), rings the
+                bell, enables focus reports (+ mouse capture if
+                `input.mouse`). `model.rs`: all state (settings, world,
+                style/theme/face, pomodoro, overlay, toast, layout) and all
+                behaviour: `update` applies one `Action` (overlay keys first;
+                under an overlay only quit/resize/focus get through),
+                `tick` advances pomodoro/toasts/flash/eased speed/sim steps,
+                recomputes the layout, matches the sim's `Shape` to the frame,
+                and does the debounced (1 s) save. Fps: 10 unfocused, 2 frozen.
 - `timing.rs` — pure loop timing: `FixedStep` (accumulator, max 8 steps per
                 frame, `alpha()` for interpolation), `FramePacer` (fixed-grid
                 frame deadlines, resyncs when late), `FpsMeter` (EMA).
@@ -183,8 +206,10 @@ headlessly, run it under a pty with a window size set (e.g. Python `pty.fork`
                 merge + split, melt back into the pool; wax area conserved.
                 `field.rs`: `Field::prepare(&world, alpha)` once per frame,
                 then `fill(&mut [Sample], cols, rows)` / `sample(u, v)`
-                (v down; density `>= SURFACE` is wax). Model notes and all
-                tuning constants are at the top of `sim/mod.rs`.
+                (v down; density `>= SURFACE` is wax). `controls.rs`: heat,
+                reseed, heat pulse, `SimSpeed`, `set_shape` (glass ↔ bleed:
+                melts the wax into the pool and re-buds, like reseed). Model
+                notes and all tuning constants are at the top of `sim/mod.rs`.
 - `theme/`    — palettes + colour depth: the only place colours are decided.
                 `Palette` (9 `Role`s × 8 palettes from design §5.2, hex/256/16),
                 `ColorDepth::detect()` (NO_COLOR → COLORTERM → TERM, §5.3),
@@ -205,20 +230,34 @@ headlessly, run it under a pty with a window size set (e.g. Python `pty.fork`
                 (`UPDATE_SNAPSHOTS=1 cargo test` to rewrite, then review).
 - `light/`    — `Lighting` trait: the seam for the glow pass (lava-5ak). Fills a
                 per-sample brightness buffer that styles read via `Canvas::light`.
-- `clock/`    — stub. Clock faces (`Face` trait) + pomodoro state machine.
-- `ui/`       — the only terminal-facing code. `draw(frame, &Scene, &mut LampState)`
-                renders `LampView` full-screen plus a one-line status hint;
-                `input.rs` maps crossterm events → `Action` (q/Esc/Ctrl-C quit,
-                `s` next style, `p` next palette — temporary until the lava-xxx
-                keymap — resize → immediate redraw).
+                `ui::draw` passes `lighting: None` today; the `l` key and
+                `lamp.lighting` setting are already wired for it.
+- `clock/`    — clock faces (`Face` trait + `FACES` registry: blocks, segment,
+                analog, binary, words, text; each lists fixed-size `Form`s and
+                `fit()` picks the largest that fits) and the pomodoro state
+                machine (`Pomodoro`, pure, `Instant` passed in) +
+                `PomodoroWidget`. Faces leave spaces transparent.
+- `ui/`       — the only terminal-facing code. `layout.rs`: the pure
+                `layout(area, &LayoutInput) -> Layout` of design §1 (frame
+                glass/bleed, margins, right/bottom panel, chip, status row,
+                toast row; hide order date → margins → face size → glass →
+                panel). `keymap.rs`: the single `KEYMAP` table that drives
+                both dispatch (`action_for(event, InputMode)`) and the help
+                overlay. `mod.rs` draws back to front; `glass.rs` (cap/base in
+                shaded metal with half-cell edges, `▕ ▏` walls in 16/none),
+                `panel.rs` (face + date + pomodoro, chip), `chrome.rs` (status
+                bar + hint fitting, HUD, toasts), `help.rs`, `picker.rs`.
+                `tests.rs`: size sweep 1×1..300×100 × 8 setting variants
+                (no overlap/overflow, lamp always there) + mockup-size checks
+                + layout snapshots in `ui/snapshots/`.
 
 crossterm is used via ratatui's re-export (`ratatui::crossterm`) so the two
 never drift apart; there is no direct crossterm dependency.
 
 ## Conventions & Patterns
 
-- Simulation, clock and pomodoro logic are pure and testable; only `ui/`
-  touches the terminal.
+- Simulation, clock, pomodoro, layout and the app `Model` are pure and
+  testable; only `ui/` drawing and `app/mod.rs` touch the terminal.
 - New render styles / clock faces plug in via a trait + registry; no
   match-arms sprinkled across the codebase.
 - Fixed simulation timestep, decoupled from render frame rate.

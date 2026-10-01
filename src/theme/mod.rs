@@ -34,9 +34,7 @@ pub enum Role {
     WaxMid,
     WaxHot,
     /// Cap, base, overlay borders.
-    #[cfg_attr(not(test), expect(dead_code, reason = "glass frame: lava-xxx"))]
     Metal,
-    #[cfg_attr(not(test), expect(dead_code, reason = "chrome: lava-xxx"))]
     Text,
     Dim,
     /// The one accent.
@@ -44,7 +42,7 @@ pub enum Role {
 }
 
 impl Role {
-    #[cfg_attr(not(test), expect(dead_code, reason = "palette picker: lava-xxx"))]
+    #[cfg_attr(not(test), expect(dead_code, reason = "palette tests iterate roles"))]
     pub const ALL: [Role; 9] = [
         Role::Bg,
         Role::Liquid,
@@ -109,10 +107,6 @@ impl Palette {
         &palettes::PALETTES
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "config / --palette land with lava-xxx")
-    )]
     pub fn by_name(name: &str) -> Option<&'static Palette> {
         Self::all().iter().find(|p| p.name == name)
     }
@@ -224,7 +218,6 @@ impl Theme {
         self.palette
     }
 
-    #[cfg_attr(not(test), expect(dead_code, reason = "toast fades: lava-xxx"))]
     pub fn depth(&self) -> ColorDepth {
         self.depth
     }
@@ -265,10 +258,6 @@ impl Theme {
     }
 
     /// A text style in `role`. In NO_COLOR, `accent` becomes bold (§5.3).
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "chrome styling lands with lava-xxx")
-    )]
     pub fn text(&self, role: Role) -> Style {
         let style = Style::new().fg(self.role(role));
         if self.depth == ColorDepth::None && role == Role::Accent {

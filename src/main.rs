@@ -16,7 +16,7 @@ use std::io;
 use clap::Parser;
 
 fn main() -> io::Result<()> {
-    let config = cli::Cli::parse().into_config();
+    let session = cli::Cli::parse().into_session();
 
     // `try_init` enters raw mode + the alternate screen and installs a panic
     // hook that restores the terminal; `restore` undoes it on normal exit.
@@ -27,7 +27,7 @@ fn main() -> io::Result<()> {
             format!("lavatui needs an interactive terminal: {err}"),
         )
     })?;
-    let result = app::run(&mut terminal, &config);
+    let result = app::run(&mut terminal, &session);
     ratatui::restore();
     result
 }

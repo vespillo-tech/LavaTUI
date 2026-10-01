@@ -5,6 +5,7 @@ use ratatui::layout::{Alignment, Rect, Size};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::Widget;
 
+use super::pomodoro::Phase;
 use super::*;
 
 const MARGIN: u16 = 2;
