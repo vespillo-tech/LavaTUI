@@ -7,10 +7,7 @@
 mod ascii;
 mod braille;
 mod chrome;
-mod crt;
-mod dither;
 mod halftone;
-mod heatmap;
 mod matrix;
 mod outline;
 mod solid;
@@ -23,12 +20,9 @@ use crate::sim::SURFACE;
 pub static ALL: &[StyleEntry] = &[
     StyleEntry::of::<solid::Solid>(),
     StyleEntry::of::<outline::Outline>(),
-    StyleEntry::of::<heatmap::Heatmap>(),
     StyleEntry::of::<ascii::Ascii>(),
-    StyleEntry::of::<dither::Dither>(),
     StyleEntry::of::<braille::Braille>(),
     StyleEntry::of::<halftone::Halftone>(),
-    StyleEntry::of::<crt::Crt>(),
     StyleEntry::of::<synthwave::Synthwave>(),
     StyleEntry::of::<matrix::Matrix>(),
     StyleEntry::of::<topo::Topo>(),

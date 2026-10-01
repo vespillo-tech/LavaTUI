@@ -249,6 +249,11 @@ pub struct Parsed {
     pub clamped: Vec<(String, String)>,
 }
 
+/// Styles earlier versions had (v1.1 dropped them): a file naming one gets
+/// the default style, without a word. The command line rejects them like
+/// any other unknown name.
+const RETIRED_STYLES: [&str; 3] = ["heatmap", "dither", "crt"];
+
 impl Settings {
     /// The sections of `config.toml`, in file order.
     const SECTIONS: [&str; 8] = [
@@ -294,8 +299,11 @@ impl Settings {
     }
 
     /// Put back the default for a style, palette or face name that names
-    /// nothing, reporting it in `ignored`.
+    /// nothing, reporting it in `ignored` (a retired style quietly).
     fn check_names(&mut self, ignored: &mut Vec<String>) {
+        if RETIRED_STYLES.contains(&self.lamp.style.as_str()) {
+            self.lamp.style = Lamp::default().style;
+        }
         let mut check = |key: &str, value: &mut String, known: bool, default: String| {
             if !known {
                 ignored.push(key.to_owned());
@@ -503,8 +511,8 @@ mod tests {
 
     #[test]
     fn partial_file_keeps_other_defaults() {
-        let s: Settings = toml::from_str("[lamp]\nstyle = \"dither\"\n").unwrap();
-        assert_eq!(s.lamp.style, "dither");
+        let s: Settings = toml::from_str("[lamp]\nstyle = \"braille\"\n").unwrap();
+        assert_eq!(s.lamp.style, "braille");
         assert_eq!(s.lamp.heat, 3);
         assert_eq!(s.clock, Clock::default());
     }
@@ -577,6 +585,13 @@ mod tests {
         let p = Settings::parse("[lamp]\nstyle = \"glass\"\n").unwrap();
         assert!(p.ignored.is_empty());
         assert_eq!(p.settings.lamp.style, "glass");
+        // A retired style quietly becomes the default.
+        for style in RETIRED_STYLES {
+            let p = Settings::parse(&format!("[lamp]\nstyle = \"{style}\"\n")).unwrap();
+            assert_eq!(p.ignored, [] as [&str; 0]);
+            assert_eq!(p.settings.lamp.style, Lamp::default().style);
+            assert!(StyleId::by_name(style).is_none(), "{style}");
+        }
     }
 
     #[test]

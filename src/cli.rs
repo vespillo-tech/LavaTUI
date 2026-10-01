@@ -21,7 +21,7 @@ pub struct Cli {
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..=240))]
     pub fps: Option<u32>,
 
-    /// Render style for this session (e.g. solid, outline, heatmap, ascii, chrome).
+    /// Render style for this session (e.g. solid, outline, ascii, braille, chrome).
     #[arg(long, value_name = "NAME", value_parser = style_name)]
     pub style: Option<String>,
 
@@ -150,9 +150,12 @@ mod tests {
         assert_eq!(err.exit_code(), 2);
         let msg = err.to_string();
         assert!(
-            msg.contains("no such style; one of: solid, outline"),
+            msg.contains("no such style; one of: solid, outline, ascii"),
             "{msg}"
         );
+        // Retired styles are unknown names on the command line.
+        let err = Cli::try_parse_from(["lavatui", "--style", "crt"]).unwrap_err();
+        assert!(err.to_string().contains("no such style"), "{err}");
         let err = Cli::try_parse_from(["lavatui", "--palette", "nope"]).unwrap_err();
         assert!(
             err.to_string().contains("one of: lava, ultraviolet"),

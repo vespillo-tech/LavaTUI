@@ -49,10 +49,10 @@
 ╭ style ─────────────────────────────────────────╮
 │ ▸ solid ·                                      │
 │   outline                                      │
-│   heatmap                                      │
 │   ascii                                        │
-│   dither                                       │
 │   braille                                      │
+│   halftone                                     │
+│   synthwave                                    │
 ╰────────────────────────────────────────────────╯
   ● solid · lava                        ↑↓ preview  ⏎ keep  esc revert
 ── face picker ──

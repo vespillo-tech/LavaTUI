@@ -191,8 +191,6 @@ pub enum Ink {
     Role(Role),
     /// Wax gradient, 0 = `wax_cool` … ½ = `wax_mid` … 1 = `wax_hot`.
     Wax(f32),
-    /// Thermal ramp, 0 = `liquid` → `wax_cool` → `wax_mid` → 1 = `wax_hot`.
-    Heat(f32),
 }
 
 /// Ramp resolution. 64 steps is smooth in truecolor and is the LUT size
@@ -202,8 +200,6 @@ const RAMP_STEPS: usize = 64;
 /// Truecolor channels are rounded to multiples of this, so sub-visible
 /// colour drift doesn't repaint cells (ratatui only sends changed cells).
 const TRUECOLOR_QUANT: u8 = 4;
-/// Where `wax_cool` sits on the thermal ramp (`liquid` is at 0).
-const HEAT_COOL_AT: f32 = 0.4;
 
 /// A palette at a colour depth. Cheap to build; rebuild it when either
 /// changes.
@@ -214,7 +210,6 @@ pub struct Theme {
     /// True when colours can be blended (truecolor / 256 with an RGB palette).
     blend: bool,
     wax: [Rgb; RAMP_STEPS],
-    heat: [Rgb; RAMP_STEPS],
     /// Per-role overrides of the palette ([`with_role`](Self::with_role)),
     /// indexed by `Role as usize`.
     repaint: [Option<Repaint>; 9],
@@ -240,7 +235,6 @@ impl Theme {
             depth,
             blend,
             wax: [Rgb::default(); RAMP_STEPS],
-            heat: [Rgb::default(); RAMP_STEPS],
             repaint: [None; 9],
             dither: false,
         };
@@ -292,14 +286,8 @@ impl Theme {
 
     fn build_ramps(&mut self) {
         let rgb = |r| self.rgb(Ink::Role(r));
-        let (liquid, cool, mid, hot) = (
-            rgb(Role::Liquid),
-            rgb(Role::WaxCool),
-            rgb(Role::WaxMid),
-            rgb(Role::WaxHot),
-        );
+        let (cool, mid, hot) = (rgb(Role::WaxCool), rgb(Role::WaxMid), rgb(Role::WaxHot));
         self.wax = ramp(&[(0.0, cool), (0.5, mid), (1.0, hot)]);
-        self.heat = ramp(&[(0.0, liquid), (HEAT_COOL_AT, cool), (0.7, mid), (1.0, hot)]);
     }
 
     pub fn palette(&self) -> &'static Palette {
@@ -423,7 +411,6 @@ impl Theme {
                 None => self.palette.swatch(role).rgb.unwrap_or_default(),
             },
             Ink::Wax(t) => lut(&self.wax, t),
-            Ink::Heat(t) => lut(&self.heat, t),
         }
     }
 
@@ -431,7 +418,7 @@ impl Theme {
     ///
     /// Deliberately not `#[inline]`, unlike the rest of the paint path:
     /// every paint computes it, and inlining it into blended styles' pixel
-    /// loops costs heatmap ~12 % (bench_lamp).
+    /// loops cost the blended styles up to ~12 % (bench_lamp).
     fn fallback(&self, ink: Ink) -> Color {
         if self.depth == ColorDepth::None {
             return TERMINAL_DEFAULT;
@@ -439,8 +426,6 @@ impl Theme {
         let role = match ink {
             Ink::Role(role) => role,
             Ink::Wax(t) => wax_step(t),
-            Ink::Heat(t) if t < HEAT_COOL_AT * 0.75 => Role::Liquid,
-            Ink::Heat(t) => wax_step((t - HEAT_COOL_AT) / (1.0 - HEAT_COOL_AT)),
         };
         if let Some(r) = self.repaint[role as usize] {
             return r.fallback;

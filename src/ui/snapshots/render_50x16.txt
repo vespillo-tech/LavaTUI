@@ -44,9 +44,9 @@
 ╭ style ─────────────────────────────────────────╮
 │ ▸ solid ·                                      │
 │   outline                                      │
-│   heatmap                                      │
 │   ascii                                        │
-│   dither                                       │
+│   braille                                      │
+│   halftone                                     │
 ╰────────────────────────────────────────────────╯
   ● solid         ↑↓ preview  ⏎ keep  esc revert
 ── face picker ──

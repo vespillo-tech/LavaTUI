@@ -219,7 +219,7 @@ fn animation_is_a_pure_function_of_time() {
             style.name()
         );
     }
-    for name in ["crt", "synthwave", "matrix"] {
+    for name in ["synthwave", "matrix"] {
         let style = StyleId::by_name(name).unwrap().style();
         assert_ne!(
             draw_at(style, 0.0),
@@ -458,10 +458,7 @@ fn every_style_responds_to_lighting() {
             let glyphs_only = matches!(depth, ColorDepth::Ansi16 | ColorDepth::None);
             // Without colour only glyph-density styles can show light;
             // the rest are silhouettes there.
-            let density = matches!(
-                name,
-                "heatmap" | "ascii" | "dither" | "braille" | "halftone"
-            );
+            let density = matches!(name, "ascii" | "braille" | "halftone");
             if !glyphs_only || density {
                 assert!(changed > 5, "{name} @ {depth_name}: {changed} cells lit");
             }
@@ -477,12 +474,9 @@ fn registry_cycles_and_names_are_unique() {
         [
             "solid",
             "outline",
-            "heatmap",
             "ascii",
-            "dither",
             "braille",
             "halftone",
-            "crt",
             "synthwave",
             "matrix",
             "topo",
@@ -730,7 +724,7 @@ fn bottle_snapshots_leave_the_outside_plain() {
     let area = Rect::new(0, 0, 24, 14);
     let mut mask = Vec::new();
     walls::mask(Shape::Bottle, area, Grid::CELL, &mut mask);
-    for name in ["solid", "crt"] {
+    for name in ["solid"] {
         let style = StyleId::by_name(name).unwrap().style();
         for (depth, depth_name) in [
             (ColorDepth::TrueColor, "truecolor"),

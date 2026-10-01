@@ -97,7 +97,6 @@ fn truecolor_roles_exact_and_ramps_continuous() {
     assert!(near(theme.color(Ink::Wax(0.0)), 0x8E1B12));
     assert!(near(theme.color(Ink::Wax(0.5)), 0xE2471B));
     assert!(near(theme.color(Ink::Wax(1.0)), 0xFFB04A));
-    assert!(near(theme.color(Ink::Heat(0.0)), 0x23160C));
     // Halfway between two stops is neither.
     let quarter = theme.color(Ink::Wax(0.25));
     assert_ne!(quarter, theme.color(Ink::Wax(0.0)));
@@ -192,7 +191,7 @@ fn only_blending_256_dithers() {
     let theme = Theme::new(lava(), ColorDepth::Ansi256).dithering().unwrap();
     // Unmixed roles keep their hand-picked index; blends wait for `dither`.
     assert_eq!(theme.role(Role::Liquid), Color::Indexed(233));
-    let blend = theme.color(Ink::Heat(0.2));
+    let blend = theme.color(Ink::Wax(0.2));
     assert!(matches!(blend, Color::Rgb(..)));
     assert!(matches!(theme.dither(blend, 0.5), Color::Indexed(_)));
     assert_eq!(theme.dither(Color::Indexed(9), 0.5), Color::Indexed(9));
@@ -277,8 +276,6 @@ fn ansi16_steps_and_never_blends() {
     assert_eq!(theme.color(Ink::Wax(0.0)), Color::Red);
     assert_eq!(theme.color(Ink::Wax(0.5)), Color::LightRed);
     assert_eq!(theme.color(Ink::Wax(1.0)), Color::LightYellow);
-    assert_eq!(theme.color(Ink::Heat(0.0)), Color::Reset);
-    assert_eq!(theme.color(Ink::Heat(1.0)), Color::LightYellow);
     assert_eq!(theme.role(Role::Liquid), Color::Reset);
     let liquid = theme.paint(Ink::Role(Role::Liquid));
     assert_eq!(liquid.mix(Ink::Wax(1.0), 0.4).color(), Color::Reset);
@@ -296,7 +293,6 @@ fn no_color_is_reset_everywhere_and_accent_bold() {
         }
         for t in [0.0, 0.5, 1.0] {
             assert_eq!(theme.color(Ink::Wax(t)), Color::Reset);
-            assert_eq!(theme.color(Ink::Heat(t)), Color::Reset);
         }
         assert!(
             theme
@@ -377,10 +373,10 @@ fn with_role_repaints_the_role_and_its_ramps() {
     let flash = liquid.mix(Ink::Role(Role::Accent), 1.0);
     let flashed = theme.with_role(Role::Liquid, flash);
     assert_eq!(flashed.role(Role::Liquid), flash.color());
-    // The thermal ramp starts at the liquid, so it follows (to within
-    // truecolor quantisation).
-    let (Color::Rgb(r, g, b), Color::Rgb(ar, ag, ab)) = (flashed.color(Ink::Heat(0.0)), accent)
-    else {
+    // A wax role's ramp follows its repaint (to within truecolor
+    // quantisation).
+    let hot = theme.with_role(Role::WaxCool, liquid.mix(Ink::Role(Role::Accent), 1.0));
+    let (Color::Rgb(r, g, b), Color::Rgb(ar, ag, ab)) = (hot.color(Ink::Wax(0.0)), accent) else {
         panic!("truecolor");
     };
     assert!(r.abs_diff(ar) <= 4 && g.abs_diff(ag) <= 4 && b.abs_diff(ab) <= 4);
@@ -474,7 +470,7 @@ fn ansi256_dark_wax_never_turns_another_hue() {
         );
         assert_eq!(off_hue(c), [], "{c:?}");
     }
-    // Every palette's wax and thermal ramps, dimmed and brightened by
+    // Every palette's wax ramp and roles, dimmed and brightened by
     // light, and faded into the liquid and background, as styles draw them.
     for palette in Palette::all().iter().filter(|p| p.has_rgb()) {
         // The hand-picked indices too (§5.2): an unmixed role shows its own.
@@ -486,7 +482,7 @@ fn ansi256_dark_wax_never_turns_another_hue() {
         }
         let theme = Theme::new(palette, ColorDepth::Ansi256);
         let roles = Role::ALL.map(|r| theme.rgb(Ink::Role(r)));
-        let bases = theme.wax.iter().chain(&theme.heat).chain(&roles);
+        let bases = theme.wax.iter().chain(&roles);
         for &base in bases {
             for k in [0.1, 0.2, 0.3, 0.45, 0.6, 0.8, 1.0, 1.2, 1.5] {
                 for (to, t) in [(Role::Liquid, 0.0), (Role::Liquid, 0.4), (Role::Bg, 0.7)] {
