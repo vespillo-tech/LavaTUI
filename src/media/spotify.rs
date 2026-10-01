@@ -1,18 +1,30 @@
 //! The Spotify desktop app on macOS, driven through AppleScript (the
 //! module only exists on macOS).
 //!
-//! Every exchange is one `osascript` run: the queued commands, then a read
-//! of the whole state as one delimited record. The script first checks
-//! `application id … is running` and only then compiles the Spotify part
-//! (`run script`): compiling a `tell application` block launches the app
-//! to load its dictionary, and we must never launch Spotify.
+//! One `osascript` process stays up for the backend's life
+//! ([`Osascript`](super::runner::Osascript)) running [`script`]: a loop
+//! that reads a request line, runs its commands, reads the state and
+//! writes it back as one record. Starting osascript is what costs (~80 ms
+//! of CPU); a poll on the running process is two Apple events and ~3 ms.
 //!
-//! The record is `lavatui1 ␞ state ␞ position ms ␞ shuffle ␞ repeat ␞
-//! volume [␞ id ␞ duration ms ␞ artwork url ␞ artist ␞ album ␞ name]`,
+//! Never launching Spotify: compiling a `tell application` block launches
+//! the app to load its dictionary, and sending it an event launches it
+//! too. So each request first checks `application id … is running` (the
+//! id in a variable, resolved at run time) and only then compiles the
+//! Spotify part (`run script`, once, kept until Spotify is seen gone) and
+//! calls it.
+//!
+//! A request is `lavatui1 ␞ known track id ␞ command…`, a command being a
+//! verb and maybe one argument (`seek 61250`, `uri spotify:album:…`).
+//!
+//! The reply is `lavatui1 ␞ state ␞ position ms ␞ shuffle ␞ repeat ␞
+//! volume [␞ id [␞ duration ms ␞ artwork url ␞ artist ␞ album ␞ name]]`,
 //! fields split by U+001E (record separator), numbers as integers (no
-//! locale decimal separators). The track's free text comes last, name
-//! last of all, so a stray separator inside a name only ever lands in the
-//! name. Not running is `lavatui1 ␞ not running`.
+//! locale decimal separators). The track's details come only when its id
+//! isn't the known one (they cost five more Apple events), its free text
+//! last, name last of all, so a stray separator inside a name only ever
+//! lands in the name. Not running is `lavatui1 ␞ not running`; an
+//! AppleScript error is `lavatui1 ␞ error ␞ number ␞ message`.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -25,16 +37,24 @@ const BUNDLE_ID: &str = "com.spotify.client";
 const HEADER: &str = "lavatui1";
 const SEP: char = '\u{1e}';
 const NOT_RUNNING: &str = "not running";
-/// The whole `osascript` run, start-up included.
+const ERROR: &str = "error";
+/// One request, from writing it to the end of the reply (the first one
+/// includes starting osascript).
 const TIMEOUT: Duration = Duration::from_secs(5);
 /// Apple event timeout inside the script, below [`TIMEOUT`] so a busy
 /// Spotify reports -1712 rather than being killed.
 const EVENT_TIMEOUT_SECS: u32 = 4;
 
-/// The Spotify backend, over a [`Runner`] (`osascript` in the app).
+/// The Spotify backend, over a [`Runner`] (an [`Osascript`] running
+/// [`script`] in the app).
+///
+/// [`Osascript`]: super::runner::Osascript
 pub struct Spotify<R> {
     runner: R,
     name: Arc<str>,
+    /// The last track read in full: its details aren't asked for again
+    /// while it plays.
+    known: Option<Arc<Track>>,
 }
 
 impl<R: Runner> Spotify<R> {
@@ -42,18 +62,23 @@ impl<R: Runner> Spotify<R> {
         Self {
             runner,
             name: Arc::from("Spotify"),
+            known: None,
         }
     }
 }
 
 impl<R: Runner> Backend for Spotify<R> {
     fn exchange(&mut self, commands: &[Command]) -> Snapshot {
-        let result = self.runner.run(&script(commands), TIMEOUT);
+        let known = self.known.as_ref().map_or("", |track| track.id.as_str());
+        let result = self.runner.run(&request(commands, known), TIMEOUT);
         let now = Instant::now();
         let mut snapshot = match result {
-            Ok(out) => parse(&out, now),
+            Ok(out) => parse(&out, now, self.known.as_ref()),
             Err(err) => Snapshot::new(Status::Unavailable(classify(&err)), now),
         };
+        if snapshot.track.is_some() {
+            self.known.clone_from(&snapshot.track);
+        }
         snapshot.player = Some(Arc::clone(&self.name));
         snapshot
     }
@@ -61,44 +86,127 @@ impl<R: Runner> Backend for Spotify<R> {
     /// Spotify 1.2's `set shuffling` / `set repeating` are no-ops (they
     /// read back unchanged, lava-75z.9), so the UI doesn't offer them.
     fn capabilities(&self) -> Capabilities {
-        Capabilities::NONE
+        Capabilities {
+            volume: true,
+            ..Capabilities::NONE
+        }
     }
 }
 
-/// The full script: guard, then (if running) commands + state read.
-pub fn script(commands: &[Command]) -> String {
-    let inner = inner_script(commands);
+/// The long-lived script: a request loop around the guard and the
+/// Spotify part (see the module docs).
+pub fn script() -> String {
     format!(
-        "if application id \"{BUNDLE_ID}\" is running then\n\
-         \treturn run script \"{}\"\n\
+        "use framework \"Foundation\"\n\
+         use scripting additions\n\
+         property spot : missing value\n\
+         on reply(t)\n\
+         set s to current application's NSString's stringWithString:t\n\
+         set s to s's stringByReplacingOccurrencesOfString:(character id 4) withString:\"\"\n\
+         set s to s's stringByAppendingString:((character id 4) & linefeed)\n\
+         (current application's NSFileHandle's fileHandleWithStandardOutput())'s writeData:(s's dataUsingEncoding:4)\n\
+         end reply\n\
+         on answer(req)\n\
+         set rs to character id 30\n\
+         set AppleScript's text item delimiters to rs\n\
+         set parts to text items of req\n\
+         set AppleScript's text item delimiters to \"\"\n\
+         set bid to \"{BUNDLE_ID}\"\n\
+         try\n\
+         if application id bid is running then\n\
+         if spot is missing value then set spot to run script \"{}\"\n\
+         return spot's poll(parts)\n\
          end if\n\
-         return \"{HEADER}\" & (character id 30) & \"{NOT_RUNNING}\"\n",
-        escape(&inner)
+         set spot to missing value\n\
+         return \"{HEADER}\" & rs & \"{NOT_RUNNING}\"\n\
+         on error m number n\n\
+         set spot to missing value\n\
+         return \"{HEADER}\" & rs & \"{ERROR}\" & rs & n & rs & m\n\
+         end try\n\
+         end answer\n\
+         set stdin to current application's NSFileHandle's fileHandleWithStandardInput()\n\
+         set buf to current application's NSMutableData's |data|()\n\
+         repeat\n\
+         set d to stdin's availableData()\n\
+         if (d's |length|()) as integer is 0 then exit repeat\n\
+         buf's appendData:d\n\
+         set s to current application's NSString's alloc()'s initWithData:buf encoding:4\n\
+         if s is not missing value then\n\
+         set req to s as text\n\
+         if req ends with linefeed then\n\
+         my reply(answer(text 1 thru -2 of req))\n\
+         set buf to current application's NSMutableData's |data|()\n\
+         end if\n\
+         end if\n\
+         end repeat\n",
+        escape(&spotify_part())
     )
 }
 
-/// The Spotify part, compiled only once Spotify is known to be running.
-fn inner_script(commands: &[Command]) -> String {
+/// The Spotify part, compiled only once Spotify is known to be running: a
+/// script object whose `poll(parts)` runs the request's commands and reads
+/// the state.
+fn spotify_part() -> String {
     let mut s = format!(
-        "tell application id \"{BUNDLE_ID}\"\n\
-         with timeout of {EVENT_TIMEOUT_SECS} seconds\n"
+        "script\n\
+         on act(c)\n\
+         set v to c\n\
+         set a to \"\"\n\
+         if c contains \" \" then\n\
+         set o to offset of \" \" in c\n\
+         set v to text 1 thru (o - 1) of c\n\
+         set a to text (o + 1) thru -1 of c\n\
+         end if\n\
+         tell application id \"{BUNDLE_ID}\"\n\
+         if v is \"playpause\" then\n\
+         playpause\n\
+         else if v is \"next\" then\n\
+         next track\n\
+         else if v is \"previous\" then\n\
+         previous track\n\
+         else if v is \"seek\" then\n\
+         set player position to (a as integer) / 1000\n\
+         else if v is \"shuffle\" then\n\
+         set shuffling to (a is \"true\")\n\
+         else if v is \"repeat\" then\n\
+         set repeating to (a is \"true\")\n\
+         else if v is \"volume\" then\n\
+         set sound volume to (a as integer)\n\
+         else if v is \"uri\" then\n\
+         play track a\n\
+         end if\n\
+         end tell\n\
+         end act\n\
+         on poll(parts)\n\
+         set rs to character id 30\n\
+         tell application id \"{BUNDLE_ID}\"\n\
+         with timeout of {EVENT_TIMEOUT_SECS} seconds\n\
+         repeat with i from 3 to count of parts\n\
+         try\n\
+         my act(item i of parts)\n\
+         end try\n\
+         end repeat\n\
+         set p to properties\n\
+         set out to \"{HEADER}\" & rs & ((player state of p) as text)\n\
+         set pos to 0\n\
+         try\n\
+         set pos to ((player position of p) * 1000) as integer\n\
+         end try\n\
+         set out to out & rs & pos & rs & ((shuffling of p) as integer) & rs & ((repeating of p) as integer) & rs & ((sound volume of p) as integer)\n\
+         try\n\
+         set t to current track\n\
+         set tid to id of t\n\
+         if tid is missing value then set tid to \"\"\n\
+         considering case\n\
+         set same to tid is item 2 of parts\n\
+         end considering\n\
+         if same then\n\
+         set out to out & rs & tid\n\
+         else if tid is not \"\" then\n"
     );
-    for command in commands {
-        // A command that fails (a bad URI, say) mustn't lose the state read;
-        // a real problem (permission, quit) fails the read too.
-        s += &format!("try\n{}\nend try\n", command_line(command));
-    }
-    s += "set rs to character id 30\n\
-          set out to \"lavatui1\" & rs & (player state as text)\n\
-          set pos to 0\n\
-          try\n\
-          set pos to (player position * 1000) as integer\n\
-          end try\n\
-          set out to out & rs & pos & rs & (shuffling as integer) & rs & (repeating as integer) & rs & (sound volume as integer)\n\
-          try\n\
-          set t to current track\n";
+    // One read per detail, each allowed to fail (ads and local files lack
+    // some), in record order.
     for (var, expr) in [
-        ("tid", "id of t"),
         ("dur", "(duration of t) as integer"),
         ("art", "artwork url of t"),
         ("ar", "artist of t"),
@@ -113,24 +221,43 @@ fn inner_script(commands: &[Command]) -> String {
              end try\n"
         );
     }
-    s += "if tid is not \"\" then set out to out & rs & tid & rs & dur & rs & art & rs & ar & rs & al & rs & nm\n\
+    s += "set out to out & rs & tid & rs & dur & rs & art & rs & ar & rs & al & rs & nm\n\
+          end if\n\
           end try\n\
           return out\n\
           end timeout\n\
-          end tell\n";
+          end tell\n\
+          end poll\n\
+          end script\n";
     s
 }
 
-fn command_line(command: &Command) -> String {
+/// One request line: the header, the known track id, the commands.
+pub fn request(commands: &[Command], known_id: &str) -> String {
+    // An id that would break the framing is just not known.
+    let known_id = if known_id.contains([SEP, '\n', '\r']) {
+        ""
+    } else {
+        known_id
+    };
+    let mut out = format!("{HEADER}{SEP}{known_id}");
+    for command in commands {
+        out.push(SEP);
+        out += &command_word(command);
+    }
+    out
+}
+
+fn command_word(command: &Command) -> String {
     match command {
         Command::PlayPause => "playpause".into(),
-        Command::Next => "next track".into(),
-        Command::Previous => "previous track".into(),
-        // Seconds with a '.' decimal point: AppleScript source is
-        // locale-independent.
-        Command::Seek(to) => format!("set player position to {:.3}", to.as_secs_f64()),
-        Command::SetShuffle(on) => format!("set shuffling to {on}"),
-        Command::SetRepeat(on) => format!("set repeating to {on}"),
+        Command::Next => "next".into(),
+        Command::Previous => "previous".into(),
+        // Whole milliseconds: AppleScript's text-to-real coercion would
+        // follow the locale's decimal separator.
+        Command::Seek(to) => format!("seek {}", to.as_millis()),
+        Command::SetShuffle(on) => format!("shuffle {on}"),
+        Command::SetRepeat(on) => format!("repeat {on}"),
         // Spotify stores one less than it's given (set 68, read 67), so
         // ask for one more; 0 stays 0 and 100 can't go higher.
         Command::SetVolume(volume) => {
@@ -138,10 +265,11 @@ fn command_line(command: &Command) -> String {
                 0 => 0,
                 volume => (volume + 1).min(100),
             };
-            format!("set sound volume to {ask}")
+            format!("volume {ask}")
         }
-        // Validated by `Command::play_uri`; escaped anyway.
-        Command::PlayUri(uri) => format!("play track \"{}\"", escape(uri)),
+        // Validated by `Command::play_uri`: no spaces, separators or
+        // newlines.
+        Command::PlayUri(uri) => format!("uri {uri}"),
     }
 }
 
@@ -150,8 +278,9 @@ fn escape(text: &str) -> String {
     text.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-/// Turn the script's output into a snapshot sampled at `now`.
-pub fn parse(out: &str, now: Instant) -> Snapshot {
+/// Turn a reply into a snapshot sampled at `now`. `known` is the track
+/// whose id the request named: a reply with only that id means it.
+pub fn parse(out: &str, now: Instant, known: Option<&Arc<Track>>) -> Snapshot {
     let unexpected = || {
         let shown: String = out.trim().chars().take(60).collect();
         Snapshot::new(
@@ -161,7 +290,6 @@ pub fn parse(out: &str, now: Instant) -> Snapshot {
             now,
         )
     };
-    let out = out.strip_suffix('\n').unwrap_or(out);
     let fields: Vec<&str> = out.split(SEP).collect();
     if fields.first() != Some(&HEADER) {
         return unexpected();
@@ -169,6 +297,14 @@ pub fn parse(out: &str, now: Instant) -> Snapshot {
     let status = match fields.get(1) {
         Some(&NOT_RUNNING) if fields.len() == 2 => {
             return Snapshot::new(Status::Unavailable(Unavailable::NotRunning), now);
+        }
+        Some(&ERROR) if fields.len() >= 4 => {
+            // As osascript itself would print it: "message (number)".
+            let message = format!("{} ({})", fields[3..].join(" "), fields[2].trim());
+            return Snapshot::new(
+                Status::Unavailable(classify(&RunError::Failed(message))),
+                now,
+            );
         }
         Some(&"playing") => Status::Playing,
         Some(&"paused") => Status::Paused,
@@ -181,8 +317,12 @@ pub fn parse(out: &str, now: Instant) -> Snapshot {
     else {
         return unexpected();
     };
-    let track = (fields.len() >= 12).then(|| {
-        Arc::new(Track {
+    let track = match fields.len() {
+        7 => match known {
+            Some(known) if known.id == fields[6] => Some(Arc::clone(known)),
+            _ => return unexpected(),
+        },
+        12.. => Some(Arc::new(Track {
             id: fields[6].to_owned(),
             duration: millis(fields[7].trim().parse().unwrap_or(0)),
             artwork_url: fields[8].to_owned(),
@@ -190,8 +330,10 @@ pub fn parse(out: &str, now: Instant) -> Snapshot {
             album: fields[10].to_owned(),
             // Anything past the album is the name (it held a separator).
             name: fields[11..].join(" "),
-        })
-    });
+        })),
+        // None loaded, or a short record: ignored rather than misread.
+        _ => None,
+    };
     Snapshot {
         player: None,
         status,
@@ -208,7 +350,8 @@ fn millis(ms: i64) -> Duration {
     Duration::from_millis(ms.max(0) as u64)
 }
 
-/// Map a failed run to a reason the UI can explain.
+/// Map a failure (osascript's, or an error the script reported) to a
+/// reason the UI can explain.
 pub fn classify(err: &RunError) -> Unavailable {
     match err {
         RunError::Timeout => Unavailable::NotResponding,
@@ -217,7 +360,7 @@ pub fn classify(err: &RunError) -> Unavailable {
         RunError::Failed(stderr) => match error_number(stderr) {
             // errAEEventNotPermitted: Automation permission refused.
             Some(-1743) => Unavailable::PermissionDenied,
-            // The guard can't even compile: no app with that bundle id.
+            // The guard can't find an app with that bundle id.
             Some(-1728) if stderr.contains(BUNDLE_ID) => Unavailable::NotInstalled,
             // procNotFound / connectionInvalid: quit while we were asking.
             Some(-600 | -609) => Unavailable::NotRunning,
@@ -250,6 +393,7 @@ mod tests {
     use std::thread;
 
     use super::super::MediaSource;
+    use super::super::runner::Osascript;
     use super::super::worker::{Polled, testing};
     use super::*;
 
@@ -259,7 +403,7 @@ mod tests {
     const PLAYING: &str = "lavatui1\u{1e}playing\u{1e}240497\u{1e}0\u{1e}1\u{1e}100\u{1e}\
         spotify:track:0DZXVpUtPUom1VO6h5a0SU\u{1e}303440\u{1e}\
         https://i.scdn.co/image/ab67616d0000b273cb5ed04a1191ccec6717e76d\u{1e}\
-        Dreamcatcher\u{1e}Dreamcatcher\u{1e}Life\n";
+        Dreamcatcher\u{1e}Dreamcatcher\u{1e}Life";
 
     fn now() -> Instant {
         Instant::now()
@@ -268,7 +412,7 @@ mod tests {
     #[test]
     fn parses_a_playing_record() {
         let t = now();
-        let snap = parse(PLAYING, t);
+        let snap = parse(PLAYING, t, None);
         assert_eq!(snap.status, Status::Playing);
         assert_eq!(snap.position, Duration::from_millis(240_497));
         assert_eq!(snap.sampled_at, t);
@@ -283,10 +427,32 @@ mod tests {
     }
 
     #[test]
+    fn the_known_track_is_reused_when_only_its_id_comes_back() {
+        let full = parse(PLAYING, now(), None).track.unwrap();
+        let short = "lavatui1\u{1e}paused\u{1e}241000\u{1e}0\u{1e}1\u{1e}100\u{1e}\
+                     spotify:track:0DZXVpUtPUom1VO6h5a0SU";
+        let snap = parse(short, now(), Some(&full));
+        assert_eq!(snap.status, Status::Paused);
+        assert!(Arc::ptr_eq(snap.track.as_ref().unwrap(), &full));
+        // An id we didn't name is a misunderstanding, not a track.
+        let other = short.replace("0DZX", "XXXX");
+        let snap = parse(&other, now(), Some(&full));
+        assert!(matches!(
+            snap.status,
+            Status::Unavailable(Unavailable::Error(_))
+        ));
+        let snap = parse(short, now(), None);
+        assert!(matches!(
+            snap.status,
+            Status::Unavailable(Unavailable::Error(_))
+        ));
+    }
+
+    #[test]
     fn unicode_commas_quotes_and_stray_separators_survive() {
         let out = "lavatui1\u{1e}paused\u{1e}0\u{1e}1\u{1e}0\u{1e}37\u{1e}spotify:local:x\u{1e}0\u{1e}\
-                   \u{1e}Sigur Rós, \"Jónsi\"\u{1e}( ), |\t\u{1e}Hoppípolla\u{1e}2\n";
-        let snap = parse(out, now());
+                   \u{1e}Sigur Rós, \"Jónsi\"\u{1e}( ), |\t\u{1e}Hoppípolla\u{1e}2";
+        let snap = parse(out, now(), None);
         assert_eq!(snap.status, Status::Paused);
         assert!(snap.shuffle && !snap.repeat);
         let track = snap.track.unwrap();
@@ -299,15 +465,16 @@ mod tests {
 
     #[test]
     fn a_name_with_a_trailing_newline_keeps_it() {
-        let out = PLAYING.replace("Life\n", "Life\n\n");
-        assert_eq!(parse(&out, now()).track.unwrap().name, "Life\n");
+        let out = format!("{PLAYING}\n");
+        assert_eq!(parse(&out, now(), None).track.unwrap().name, "Life\n");
     }
 
     #[test]
     fn stopped_without_a_track() {
         let snap = parse(
-            "lavatui1\u{1e}stopped\u{1e}0\u{1e}0\u{1e}0\u{1e}64\n",
+            "lavatui1\u{1e}stopped\u{1e}0\u{1e}0\u{1e}0\u{1e}64",
             now(),
+            None,
         );
         assert_eq!(snap.status, Status::Stopped);
         assert_eq!(snap.track, None);
@@ -316,8 +483,35 @@ mod tests {
 
     #[test]
     fn not_running() {
-        let snap = parse("lavatui1\u{1e}not running\n", now());
+        let snap = parse("lavatui1\u{1e}not running", now(), None);
         assert_eq!(snap.status, Status::Unavailable(Unavailable::NotRunning));
+    }
+
+    #[test]
+    fn reported_errors_are_classified() {
+        let cases = [
+            (
+                "-1743\u{1e}Not authorized to send Apple events to Spotify.",
+                Unavailable::PermissionDenied,
+            ),
+            (
+                "-1728\u{1e}Can’t get application id \"com.spotify.client\".",
+                Unavailable::NotInstalled,
+            ),
+            ("-609\u{1e}Connection is invalid.", Unavailable::NotRunning),
+            (
+                "-2753\u{1e}The variable x is not defined.",
+                Unavailable::Error("Spotify: The variable x is not defined. (-2753)".into()),
+            ),
+        ];
+        for (rest, want) in cases {
+            let out = format!("lavatui1\u{1e}error\u{1e}{rest}");
+            assert_eq!(
+                parse(&out, now(), None).status,
+                Status::Unavailable(want),
+                "{rest}"
+            );
+        }
     }
 
     #[test]
@@ -327,11 +521,12 @@ mod tests {
             "\n",
             "playing, Life, Dreamcatcher",
             "lavatui1",
+            "lavatui1\u{1e}error",
             "lavatui1\u{1e}dancing\u{1e}0\u{1e}0\u{1e}0\u{1e}0",
             "lavatui1\u{1e}playing\u{1e}x\u{1e}0\u{1e}0\u{1e}0",
             "lavatui1\u{1e}playing\u{1e}0\u{1e}0",
         ] {
-            let snap = parse(out, now());
+            let snap = parse(out, now(), None);
             assert!(
                 matches!(snap.status, Status::Unavailable(Unavailable::Error(_))),
                 "{out:?}"
@@ -339,8 +534,9 @@ mod tests {
         }
         // A short track record is ignored rather than misread.
         let snap = parse(
-            "lavatui1\u{1e}playing\u{1e}5\u{1e}0\u{1e}0\u{1e}300\u{1e}id",
+            "lavatui1\u{1e}playing\u{1e}5\u{1e}0\u{1e}0\u{1e}300\u{1e}id\u{1e}1",
             now(),
+            None,
         );
         assert_eq!(snap.track, None);
         assert_eq!(snap.volume, 100);
@@ -382,69 +578,86 @@ mod tests {
 
     #[test]
     fn script_guards_before_touching_spotify() {
-        let s = script(&[]);
+        let s = script();
         let guard = s.find("is running").unwrap();
         let tell = s.find("run script").unwrap();
         assert!(guard < tell);
-        // The only unescaped `tell` is inside the run-script string.
-        assert!(!s.contains("\ntell application"));
-        assert!(s.contains("tell application id \\\"com.spotify.client\\\""));
+        // The guard's id is a variable, so a missing app is a run-time
+        // error the loop reports, not a script that won't start.
+        assert!(s.contains("application id bid is running"));
+        // Every `tell` is inside the run-script string (its quotes escaped).
+        let tells = s.matches("tell application").count();
+        assert!(tells > 0);
+        assert_eq!(
+            s.matches("tell application id \\\"com.spotify.client\\\"")
+                .count(),
+            tells
+        );
     }
 
     #[test]
-    fn commands_go_in_order_each_in_a_try() {
-        let s = inner_script(&[
-            Command::PlayPause,
-            Command::Next,
-            Command::Previous,
-            Command::Seek(Duration::from_millis(61_250)),
-            Command::SetShuffle(true),
-            Command::SetRepeat(false),
-            Command::SetVolume(42),
-            Command::PlayUri("spotify:album:abc".into()),
-        ]);
-        let lines = [
-            "try\nplaypause\nend try",
-            "try\nnext track\nend try",
-            "try\nprevious track\nend try",
-            "try\nset player position to 61.250\nend try",
-            "try\nset shuffling to true\nend try",
-            "try\nset repeating to false\nend try",
-            "try\nset sound volume to 43\nend try",
-            "try\nplay track \"spotify:album:abc\"\nend try",
-        ];
-        let mut at = 0;
-        for line in lines {
-            let found = s[at..]
-                .find(line)
-                .unwrap_or_else(|| panic!("{line} in\n{s}"));
-            at += found + line.len();
-        }
-        assert!(s[at..].contains("player state"), "state read comes after");
+    fn requests_carry_the_known_id_then_the_commands_in_order() {
+        let r = request(
+            &[
+                Command::PlayPause,
+                Command::Next,
+                Command::Previous,
+                Command::Seek(Duration::from_millis(61_250)),
+                Command::SetShuffle(true),
+                Command::SetRepeat(false),
+                Command::SetVolume(42),
+                Command::SetVolume(0),
+                Command::SetVolume(100),
+                Command::PlayUri("spotify:album:abc".into()),
+            ],
+            "spotify:track:a",
+        );
+        let fields: Vec<&str> = r.split(SEP).collect();
+        assert_eq!(
+            fields,
+            [
+                "lavatui1",
+                "spotify:track:a",
+                "playpause",
+                "next",
+                "previous",
+                "seek 61250",
+                "shuffle true",
+                "repeat false",
+                "volume 43",
+                "volume 0",
+                "volume 100",
+                "uri spotify:album:abc",
+            ]
+        );
+        assert_eq!(request(&[], ""), "lavatui1\u{1e}");
+        assert_eq!(request(&[], "bad\nid"), "lavatui1\u{1e}");
+        assert!(!request(&[], "a\u{1e}b").contains('b'));
     }
 
     #[test]
     fn escaping_keeps_quotes_inside_the_literal() {
         assert_eq!(escape(r#"a"b\c"#), r#"a\"b\\c"#);
-        let s = script(&[Command::PlayUri("spotify:x".into())]);
-        assert!(s.contains(r#"play track \"spotify:x\""#));
     }
 
-    /// A runner that answers from a list and records the scripts it ran.
+    /// A runner that answers from a list and records the requests.
     struct Canned(VecDeque<Result<String, RunError>>, Vec<String>);
 
     impl Runner for Canned {
-        fn run(&mut self, script: &str, _: Duration) -> Result<String, RunError> {
-            self.1.push(script.to_owned());
+        fn run(&mut self, request: &str, _: Duration) -> Result<String, RunError> {
+            self.1.push(request.to_owned());
             self.0.pop_front().unwrap_or(Err(RunError::Timeout))
         }
     }
 
     #[test]
     fn exchange_maps_output_and_errors() {
+        let same = "lavatui1\u{1e}playing\u{1e}241000\u{1e}0\u{1e}1\u{1e}100\u{1e}\
+                    spotify:track:0DZXVpUtPUom1VO6h5a0SU";
         let mut spotify = Spotify::new(Canned(
             [
                 Ok(PLAYING.to_owned()),
+                Ok(same.to_owned()),
                 Err(RunError::Failed(
                     "execution error: Not authorized (-1743)".into(),
                 )),
@@ -453,7 +666,10 @@ mod tests {
             .into(),
             Vec::new(),
         ));
-        assert_eq!(spotify.exchange(&[]).status, Status::Playing);
+        let first = spotify.exchange(&[]);
+        assert_eq!(first.status, Status::Playing);
+        let second = spotify.exchange(&[]);
+        assert_eq!(second.track.unwrap().name, "Life");
         assert_eq!(
             spotify.exchange(&[Command::Next]).status,
             Status::Unavailable(Unavailable::PermissionDenied)
@@ -462,36 +678,41 @@ mod tests {
             spotify.exchange(&[]).status,
             Status::Unavailable(Unavailable::NotResponding)
         );
-        assert!(spotify.runner.1[1].contains("next track"));
+        let requests = &spotify.runner.1;
+        assert_eq!(requests[0], "lavatui1\u{1e}");
+        // From the first full read on, the track is known.
+        assert_eq!(
+            requests[1],
+            "lavatui1\u{1e}spotify:track:0DZXVpUtPUom1VO6h5a0SU"
+        );
+        assert!(requests[2].ends_with("\u{1e}next"));
     }
 
     // The worker on its thread, through this backend and a fake osascript.
 
-    /// A pretend Spotify behind a fake osascript: `next track` changes the
-    /// track; `fail` makes the next runs fail.
+    /// A pretend Spotify behind a fake osascript: `next` changes the track;
+    /// `fail` makes the next runs fail.
     #[derive(Default)]
     struct FakeSpotify {
         track: u32,
         fail: Vec<RunError>,
-        scripts: Vec<String>,
+        requests: Vec<String>,
     }
 
     #[derive(Clone, Default)]
     struct FakeRunner(Arc<Mutex<FakeSpotify>>);
 
     impl Runner for FakeRunner {
-        fn run(&mut self, script: &str, _: Duration) -> Result<String, RunError> {
+        fn run(&mut self, request: &str, _: Duration) -> Result<String, RunError> {
             let mut fake = self.0.lock().unwrap();
-            fake.scripts.push(script.to_owned());
+            fake.requests.push(request.to_owned());
             if !fake.fail.is_empty() {
                 return Err(fake.fail.remove(0));
             }
-            if script.contains("next track") {
-                fake.track += 1;
-            }
+            fake.track += request.split(SEP).filter(|c| *c == "next").count() as u32;
             Ok(format!(
                 "lavatui1\u{1e}playing\u{1e}1000\u{1e}0\u{1e}0\u{1e}80\u{1e}spotify:track:{n}\
-                 \u{1e}200000\u{1e}\u{1e}Artist\u{1e}Album\u{1e}Song {n}\n",
+                 \u{1e}200000\u{1e}\u{1e}Artist\u{1e}Album\u{1e}Song {n}",
                 n = fake.track
             ))
         }
@@ -511,9 +732,9 @@ mod tests {
         assert_eq!(snap.track.unwrap().name, "Song 1");
         let fake = runner.0.lock().unwrap();
         assert_eq!(
-            fake.scripts
+            fake.requests
                 .iter()
-                .filter(|s| s.contains("next track"))
+                .filter(|s| s.ends_with("\u{1e}next"))
                 .count(),
             1
         );
@@ -532,7 +753,7 @@ mod tests {
         });
         testing::wait_for(&source, "recovery", |s| s.status == Status::Playing);
         let fake = runner.0.lock().unwrap();
-        assert!(fake.scripts.len() >= 3);
+        assert!(fake.requests.len() >= 3);
     }
 
     #[test]
@@ -542,43 +763,46 @@ mod tests {
         testing::wait_for(&source, "first poll", |s| s.status == Status::Playing);
         drop(source);
         thread::sleep(MS * 60);
-        let runs = runner.0.lock().unwrap().scripts.len();
+        let runs = runner.0.lock().unwrap().requests.len();
         thread::sleep(MS * 100);
-        assert_eq!(runner.0.lock().unwrap().scripts.len(), runs);
+        assert_eq!(runner.0.lock().unwrap().requests.len(), runs);
     }
 
-    /// Against a real osascript (not Spotify): the generated script must
-    /// compile. Uses a bundle id that doesn't exist, so it can't launch
-    /// anything, and checks that maps to `NotInstalled`.
+    /// Against a real osascript (not Spotify): the script compiles and
+    /// keeps answering. Uses a bundle id that doesn't exist, so it can't
+    /// launch anything, and checks that maps to `NotInstalled`.
     #[test]
-    fn script_compiles_and_a_missing_app_is_not_installed() {
-        use super::super::runner::Osascript;
-        let s = script(&[Command::Next, Command::SetVolume(3)])
-            .replace(BUNDLE_ID, "com.lavatui.nonexistent");
-        let err = Osascript.run(&s, TIMEOUT).unwrap_err();
-        let RunError::Failed(stderr) = &err else {
-            panic!("{err:?}")
-        };
-        assert_eq!(error_number(stderr), Some(-1728), "{stderr}");
-        assert!(stderr.contains("com.lavatui.nonexistent"));
+    fn script_runs_and_a_missing_app_is_not_installed() {
+        let s = script().replace(BUNDLE_ID, "com.lavatui.nonexistent");
+        let mut spotify = Spotify::new(Osascript::new(s));
+        for commands in [&[][..], &[Command::Next, Command::SetVolume(3)], &[]] {
+            let snap = spotify.exchange(commands);
+            // The bundle id differs, so this is a plain error naming it.
+            let Status::Unavailable(Unavailable::Error(message)) = &snap.status else {
+                panic!("{:?}", snap.status)
+            };
+            assert!(message.contains("com.lavatui.nonexistent"), "{message}");
+            assert!(message.ends_with("(-1728)"), "{message}");
+        }
     }
 
     /// Against the real Spotify app (must be running, with a track loaded):
-    /// every control once, timed, then the original state restored.
+    /// poll cost, then every control once, timed, then the original state
+    /// restored.
     /// `cargo test --release -- --ignored --nocapture live_spotify`
     #[test]
     #[ignore = "drives the real Spotify app"]
     fn live_spotify() {
-        use super::super::MediaSource;
-        use super::super::runner::Osascript;
-        use super::super::worker::{Cadence, Polled};
+        use super::super::worker::Cadence;
         use std::thread::sleep;
 
         const SETTLE: Duration = Duration::from_millis(400);
 
-        fn exchange(label: &str, commands: &[Command]) -> (Snapshot, f64) {
+        type Live = Spotify<Osascript>;
+
+        fn exchange(spotify: &mut Live, label: &str, commands: &[Command]) -> (Snapshot, f64) {
             let start = Instant::now();
-            let snap = Spotify::new(Osascript).exchange(commands);
+            let snap = spotify.exchange(commands);
             let ms = start.elapsed().as_secs_f64() * 1000.0;
             let name = snap.track.as_ref().map_or("-", |t| t.name.as_str());
             println!(
@@ -592,10 +816,10 @@ mod tests {
             (snap, ms)
         }
         /// Send, give Spotify time to apply it, read.
-        fn settled(label: &str, commands: &[Command]) -> Snapshot {
-            exchange(label, commands);
+        fn settled(spotify: &mut Live, label: &str, commands: &[Command]) -> Snapshot {
+            exchange(spotify, label, commands);
             sleep(SETTLE);
-            exchange("  settled", &[]).0
+            exchange(spotify, "  settled", &[]).0
         }
 
         /// Puts back play state, volume, shuffle and repeat even if an
@@ -603,62 +827,44 @@ mod tests {
         struct Restore(Snapshot);
         impl Drop for Restore {
             fn drop(&mut self) {
-                let now = exchange("restore check", &[]).0;
+                let spotify = &mut Spotify::new(Osascript::new(script()));
+                let now = exchange(spotify, "restore check", &[]).0;
                 let mut fix = Vec::new();
                 if now.status != self.0.status {
                     fix.push(Command::PlayPause);
                 }
                 fix.push(Command::SetVolume(self.0.volume));
-                fix.push(Command::SetShuffle(self.0.shuffle));
-                fix.push(Command::SetRepeat(self.0.repeat));
-                settled("restore", &fix);
+                settled(spotify, "restore", &fix);
             }
         }
 
-        let mut polls: Vec<f64> = (0..7).map(|_| exchange("poll", &[]).1).collect();
+        let spotify = &mut Spotify::new(Osascript::new(script()));
+        exchange(spotify, "start", &[]);
+        let mut polls: Vec<f64> = (0..9).map(|_| exchange(spotify, "poll", &[]).1).collect();
         polls.sort_by(f64::total_cmp);
         println!(
             "poll latency: min {:.0} ms, median {:.0} ms, max {:.0} ms",
-            polls[0], polls[3], polls[6]
+            polls[0], polls[4], polls[8]
         );
-        let (orig, _) = exchange("original", &[]);
+        let (orig, _) = exchange(spotify, "original", &[]);
         assert!(orig.status.is_available(), "{:?}", orig.status);
         let orig_track = orig.track.clone().expect("a track loaded");
         let _restore = Restore(orig.clone());
 
-        let s = settled("play/pause", &[Command::PlayPause]);
+        let s = settled(spotify, "play/pause", &[Command::PlayPause]);
         assert_ne!(s.status, orig.status);
-        let s = settled("play/pause", &[Command::PlayPause]);
+        let s = settled(spotify, "play/pause", &[Command::PlayPause]);
         assert_eq!(s.status, orig.status);
-
-        let s = settled("next", &[Command::Next]);
-        assert_ne!(s.track.as_ref().map(|t| &t.id), Some(&orig_track.id));
-        // Just skipped, so under 3 s in: previous goes back a track.
-        let s = settled("previous", &[Command::Previous]);
         assert_eq!(s.track.as_ref().map(|t| &t.id), Some(&orig_track.id));
 
-        let s = settled("shuffle", &[Command::SetShuffle(!orig.shuffle)]);
-        println!("shuffle setter took: {}", s.shuffle != orig.shuffle);
-        let s = settled("repeat", &[Command::SetRepeat(!orig.repeat)]);
-        println!("repeat setter took: {}", s.repeat != orig.repeat);
-
         let quieter = orig.volume.saturating_sub(10).max(1);
-        let s = settled("volume", &[Command::SetVolume(quieter)]);
+        let s = settled(spotify, "volume", &[Command::SetVolume(quieter)]);
         assert_eq!(s.volume, quieter);
-        let s = settled("volume back", &[Command::SetVolume(orig.volume)]);
+        let s = settled(spotify, "volume back", &[Command::SetVolume(orig.volume)]);
         assert_eq!(s.volume, orig.volume);
 
-        // Back to where it was, plus the time this took (unless the track
-        // would have ended by now: then let the next one play).
-        let resume = orig.position + orig.sampled_at.elapsed();
-        if resume + Duration::from_secs(5) < orig_track.duration {
-            let s = settled("seek", &[Command::Seek(resume)]);
-            let expected = resume + Duration::from_millis(800);
-            assert!(s.position.abs_diff(expected) < Duration::from_secs(1));
-        }
-
         // Through the worker: optimistic at once, confirmed after.
-        let source = Polled::spawn(Spotify::new(Osascript), Cadence::default());
+        let source = Polled::spawn(Spotify::new(Osascript::new(script())), Cadence::default());
         let start = Instant::now();
         while !source.snapshot().status.is_available() {
             assert!(start.elapsed() < Duration::from_secs(5));

@@ -76,8 +76,9 @@ in minimal mode:
   keys: `space` play/pause, `n`/`p` next/previous, `←`/`→` seek, `↑`/`↓`
   volume, `esc` when done. It never blocks a frame: the player is polled on
   its own thread, only while the widget is shown, and covers are fetched
-  and cached (`$XDG_CACHE_HOME/lavatui/art`) in the background. macOS for
-  now (AppleScript; Linux MPRIS and Windows to come).
+  and cached (`$XDG_CACHE_HOME/lavatui/art`) in the background. On Linux
+  and Windows it shows any player (Spotify first); see
+  [Platform support](#platform-support).
 - **Lyrics** (`y`, off by default): the playing track's words from
   [lrclib.net](https://lrclib.net), in time with the song: the current
   line bold and bright, the ones around it dim, a gentle fade from line
@@ -201,6 +202,29 @@ open, `q` closes it instead of quitting.
 This table matches the single `KEYMAP` table in `src/ui/keymap.rs`. That
 table also drives the in-app help, so the help can't drift from the
 actual bindings.
+
+## Platform support
+
+The lamp, clock, pomodoro and config work the same everywhere; config,
+cache and data go where each OS expects them (`directories`). Only now
+playing differs:
+
+| | macOS | Linux | Windows |
+|---|---|---|---|
+| Builds (`cargo check --all-targets`) | ✓ (aarch64) | ✓ (x86_64-unknown-linux-gnu) | ✓ (x86_64-pc-windows-msvc) |
+| Tested on real hardware | ✓ | not yet | not yet |
+| Now playing via | AppleScript, one long-lived `osascript` | MPRIS on the D-Bus session bus (zbus) | System Media Transport Controls |
+| Players | the Spotify desktop app | any MPRIS player, Spotify first | any app in the media flyout, Spotify first |
+| Play/pause, next/previous, seek | ✓ | ✓ | ✓ |
+| Volume | ✓ | ✓ if the player has it | – (SMTC has no volume) |
+| Shuffle / repeat | – (no-ops in Spotify 1.2) | ✓ if the player honours them | ✓ if the app honours them |
+| Cover art | ✓ | ✓ (`https` art URLs, so Spotify) | – (SMTC gives a stream, not a URL) |
+| Launches the player? | never | never | never |
+| Permission | macOS asks once (Automation) | none | none |
+
+Linux players vary: Spotify has long reported its position as 0 over
+MPRIS (the bar then counts from where it was first seen) and ignored
+shuffle and repeat. Anything a player leaves out falls back quietly.
 
 ## Configuration
 
@@ -344,15 +368,14 @@ frame since removed); render times are `bench_lamp` on v1.1.
 
 Braille changes few cells per frame, so it is the cheapest to send.
 
-With music on and Spotify playing, the widget's drawing costs next to
-nothing, but asking Spotify through `osascript` once a second does:
-about 11 % of a core at 80×24 (vs 2.5 % without), 17 % at 200×50.
-Making that cheaper is tracked as lava-75z.11.
+With music on and Spotify playing, the cost is lost in the noise: 3.4 %
+of a core at 80×24 with the music panel vs 3.4 % with music off (60 s
+each, solid). Spotify is asked once a second through one `osascript`
+process that stays up, two Apple events per poll (~25 ms, ~0.4 % of a
+core); starting `osascript` for every poll used to cost 12.6 %.
 Lyrics read the same player (so on their own they cost about the same as
-music), and add nothing measurable on top of it: music and lyrics together
-measured 10.8 % / 14.3 % against music's 11.9 % / 15.2 % (80×24 / 200×50,
-run-to-run noise). The lookup is one request per track, on its own thread,
-and cached.
+music) and add nothing measurable on top of it; the lookup is one request
+per track, on its own thread, and cached.
 
 Here is the render time per frame at 200×60 in truecolor: the field
 sampling plus the style draw (`bench_lamp`: a full-area lamp, two sim
