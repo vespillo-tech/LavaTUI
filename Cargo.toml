@@ -10,3 +10,4 @@ jiff = "0.2.37"
 ratatui = "0.30.2"
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1.6"
+toml_edit = "0.25"
