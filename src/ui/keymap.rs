@@ -59,6 +59,15 @@ pub enum Action {
     Keep,
     /// Jump the picker cursor to item `n` (0-based).
     Jump(u8),
+    /// A page down (`true`) or up in a list.
+    Page(bool),
+    /// To the end (`true`) or the start of a list.
+    Edge(bool),
+    /// Up a level in the library (a playlist's tracks → the playlists);
+    /// closes it at the top.
+    Back,
+    /// Play the whole playlist under the cursor (or the open one).
+    PlayAll,
     // Not keys.
     /// The terminal was resized: relayout and redraw now.
     Resize,
@@ -70,6 +79,12 @@ pub enum Action {
     },
     /// Mouse click in a picker: preview the item there (twice: keep it).
     Click {
+        col: u16,
+        row: u16,
+    },
+    /// Mouse press with nothing open: a music widget button or the
+    /// progress bar if it's on one, else a heat pulse on the wax.
+    Press {
         col: u16,
         row: u16,
     },
@@ -87,6 +102,16 @@ pub enum PlayerKey {
     VolumeUp,
     Shuffle,
     Repeat,
+    /// Like / unlike the playing track (Web API).
+    Like,
+    /// The add-to-playlist picker.
+    AddToPlaylist,
+    /// The playlist browser.
+    Playlists,
+    /// Log in to / out of Spotify (Web API).
+    Account,
+    /// Jump to this far through the track, in ‰ (a click on the bar).
+    SeekTo(u16),
 }
 
 /// A key as written in the table.
@@ -239,21 +264,22 @@ pub static KEYMAP: &[Row] = &[
         "quit · ctrl-c",
         &[(K('q'), A::Quit), (Ctrl('c'), A::Quit)],
     ),
-    row(App, "b", "status bar", &[(K('b'), A::ToggleStatusBar)]),
-    row(App, "d", "debug hud", &[(K('d'), A::DebugHud)]),
+    row(
+        App,
+        "b d",
+        "status bar · debug hud",
+        &[(K('b'), A::ToggleStatusBar), (K('d'), A::DebugHud)],
+    ),
     row(App, "ctrl-l", "redraw", &[(Ctrl('l'), A::Redraw)]),
+    // Not a key: with mouse capture on, the terminal's own selection.
+    row(App, "⇧ drag", "select text", &[]),
     // The player keys, after `A` (their own mode: they may reuse keys).
     row(
         Music,
-        "␣",
-        "play / pause",
-        &[(Key::Space, A::Player(P::PlayPause))],
-    ),
-    row(
-        Music,
-        "n p",
-        "next · previous",
+        "␣ n p",
+        "play · next · previous",
         &[
+            (Key::Space, A::Player(P::PlayPause)),
             (K('n'), A::Player(P::Next)),
             (K('p'), A::Player(P::Previous)),
         ],
@@ -285,6 +311,25 @@ pub static KEYMAP: &[Row] = &[
             (K('r'), A::Player(P::Repeat)),
         ],
     ),
+    // The Spotify library (Web API, `docs/spotify.md`).
+    row(
+        Music,
+        "s a",
+        "like · add to playlist",
+        &[
+            (K('s'), A::Player(P::Like)),
+            (K('a'), A::Player(P::AddToPlaylist)),
+        ],
+    ),
+    row(
+        Music,
+        "b i",
+        "playlists · log in/out",
+        &[
+            (K('b'), A::Player(P::Playlists)),
+            (K('i'), A::Player(P::Account)),
+        ],
+    ),
 ];
 
 /// Which key set is live.
@@ -299,6 +344,11 @@ pub enum InputMode {
     },
     /// The player keys (`A`); `esc`, `q` and `A` leave them.
     Player,
+    /// The playlist browser / add-to-playlist picker; `inline` adds
+    /// h/l ←/→ as move (else they go back / open).
+    Library {
+        inline: bool,
+    },
 }
 
 pub fn action_for(event: &Event, mode: InputMode) -> Option<Action> {
@@ -368,6 +418,23 @@ fn key_action(event: &KeyEvent, mode: InputMode) -> Option<Action> {
             (KeyCode::Down, _) | (_, Some(K('j'))) => Some(Action::Down),
             _ => None,
         },
+        InputMode::Library { inline } => match (code, key) {
+            (KeyCode::Esc, _) => Some(Action::Back),
+            (_, Some(K('q'))) => Some(Action::Close),
+            (KeyCode::Enter, _) | (_, Some(Key::Space)) => Some(Action::Keep),
+            (KeyCode::Up, _) | (_, Some(K('k'))) => Some(Action::Up),
+            (KeyCode::Down, _) | (_, Some(K('j'))) => Some(Action::Down),
+            (KeyCode::Left, _) | (_, Some(K('h'))) if inline => Some(Action::Up),
+            (KeyCode::Right, _) | (_, Some(K('l'))) if inline => Some(Action::Down),
+            (KeyCode::Left, _) | (_, Some(K('h'))) => Some(Action::Back),
+            (KeyCode::Right, _) | (_, Some(K('l'))) => Some(Action::Keep),
+            (KeyCode::PageUp, _) => Some(Action::Page(false)),
+            (KeyCode::PageDown, _) => Some(Action::Page(true)),
+            (KeyCode::Home, _) | (_, Some(K('g'))) => Some(Action::Edge(false)),
+            (KeyCode::End, _) | (_, Some(K('G'))) => Some(Action::Edge(true)),
+            (_, Some(K('p'))) => Some(Action::PlayAll),
+            _ => None,
+        },
         InputMode::Picker { opener, inline } => match (code, key) {
             (KeyCode::Esc, _) | (_, Some(K('q'))) => Some(Action::Close),
             (KeyCode::Enter, _) | (_, Some(Key::Space)) => Some(Action::Keep),
@@ -400,24 +467,24 @@ fn binding(live: impl Fn(Section) -> bool, key: Key) -> Option<Action> {
 }
 
 fn mouse_action(mouse: &MouseEvent, mode: InputMode) -> Option<Action> {
+    let (col, row) = (mouse.column, mouse.row);
+    let list = matches!(
+        mode,
+        InputMode::Help | InputMode::Picker { .. } | InputMode::Library { .. }
+    );
     match (mouse.kind, mode) {
-        (MouseEventKind::ScrollUp, InputMode::Help | InputMode::Picker { .. }) => Some(Action::Up),
-        (MouseEventKind::ScrollDown, InputMode::Help | InputMode::Picker { .. }) => {
-            Some(Action::Down)
+        (MouseEventKind::ScrollUp, _) if list => Some(Action::Up),
+        (MouseEventKind::ScrollDown, _) if list => Some(Action::Down),
+        (MouseEventKind::Down(MouseButton::Left), InputMode::Normal | InputMode::Player) => {
+            Some(Action::Press { col, row })
+        }
+        (MouseEventKind::Drag(MouseButton::Left), InputMode::Normal) => {
+            Some(Action::Poke { col, row })
         }
         (
-            MouseEventKind::Down(MouseButton::Left) | MouseEventKind::Drag(MouseButton::Left),
-            InputMode::Normal,
-        ) => Some(Action::Poke {
-            col: mouse.column,
-            row: mouse.row,
-        }),
-        (MouseEventKind::Down(MouseButton::Left), InputMode::Picker { .. }) => {
-            Some(Action::Click {
-                col: mouse.column,
-                row: mouse.row,
-            })
-        }
+            MouseEventKind::Down(MouseButton::Left),
+            InputMode::Picker { .. } | InputMode::Library { .. },
+        ) => Some(Action::Click { col, row }),
         _ => None,
     }
 }
@@ -537,7 +604,7 @@ mod tests {
             assert_eq!(action_for(&leave, player), Some(Action::Close));
         }
         assert_eq!(action_for(&ch('?'), player), Some(Action::Help));
-        assert_eq!(action_for(&ch('s'), player), None);
+        assert_eq!(action_for(&ch('c'), player), None);
         let ctrl_c = press(KeyCode::Char('c'), KeyModifiers::CONTROL);
         assert_eq!(action_for(&ctrl_c, player), Some(Action::Quit));
     }
@@ -620,6 +687,61 @@ mod tests {
         assert_eq!(
             action_for(&press(KeyCode::Left, KeyModifiers::NONE), inline),
             Some(Action::Up)
+        );
+    }
+
+    #[test]
+    fn library_keys() {
+        let lib = InputMode::Library { inline: false };
+        let esc = press(KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(action_for(&esc, lib), Some(Action::Back));
+        assert_eq!(action_for(&ch('q'), lib), Some(Action::Close));
+        assert_eq!(
+            action_for(&press(KeyCode::Enter, KeyModifiers::NONE), lib),
+            Some(Action::Keep)
+        );
+        assert_eq!(action_for(&ch('l'), lib), Some(Action::Keep));
+        assert_eq!(action_for(&ch('h'), lib), Some(Action::Back));
+        assert_eq!(action_for(&ch('p'), lib), Some(Action::PlayAll));
+        assert_eq!(action_for(&ch('G'), lib), Some(Action::Edge(true)));
+        assert_eq!(
+            action_for(&press(KeyCode::PageDown, KeyModifiers::NONE), lib),
+            Some(Action::Page(true))
+        );
+        assert_eq!(action_for(&ch('s'), lib), None, "globals are off");
+        let inline = InputMode::Library { inline: true };
+        assert_eq!(action_for(&ch('l'), inline), Some(Action::Down));
+    }
+
+    #[test]
+    fn the_mouse_presses_buttons_and_scrolls_lists() {
+        let at = |kind| {
+            Event::Mouse(MouseEvent {
+                kind,
+                column: 3,
+                row: 4,
+                modifiers: KeyModifiers::NONE,
+            })
+        };
+        let down = at(MouseEventKind::Down(MouseButton::Left));
+        let press = Some(Action::Press { col: 3, row: 4 });
+        assert_eq!(action_for(&down, InputMode::Normal), press);
+        assert_eq!(action_for(&down, InputMode::Player), press);
+        let lib = InputMode::Library { inline: false };
+        assert_eq!(
+            action_for(&down, lib),
+            Some(Action::Click { col: 3, row: 4 })
+        );
+        assert_eq!(
+            action_for(&at(MouseEventKind::ScrollDown), lib),
+            Some(Action::Down)
+        );
+        assert_eq!(
+            action_for(
+                &at(MouseEventKind::Drag(MouseButton::Left)),
+                InputMode::Normal
+            ),
+            Some(Action::Poke { col: 3, row: 4 })
         );
     }
 

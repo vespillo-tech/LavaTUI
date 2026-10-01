@@ -525,6 +525,70 @@ fn search_clamps_the_limit_and_encodes_the_query() {
     assert_eq!(field(&q2, "limit"), Some("1"));
 }
 
+#[test]
+fn player_state_reads_shuffle_repeat_and_nothing_playing() {
+    let mut r = logged_in();
+    r.mock
+        .reply(
+            200,
+            r#"{"shuffle_state":true,"repeat_state":"context","is_playing":true,
+                "device":{"name":"Mac","type":"Computer"},"item":{"uri":"spotify:track:x"},
+                "actions":{"disallows":{"toggling_shuffle":true,"resuming":true}}}"#,
+        )
+        .reply(204, "");
+    let state = r.client.player().unwrap().unwrap();
+    assert!(state.shuffle && state.is_playing);
+    assert_eq!(state.repeat, Repeat::Context);
+    assert_eq!(state.device.as_deref(), Some("Mac"));
+    assert_eq!(state.item_uri.as_deref(), Some("spotify:track:x"));
+    assert!(state.shuffle_blocked && !state.repeat_blocked);
+    assert_eq!(r.client.player().unwrap(), None, "204: nothing playing");
+    assert_eq!(r.mock.sent()[0].url, "https://api.spotify.com/v1/me/player");
+}
+
+#[test]
+fn player_setters_put_with_the_state_in_the_query() {
+    let mut r = logged_in();
+    r.mock.reply(204, "").reply(204, "").reply(204, "");
+    r.client.set_shuffle(true).unwrap();
+    r.client.set_repeat(Repeat::Track).unwrap();
+    r.client
+        .play("spotify:playlist:p", Some("spotify:track:t"))
+        .unwrap();
+    let sent = r.mock.sent();
+    assert!(sent.iter().all(|s| s.method == Method::Put));
+    assert_eq!(
+        sent[0].url,
+        "https://api.spotify.com/v1/me/player/shuffle?state=true"
+    );
+    assert_eq!(
+        sent[1].url,
+        "https://api.spotify.com/v1/me/player/repeat?state=track"
+    );
+    assert_eq!(sent[2].url, "https://api.spotify.com/v1/me/player/play");
+    let Body::Json(body) = &sent[2].body else {
+        panic!("{:?}", sent[2].body)
+    };
+    let v: serde_json::Value = serde_json::from_str(body).unwrap();
+    assert_eq!(v["context_uri"], "spotify:playlist:p");
+    assert_eq!(v["offset"]["uri"], "spotify:track:t");
+}
+
+#[test]
+fn a_refused_player_call_is_forbidden() {
+    let mut r = logged_in();
+    r.mock.reply(
+        403,
+        r#"{"error":{"status":403,"message":"Player command failed: Premium required","reason":"PREMIUM_REQUIRED"}}"#,
+    );
+    assert_eq!(
+        r.client.set_shuffle(false),
+        Err(Error::Forbidden(
+            "Player command failed: Premium required".into()
+        ))
+    );
+}
+
 // ---- the worker -----------------------------------------------------------
 
 fn handle(saved: Option<Tokens>) -> (SpotifyWeb, Mock, MemoryStore) {
@@ -819,4 +883,358 @@ fn live_account() {
         page.total
     );
     assert!(page.items.iter().any(|t| t.uri == uri));
+}
+
+/// The library UI's calls against a real account, non-destructively:
+/// reads the playlists and one owned playlist's first page, likes /
+/// unlikes the playing track (restoring it), adds it to the private
+/// "lavatui test" playlist (`LAVATUI_TEST_PLAYLIST`, else found by name)
+/// and nowhere else, then reads the player and flips shuffle and repeat
+/// for a moment, putting both back. Same token file as `live_account`.
+/// `LAVATUI_SPOTIFY_CLIENT_ID=… cargo test -- --ignored --nocapture live_library`
+#[test]
+#[ignore = "needs a Spotify account and a browser"]
+fn live_library() {
+    use super::store::FileStore;
+    let client_id = client_id_from_env().expect("set LAVATUI_SPOTIFY_CLIENT_ID");
+    let file = std::env::var_os("LAVATUI_LIVE_TOKEN_FILE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join("lavatui-live-spotify-tokens.json"));
+    let id = client_id.clone();
+    let mut web = SpotifyWeb::spawn(client_id, move || {
+        Client::new(super::http::Ureq::new(), id, Box::new(FileStore(file)))
+    });
+    let try_ask = |web: &mut SpotifyWeb, req: Request| -> Result<Reply, Error> {
+        let want = web.request(req.clone());
+        loop {
+            match web.poll_timeout(Duration::from_secs(60)) {
+                Some(Event::Reply { id, result }) if id == want => return result,
+                Some(other) => eprintln!("event: {other:?}"),
+                None => panic!("{req:?}: no reply"),
+            }
+        }
+    };
+    let ask = |web: &mut SpotifyWeb, req: Request| -> Reply {
+        try_ask(web, req.clone()).unwrap_or_else(|e| panic!("{req:?}: {e}"))
+    };
+    let login = |web: &mut SpotifyWeb| {
+        let url = web.login().expect("login");
+        eprintln!("LOGIN: finish in the browser (opened): {url}");
+        match web.poll_timeout(Duration::from_secs(330)) {
+            Some(Event::LoggedIn { saved }) => eprintln!("logged in (saved: {saved})"),
+            other => panic!("login: {other:?}"),
+        }
+    };
+    let me = match try_ask(&mut web, Request::Me) {
+        Ok(Reply::User(me)) => me,
+        _ => {
+            login(&mut web);
+            let Reply::User(me) = ask(&mut web, Request::Me) else {
+                panic!()
+            };
+            me
+        }
+    };
+    eprintln!("me: {}", me.name());
+
+    // Player first: a login without the playback scopes logs in again.
+    let mut player = try_ask(&mut web, Request::Player);
+    if matches!(&player, Err(Error::Forbidden(why)) if why.contains("scope")) {
+        eprintln!("token lacks the playback scopes: logging in again");
+        web.logout();
+        let _ = web.poll_timeout(Duration::from_secs(5));
+        login(&mut web);
+        player = try_ask(&mut web, Request::Player);
+    }
+
+    let Reply::Playlists(lists) = ask(&mut web, Request::MyPlaylists) else {
+        panic!()
+    };
+    let editable = lists.iter().filter(|p| p.editable_by(&me)).count();
+    eprintln!("playlists: {} ({editable} editable)", lists.len());
+    let test_id = std::env::var("LAVATUI_TEST_PLAYLIST")
+        .ok()
+        .unwrap_or_else(|| {
+            lists
+                .iter()
+                .find(|p| p.name == "lavatui test" && p.owner_id == me.id)
+                .expect("a 'lavatui test' playlist")
+                .id
+                .clone()
+        });
+    if let Some(owned) = lists
+        .iter()
+        .find(|p| p.editable_by(&me) && p.total > 0 && p.id != test_id)
+    {
+        let Reply::Tracks(page) = ask(
+            &mut web,
+            Request::PlaylistTracks {
+                playlist_id: owned.id.clone(),
+                offset: 0,
+            },
+        ) else {
+            panic!()
+        };
+        eprintln!(
+            "{:?}: {} of {} read, more: {}",
+            owned.name,
+            page.items.len(),
+            page.total,
+            page.has_more
+        );
+    }
+    if let Some(followed) = lists.iter().find(|p| !p.editable_by(&me)) {
+        let r = try_ask(
+            &mut web,
+            Request::PlaylistTracks {
+                playlist_id: followed.id.clone(),
+                offset: 0,
+            },
+        );
+        eprintln!("followed {:?} items: {:?}", followed.name, r.map(|_| "ok"));
+    }
+
+    let playing = std::process::Command::new("osascript")
+        .args(["-e", "if application \"Spotify\" is running then tell application \"Spotify\" to return id of current track"])
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+        .filter(|uri| uri.starts_with("spotify:track:"))
+        .expect("play a track in Spotify first");
+    eprintln!("playing: {playing}");
+    let uris = vec![playing.clone()];
+    let liked = |web: &mut SpotifyWeb| {
+        let Reply::Contains(v) = ask(web, Request::LibraryContains { uris: uris.clone() }) else {
+            panic!()
+        };
+        v[0]
+    };
+    let original = liked(&mut web);
+    let (flip, back) = if original {
+        (
+            Request::Unlike { uris: uris.clone() },
+            Request::Like { uris: uris.clone() },
+        )
+    } else {
+        (
+            Request::Like { uris: uris.clone() },
+            Request::Unlike { uris: uris.clone() },
+        )
+    };
+    ask(&mut web, flip);
+    let flipped = liked(&mut web);
+    ask(&mut web, back);
+    let restored = liked(&mut web);
+    eprintln!("liked: {original} -> {flipped} -> {restored}");
+    assert_eq!((flipped, restored), (!original, original));
+
+    let Reply::Snapshot(snap) = ask(
+        &mut web,
+        Request::AddToPlaylist {
+            playlist_id: test_id.clone(),
+            uris: uris.clone(),
+        },
+    ) else {
+        panic!()
+    };
+    eprintln!("added to lavatui test ({test_id}), snapshot {snap}");
+
+    match player {
+        Ok(Reply::Player(Some(state))) => {
+            eprintln!("player: {state:?}");
+            if state.shuffle_blocked || state.repeat_blocked {
+                eprintln!("(this context blocks some toggles: refusals expected)");
+            }
+            let shuffle = try_ask(&mut web, Request::SetShuffle(!state.shuffle));
+            eprintln!("shuffle -> {}: {shuffle:?}", !state.shuffle);
+            std::thread::sleep(Duration::from_millis(800));
+            if let Ok(Reply::Player(Some(now))) = try_ask(&mut web, Request::Player) {
+                eprintln!("read back: shuffle {} repeat {:?}", now.shuffle, now.repeat);
+            }
+            let repeat = if state.repeat == Repeat::Off {
+                Repeat::Context
+            } else {
+                Repeat::Off
+            };
+            let r = try_ask(&mut web, Request::SetRepeat(repeat));
+            eprintln!("repeat -> {repeat:?}: {r:?}");
+            std::thread::sleep(Duration::from_millis(800));
+            if let Ok(Reply::Player(Some(now))) = try_ask(&mut web, Request::Player) {
+                eprintln!("read back: shuffle {} repeat {:?}", now.shuffle, now.repeat);
+            }
+            let a = try_ask(&mut web, Request::SetShuffle(state.shuffle));
+            let b = try_ask(&mut web, Request::SetRepeat(state.repeat));
+            std::thread::sleep(Duration::from_millis(800));
+            let Reply::Player(Some(after)) = ask(&mut web, Request::Player) else {
+                panic!()
+            };
+            eprintln!(
+                "restored ({a:?}, {b:?}): shuffle {} repeat {:?}",
+                after.shuffle, after.repeat
+            );
+            if shuffle.is_ok() {
+                assert_eq!((after.shuffle, after.repeat), (state.shuffle, state.repeat));
+            }
+        }
+        other => eprintln!("player: {other:?}"),
+    }
+}
+
+/// `live_library`'s player part in a playlist context, where Spotify
+/// allows the toggles: plays "lavatui test" (`LAVATUI_TEST_PLAYLIST`) for
+/// a few seconds through `PUT /me/player/play`, flips shuffle and repeat
+/// and puts them back, then has the desktop app play the original track
+/// from where it was (paused again if it was). Opt-in:
+/// `LAVATUI_SPOTIFY_CLIENT_ID=… LAVATUI_TEST_PLAYLIST=… cargo test -- --ignored --nocapture live_player_in_a_playlist`
+#[test]
+#[ignore = "needs a Spotify account; changes playback for a few seconds"]
+fn live_player_in_a_playlist() {
+    use super::store::FileStore;
+    let osa = |script: &str| -> String {
+        let out = std::process::Command::new("osascript")
+            .args(["-e", script])
+            .output()
+            .expect("osascript");
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    };
+    let before = osa(
+        "if application \"Spotify\" is running then tell application \"Spotify\" to return (id of current track) & \"|\" & (player position as string) & \"|\" & (player state as string)",
+    );
+    let mut parts = before.split('|');
+    let (track, position, state) = (
+        parts.next().unwrap_or("").to_owned(),
+        parts.next().unwrap_or("0").replace(',', "."),
+        parts.next().unwrap_or("").to_owned(),
+    );
+    assert!(
+        track.starts_with("spotify:"),
+        "Spotify must be running: {before:?}"
+    );
+    eprintln!("before: {track} at {position}s, {state}");
+
+    let client_id = client_id_from_env().expect("set LAVATUI_SPOTIFY_CLIENT_ID");
+    let playlist = std::env::var("LAVATUI_TEST_PLAYLIST").expect("set LAVATUI_TEST_PLAYLIST");
+    let file = std::env::temp_dir().join("lavatui-live-spotify-tokens.json");
+    let id = client_id.clone();
+    let mut web = SpotifyWeb::spawn(client_id, move || {
+        Client::new(super::http::Ureq::new(), id, Box::new(FileStore(file)))
+    });
+    let ask = |web: &mut SpotifyWeb, req: Request| -> Result<Reply, Error> {
+        let want = web.request(req);
+        loop {
+            match web.poll_timeout(Duration::from_secs(60)) {
+                Some(Event::Reply { id, result }) if id == want => return result,
+                Some(_) => {}
+                None => panic!("no reply"),
+            }
+        }
+    };
+    let read = |web: &mut SpotifyWeb| match ask(web, Request::Player) {
+        Ok(Reply::Player(Some(p))) => p,
+        other => panic!("player: {other:?}"),
+    };
+    let original = read(&mut web);
+    let played = ask(
+        &mut web,
+        Request::Play {
+            context_uri: format!("spotify:playlist:{playlist}"),
+            offset_uri: None,
+        },
+    );
+    eprintln!("play the test playlist: {played:?}");
+    std::thread::sleep(Duration::from_millis(1500));
+    let p = read(&mut web);
+    eprintln!("in the playlist: {p:?}");
+    let s = ask(&mut web, Request::SetShuffle(!p.shuffle));
+    let r = ask(
+        &mut web,
+        Request::SetRepeat(if p.repeat == Repeat::Off {
+            Repeat::Context
+        } else {
+            Repeat::Off
+        }),
+    );
+    std::thread::sleep(Duration::from_millis(800));
+    let flipped = read(&mut web);
+    eprintln!(
+        "flip: {s:?} {r:?} -> shuffle {} repeat {:?}",
+        flipped.shuffle, flipped.repeat
+    );
+    let _ = ask(&mut web, Request::SetShuffle(original.shuffle));
+    let _ = ask(&mut web, Request::SetRepeat(original.repeat));
+
+    // Put the desktop app back where it was.
+    osa(&format!(
+        "tell application \"Spotify\"\nplay track \"{track}\"\ndelay 0.8\nset player position to {position}\nend tell"
+    ));
+    if state != "playing" {
+        osa("tell application \"Spotify\" to pause");
+    }
+    std::thread::sleep(Duration::from_millis(800));
+    let after = read(&mut web);
+    let now = osa(
+        "tell application \"Spotify\" to return (id of current track) & \"|\" & (player position as string) & \"|\" & (player state as string)",
+    );
+    eprintln!(
+        "after: {now}; shuffle {} repeat {:?} (were {} {:?})",
+        after.shuffle, after.repeat, original.shuffle, original.repeat
+    );
+    assert!(s.is_ok() && r.is_ok(), "toggles refused in a playlist");
+    assert_ne!((flipped.shuffle, flipped.repeat), (p.shuffle, p.repeat));
+    assert_eq!(
+        (after.shuffle, after.repeat),
+        (original.shuffle, original.repeat)
+    );
+    assert!(now.starts_with(&track));
+}
+
+/// Read-only: the "lavatui test" playlist's items and whether the track
+/// playing in Spotify is liked (to check what a UI run did).
+/// `LAVATUI_SPOTIFY_CLIENT_ID=… LAVATUI_TEST_PLAYLIST=… cargo test -- --ignored --nocapture live_peek`
+#[test]
+#[ignore = "needs a Spotify account"]
+fn live_peek() {
+    use super::store::FileStore;
+    let client_id = client_id_from_env().expect("set LAVATUI_SPOTIFY_CLIENT_ID");
+    let playlist = std::env::var("LAVATUI_TEST_PLAYLIST").expect("set LAVATUI_TEST_PLAYLIST");
+    let file = std::env::temp_dir().join("lavatui-live-spotify-tokens.json");
+    let id = client_id.clone();
+    let mut web = SpotifyWeb::spawn(client_id, move || {
+        Client::new(super::http::Ureq::new(), id, Box::new(FileStore(file)))
+    });
+    let mut ask = |req: Request| {
+        let want = web.request(req);
+        loop {
+            match web.poll_timeout(Duration::from_secs(60)) {
+                Some(Event::Reply { id, result }) if id == want => return result,
+                Some(_) => {}
+                None => panic!("no reply"),
+            }
+        }
+    };
+    if let Ok(Reply::Tracks(page)) = ask(Request::PlaylistTracks {
+        playlist_id: playlist,
+        offset: 0,
+    }) {
+        for t in &page.items {
+            eprintln!(
+                "in lavatui test: {} – {} ({})",
+                t.name,
+                t.artist_line(),
+                t.uri
+            );
+        }
+    }
+    let playing = std::process::Command::new("osascript")
+        .args([
+            "-e",
+            "tell application \"Spotify\" to return id of current track",
+        ])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+        .unwrap_or_default();
+    let liked = ask(Request::LibraryContains {
+        uris: vec![playing.clone()],
+    });
+    eprintln!("{playing} liked: {liked:?}");
 }

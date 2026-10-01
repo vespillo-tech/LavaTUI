@@ -31,6 +31,7 @@ use crate::dock::{Backdrop, Look, WIDGETS};
 use crate::media::art::{Art, ArtLoader};
 use crate::media::{FakeSource, Snapshot, Status, Track, Unavailable};
 use crate::render::LampState;
+use crate::spotify_web::fake::demo;
 use crate::theme::{Rgb, Role};
 
 /// The mockup sizes (§1.5) plus the micro / tiny ones from the beads.
@@ -204,12 +205,63 @@ fn scenarios() -> Vec<(&'static str, Setup)> {
             m.update(Action::ToggleMinimal, t);
             m.toast = None;
         }),
+        ("music: liked, logged in", |m, t| {
+            spotify(m, t, true);
+            m.toast = None;
+        }),
+        ("music: logged out of spotify", |m, t| {
+            spotify(m, t, false);
+            m.toast = None;
+        }),
+        ("library: playlists", |m, t| {
+            spotify(m, t, true);
+            m.update(Action::PlayerKeys, t);
+            m.update(Action::Player(PlayerKey::Playlists), t);
+            m.update(Action::Down, t);
+            m.toast = None;
+        }),
+        ("library: a playlist's tracks", |m, t| {
+            spotify(m, t, true);
+            m.update(Action::PlayerKeys, t);
+            m.update(Action::Player(PlayerKey::Playlists), t);
+            m.update(Action::Keep, t);
+            m.update(Action::Down, t);
+            m.toast = None;
+        }),
+        ("library: add to playlist", |m, t| {
+            spotify(m, t, true);
+            m.update(Action::PlayerKeys, t);
+            m.update(Action::Player(PlayerKey::AddToPlaylist), t);
+            m.toast = None;
+        }),
+        ("library: logged out", |m, t| {
+            spotify(m, t, false);
+            m.update(Action::PlayerKeys, t);
+            m.update(Action::Player(PlayerKey::Playlists), t);
+            m.toast = None;
+        }),
         ("lyrics beside, a long line wrapped", |m, t| {
             lyrics(m, t, 1, 23)
         }),
         ("lyrics on the lava, bottom", |m, t| lyrics(m, t, 2, 15)),
         ("lyrics on the lava in a gap", |m, t| lyrics(m, t, 2, 34)),
     ]
+}
+
+/// Music beside the lamp playing a Spotify track (liked), with the demo
+/// account logged in (or out).
+fn spotify(m: &mut Model, t: Instant, logged_in: bool) {
+    let fake = demo();
+    {
+        let mut s = fake.state();
+        s.logged_in = logged_in;
+        s.liked.insert("spotify:track:t0".into());
+    }
+    m.library
+        .connect_with(move || Some(Box::new(fake.clone()) as Box<dyn crate::spotify_web::Web>));
+    music_track(m, t, Status::Playing, 1, "spotify:track:t0");
+    // The account's answers land on the next frame.
+    m.update(Action::Resize, t);
 }
 
 const LRC: &str = "[00:05.00]Wax rises slowly through the amber light\\n\
@@ -271,8 +323,12 @@ const COVER: &str = "https://i.example/cover";
 /// The music widget on a fake player in `status`, placed by `presses` of
 /// `a` (1 side, 2 on the lava), its cover already loaded.
 fn music(m: &mut Model, t: Instant, status: Status, presses: usize) {
+    music_track(m, t, status, presses, "fake:1");
+}
+
+fn music_track(m: &mut Model, t: Instant, status: Status, presses: usize, id: &str) {
     let track = Track {
-        id: "fake:1".into(),
+        id: id.into(),
         name: "Convection (Long Version)".into(),
         artist: "Wax & Wane".into(),
         album: "Lamplight".into(),
@@ -677,6 +733,7 @@ fn hint_keys_resolve_through_the_keymap() {
             "skip" => Action::Player(PlayerKey::Next),
             "seek" => Action::Player(PlayerKey::SeekForward),
             "volume" => Action::Player(PlayerKey::VolumeUp),
+            "playlists" => Action::Player(PlayerKey::Playlists),
             "done" => Action::Close,
             other => panic!("unknown player hint {other}"),
         };
@@ -758,4 +815,95 @@ fn reduced_grid_draws_the_whole_lamp() {
         k.trim_end_matches('k').parse().unwrap()
     };
     assert!(px(hud(&reduced)) * 3 < px(hud(&full)) + 3);
+}
+
+/// The cell showing `glyph` in the music widget's rect, if drawn.
+fn find_in_music(m: &Model, buf: &Buffer, glyph: &str) -> Option<(u16, u16)> {
+    let music = crate::dock::by_name("music").unwrap().0;
+    let rect = m
+        .layout
+        .panel
+        .iter()
+        .chain(&m.layout.on_lava)
+        .flat_map(|s| &s.items)
+        .find(|p| p.widget == music)?
+        .rect;
+    rect.positions()
+        .find(|p| buf[(p.x, p.y)].symbol() == glyph)
+        .map(|p| (p.x, p.y))
+}
+
+/// The mouse (lava-75z.5): a press lands on exactly what the music widget
+/// drew there, beside the lamp and on the lava, at several sizes.
+#[test]
+fn presses_land_on_what_the_music_widget_draws() {
+    for (cols, rows, lava) in [
+        (80, 24, false),
+        (120, 36, false),
+        (120, 36, true),
+        (60, 24, true),
+    ] {
+        let ctx = format!("{cols}x{rows} lava {lava}");
+        let (mut m, t0) = model(cols, rows, 7);
+        spotify(&mut m, t0, true);
+        if lava {
+            m.update(Action::Place("music"), t0);
+            m.update(Action::Resize, t0);
+        }
+        let buf = draw(&m, cols, rows);
+
+        let (x, y) = find_in_music(&m, &buf, "≡").unwrap_or_else(|| panic!("{ctx}: no ≡"));
+        m.update(Action::Press { col: x, row: y }, t0);
+        assert!(matches!(m.overlay, Overlay::Library(_)), "{ctx}");
+        m.update(Action::Close, t0);
+
+        let (x, y) = find_in_music(&m, &buf, "♥").unwrap_or_else(|| panic!("{ctx}: no ♥"));
+        m.update(Action::Press { col: x, row: y }, t0);
+        assert_eq!(m.liked(), Some(false), "{ctx}");
+
+        let (x, y) = find_in_music(&m, &buf, "‖").unwrap_or_else(|| panic!("{ctx}: no ‖"));
+        m.update(Action::Press { col: x, row: y }, t0);
+        let snap = m.music.snapshot.as_ref().unwrap();
+        assert_eq!(snap.status, Status::Paused, "{ctx}");
+
+        // The last cell of the bar: seek to (almost) the end.
+        let buf = draw(&m, cols, rows);
+        let music = crate::dock::by_name("music").unwrap().0;
+        let rect = m
+            .layout
+            .panel
+            .iter()
+            .chain(&m.layout.on_lava)
+            .flat_map(|s| &s.items)
+            .find(|p| p.widget == music)
+            .unwrap()
+            .rect;
+        let end = rect
+            .positions()
+            .filter(|p| buf[(p.x, p.y)].symbol() == "─")
+            .max_by_key(|p| p.x)
+            .unwrap_or_else(|| panic!("{ctx}: no bar"));
+        m.update(
+            Action::Press {
+                col: end.x,
+                row: end.y,
+            },
+            t0,
+        );
+        let pos = m.music.snapshot.as_ref().unwrap().position.as_secs();
+        assert!(pos >= 380, "{ctx}: seeked to {pos}s of 402");
+    }
+}
+
+/// Without mouse capture the widget shows no buttons, only a liked heart.
+#[test]
+fn no_mouse_no_buttons() {
+    let (mut m, t0) = model(80, 24, 7);
+    m.settings.input.mouse = false;
+    spotify(&mut m, t0, true);
+    let buf = draw(&m, 80, 24);
+    for glyph in ["◂◂", "◂", "≡", "+"] {
+        assert!(find_in_music(&m, &buf, glyph).is_none(), "{glyph}");
+    }
+    assert!(find_in_music(&m, &buf, "♥").is_some());
 }

@@ -34,7 +34,7 @@ pub use clock::{clock_forms, clock_parts};
 pub use lyrics::Lyrics;
 #[cfg(test)]
 pub use lyrics::{Show as LyricsShow, lyrics_forms};
-pub use music::Music;
+pub use music::{Music, fit, hit as music_hit};
 #[cfg(test)]
 pub use music::{Show, music_forms};
 pub use pomodoro::Pomodoro;

@@ -82,6 +82,16 @@ in minimal mode:
   and cached (`$XDG_CACHE_HOME/lavatui/art`) in the background. On Linux
   and Windows it shows any player (Spotify first); see
   [Platform support](#platform-support).
+- **Your Spotify library** (needs a Client ID, `docs/spotify.md`): log in
+  once (`A` then `i`, in the browser), then browse your playlists (`b`),
+  open the ones you own or share and play any track in them, add the
+  playing track to a playlist (`a`), and like or unlike it (`s`; a `♥` in
+  the widget). With Premium, shuffle and repeat (`x` / `r`) work too,
+  through the Web API. All of it runs on a worker thread; the lamp never
+  waits for Spotify.
+- **Mouse**: the music widget has quiet buttons (`◂◂ ‖ ▸▸`, `♡ + ≡`) and a
+  progress bar you can click to seek; pickers and the playlist browser
+  click and scroll. Every button has a key.
 - **Lyrics** (`y`, off by default): the playing track's words from
   [lrclib.net](https://lrclib.net), in time with the song: the current
   line bold and bright, the ones around it dim, a gentle fade from line
@@ -189,18 +199,27 @@ open, `q` closes it instead of quitting.
 - **Player keys** (after `A`, until `esc`, `q` or `A`): `space` play /
   pause, `n` / `p` next / previous, `←` / `→` (`h` / `l`) seek 10 s,
   `↑` / `↓` (`k` / `j`, `+` / `-`) volume, `x` / `r` shuffle / repeat
-  where the player supports them (Spotify's AppleScript doesn't). They
-  take the keyboard like an overlay, so they can reuse `space`, `n` and
-  `p`; the status bar shows them while they're on.
+  where the player supports them (Spotify's AppleScript doesn't; logged
+  in with Premium they go through the Web API), `s` like / unlike, `a` add
+  to playlist, `b` playlists, `i` log in to Spotify (again, twice: log
+  out). They take the keyboard like an overlay, so they can reuse `space`,
+  `n` and `p`; the status bar shows them while they're on.
+- **In the playlist browser:** `j`/`k` move, `enter` (or `l`) opens a
+  playlist you own or share (others: plays it) or plays a track in it,
+  `p` plays the whole playlist, `g`/`G` and page up/down jump, `esc` (or
+  `h`) goes back, `q` closes. The add-to-playlist picker lists only
+  playlists you can add to; `enter` adds.
 - **In help:** `j`/`k` or `↑`/`↓` scroll. `?`, `esc` or `q` close it.
 - **In pickers:** `j`/`k` or `↑`/`↓` move (with live preview), `1`–`9`
   jump, `enter` or `space` keep, and `esc` or `q` revert. Pressing the
   opening key again keeps the choice and closes the picker. In the tiny
   inline picker, `h`/`l` and `←`/`→` move too.
-- **Mouse** (opt-in, `input.mouse = true`): click or drag on the lamp to
-  heat the wax there, scroll in help, and scroll or click in pickers
-  (a click previews, a double-click keeps). It's off by default because mouse capture breaks
-  the terminal's text selection.
+- **Mouse** (on by default, `input.mouse = false` turns it off): click the
+  music widget's buttons and progress bar, click or drag on the lamp to
+  heat the wax there, scroll in help, and scroll or click in pickers and
+  the playlist browser (a click picks, a double-click keeps / opens). To
+  select text in the terminal while the mouse is on, hold **shift** while
+  dragging (**option** in macOS Terminal and iTerm2).
 
 This table matches the single `KEYMAP` table in `src/ui/keymap.rs`. That
 table also drives the in-app help, so the help can't drift from the
@@ -275,7 +294,7 @@ status_bar = true
 clock = "corner"         # corner | off
 
 [input]
-mouse = false
+mouse = true             # shift-drag (option-drag on macOS) still selects text
 
 [dock]
 clock = "side"           # side | overlay | off

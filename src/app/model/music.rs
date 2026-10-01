@@ -8,7 +8,8 @@
 use std::time::{Duration, Instant};
 
 use super::Model;
-use crate::dock::{self, Place};
+use super::library::ListKind;
+use crate::dock::{self, DockWidget, Place};
 use crate::media::art::{ArtLoader, ArtState};
 use crate::media::{self, Capabilities, Command, MediaSource, Snapshot};
 use crate::ui::keymap::PlayerKey;
@@ -29,6 +30,10 @@ pub struct Music {
     /// The player keys are live (`A`): they take over the keyboard until
     /// esc.
     pub keys: bool,
+    /// Shuffle and repeat the Web API can change right now (logged in,
+    /// Premium, a device playing, the context allows it), where the
+    /// desktop app's own setters don't work (lava-75z.12).
+    pub web_caps: Capabilities,
     connect: Connect,
     load_art: LoadArt,
 }
@@ -40,6 +45,7 @@ impl Default for Music {
             art: None,
             snapshot: None,
             keys: false,
+            web_caps: Capabilities::NONE,
             connect: Box::new(media::detect),
             load_art: Box::new(ArtLoader::start),
         }
@@ -90,10 +96,34 @@ impl Music {
         self.art.as_ref().map_or(ArtState::Loading, ArtLoader::get)
     }
 
+    /// What the player can do: its own controls, plus shuffle / repeat
+    /// through the Web API when that's on.
     pub fn capabilities(&self) -> Capabilities {
+        let (own, web) = (self.source_capabilities(), self.web_caps);
+        Capabilities {
+            shuffle: own.shuffle || web.shuffle,
+            repeat: own.repeat || web.repeat,
+            volume: own.volume,
+        }
+    }
+
+    fn source_capabilities(&self) -> Capabilities {
         self.source
             .as_ref()
             .map_or(Capabilities::NONE, |s| s.capabilities())
+    }
+
+    /// The desktop app plays `uri`, or why it can't.
+    pub fn play_uri(&mut self, uri: &str, now: Instant) -> Result<(), String> {
+        let snap = self.current().ok_or("music is off · a to show it")?;
+        if !snap.status.is_available() {
+            return Err(snap
+                .unavailable_message()
+                .unwrap_or_else(|| "connecting…".into()));
+        }
+        let command = Command::play_uri(uri).ok_or("can't play that")?;
+        self.send(command, now);
+        Ok(())
     }
 
     fn send(&mut self, command: Command, now: Instant) {
@@ -128,7 +158,23 @@ impl Model {
     pub(super) fn sync_music(&mut self) {
         let images = self.music_on() && self.theme.shows_images();
         self.music.sync(self.media_on(), images);
+        self.patch_modes();
         self.sync_lyrics();
+    }
+
+    /// The player key a mouse press at (`col`, `row`) stands for: a
+    /// control or the progress bar of the music widget, wherever it's
+    /// placed (the layout's own rects, so it matches what's drawn).
+    pub(super) fn music_hit(&self, col: u16, row: u16) -> Option<PlayerKey> {
+        let music = dock::by_name(dock::Music.name())?.0;
+        let at = (col, row).into();
+        self.layout
+            .panel
+            .iter()
+            .chain(&self.layout.on_lava)
+            .flat_map(|s| s.items.iter().map(move |p| (s.align, p)))
+            .filter(|(_, p)| p.widget == music && p.rect.contains(at))
+            .find_map(|(align, p)| dock::music_hit(self, p.form, p.rect, align, col, row))
     }
 
     /// `A`: the player keys on (they last until esc).
@@ -138,12 +184,23 @@ impl Model {
             return;
         }
         self.music.keys = true;
-        self.toast("music keys · esc when done");
+        self.toast(match self.library.account() {
+            super::library::Account::LoggedOut => "music keys · i log in · esc when done",
+            _ => "music keys · esc when done",
+        });
     }
 
     /// One player key: the command goes to the player at once, and shows on
     /// the next frame (optimistically, before the player confirms).
     pub(super) fn player_key(&mut self, key: PlayerKey, now: Instant) {
+        // The library keys don't need the desktop app.
+        match key {
+            PlayerKey::Like => return self.like_key(),
+            PlayerKey::AddToPlaylist => return self.open_library(ListKind::AddTo),
+            PlayerKey::Playlists => return self.open_library(ListKind::Playlists),
+            PlayerKey::Account => return self.account_key(now),
+            _ => {}
+        }
         let Some(snap) = self.music.current() else {
             return;
         };
@@ -154,7 +211,8 @@ impl Model {
             self.toast(message);
             return;
         }
-        let caps = self.music.capabilities();
+        let caps = self.music.source_capabilities();
+        let web = self.music.web_caps;
         let player = snap.player_name().to_owned();
         let command = match key {
             PlayerKey::PlayPause => Command::PlayPause,
@@ -187,10 +245,36 @@ impl Model {
                 });
                 Command::SetRepeat(!snap.repeat)
             }
-            PlayerKey::Shuffle | PlayerKey::Repeat => {
-                self.toast(format!("{player} can't shuffle or repeat from here"));
+            PlayerKey::Shuffle if web.shuffle => {
+                self.web_mode(true);
                 return;
             }
+            PlayerKey::Repeat if web.repeat => {
+                self.web_mode(false);
+                return;
+            }
+            PlayerKey::Shuffle | PlayerKey::Repeat if self.library.modes().is_some() => {
+                self.toast("Spotify won't change that for what's playing");
+                return;
+            }
+            PlayerKey::Shuffle | PlayerKey::Repeat => {
+                self.toast(if self.library.player.needs_login {
+                    "log in to Spotify again for shuffle and repeat (i twice, then i)".to_owned()
+                } else {
+                    format!("{player} can't shuffle or repeat from here")
+                });
+                return;
+            }
+            PlayerKey::SeekTo(permille) => match snap.track.as_ref().map(|t| t.duration) {
+                Some(d) if !d.is_zero() => {
+                    Command::Seek(d.mul_f64(f64::from(permille.min(1000)) / 1000.0))
+                }
+                _ => return,
+            },
+            PlayerKey::Like
+            | PlayerKey::AddToPlaylist
+            | PlayerKey::Playlists
+            | PlayerKey::Account => return,
         };
         self.music.send(command, now);
     }

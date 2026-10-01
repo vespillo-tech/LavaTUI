@@ -340,9 +340,21 @@ numbers); `docs/design.md` is the layout/visual contract.
                 (`Music`: source, cover loader, latest snapshot, the `A`
                 player-keys mode; `sync` once a frame and after keys;
                 `connect_with` injects a fake in tests). `spotify_web/`:
-                Web API client for the library UI to come; its Client ID
+                Web API client (worker thread; `Web` trait, `fake::FakeWeb`
+                + `fake::demo()` account for tests); its Client ID
                 is `Settings::spotify_client_id` (`[spotify] client_id`,
-                else `LAVATUI_SPOTIFY_CLIENT_ID`).
+                else `LAVATUI_SPOTIFY_CLIENT_ID`). `app/model/library.rs`
+                (`Library`): the client only while music is placed and a
+                Client ID exists (`Library::new` never connects under
+                `cfg(test)`: no keyring prompts; `connect_with` injects a
+                fake), login/logout (`i`), like (`s`), the library overlay
+                (`Overlay::Library(ListView)`: playlists → tracks, add-to;
+                drawn by `ui/library.rs` on `picker::place` geometry), and
+                shuffle/repeat through the Web API player when allowed
+                (`patch_modes` → `Music::web_modes`). The music widget's
+                controls row / progress bar are mouse targets:
+                `dock::music::hit` shares `parts`/`card_controls` with draw;
+                `Action::Press` → `Model::music_hit` → a `PlayerKey`.
 - `lyrics/`   — synced lyrics (pure, no terminal): `lrc.rs` (forgiving
                 LRC parser: multi-stamp lines, `[offset:]`, gaps, word tags
                 stripped), `sync.rs` (`Syncer`: extrapolated `Playback` →

@@ -13,7 +13,8 @@ use super::form;
 use super::http::{Body, Http, Method, Request, Response};
 use super::store::{TokenStore, Tokens};
 use super::types::{
-    Page, Playlist, RawPage, RawPlaylist, RawPlaylistItem, RawSearch, RawSnapshot, Track, User,
+    Page, PlayerState, Playlist, RawPage, RawPlayer, RawPlaylist, RawPlaylistItem, RawSearch,
+    RawSnapshot, Repeat, Track, User,
 };
 use super::{ACCOUNTS_BASE, API_BASE, REDIRECT_URI};
 
@@ -351,6 +352,41 @@ impl<H: Http> Client<H> {
     pub fn artist_tracks(&mut self, artist: &str) -> Result<Vec<Track>, Error> {
         let query = format!("artist:\"{}\"", artist.replace('"', ""));
         Ok(self.search_tracks(&query, SEARCH_MAX, 0)?.items)
+    }
+
+    // ---- the player (Premium only; needs the playback scopes) ------------
+
+    /// The active device's state (`GET /me/player`); `None` when nothing
+    /// is playing anywhere (204).
+    pub fn player(&mut self) -> Result<Option<PlayerState>, Error> {
+        let body = self.call(Method::Get, "/me/player", Body::Empty)?;
+        if body.trim().is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(decode::<RawPlayer>(&body)?.into()))
+    }
+
+    /// `PUT /me/player/shuffle`.
+    pub fn set_shuffle(&mut self, on: bool) -> Result<(), Error> {
+        let path = format!("/me/player/shuffle?state={on}");
+        self.call(Method::Put, &path, Body::Empty).map(drop)
+    }
+
+    /// `PUT /me/player/repeat`.
+    pub fn set_repeat(&mut self, repeat: Repeat) -> Result<(), Error> {
+        let path = format!("/me/player/repeat?state={}", repeat.as_str());
+        self.call(Method::Put, &path, Body::Empty).map(drop)
+    }
+
+    /// Plays `context_uri` (a playlist, album, …) on the active device,
+    /// from `offset_uri` (a track in it) when given (`PUT /me/player/play`).
+    pub fn play(&mut self, context_uri: &str, offset_uri: Option<&str>) -> Result<(), Error> {
+        let mut body = serde_json::json!({ "context_uri": context_uri });
+        if let Some(uri) = offset_uri {
+            body["offset"] = serde_json::json!({ "uri": uri });
+        }
+        let body = Body::Json(body.to_string());
+        self.call(Method::Put, "/me/player/play", body).map(drop)
     }
 }
 

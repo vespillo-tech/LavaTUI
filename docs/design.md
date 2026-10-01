@@ -671,6 +671,23 @@ the sheet would touch it, §8.2). Everything fits without scrolling from
   `esc`/`q` revert. Pressing the opening key again keeps and closes.
 * The status bar's right side switches to picker hints: `↑↓ preview  ⏎
   keep  esc revert`.
+* **The library sheets** (`b` playlists, `a` add to playlist, in the
+  player keys; `ui/library.rs`) use the same placement, 44 wide: a sheet
+  on the right, else a bottom sheet, else the inline selector. Not live:
+  `⏎` chooses. Rows are `▸ name` with a dim right-hand detail (a
+  playlist's count, a track's artist). Playlists the user neither owns
+  nor collaborates on are dim: Spotify won't list their items to a
+  development-mode app, so `⏎` plays them instead of opening them. In a
+  playlist (title: its name) `⏎` plays the track in the playlist's
+  context (exactly, through the Web API's player with Premium; else the
+  desktop app plays the track alone), `p` plays the playlist from the
+  top, and pages of 50 load as the cursor nears the end. The add picker
+  lists only owned or collaborative playlists. Empty lists say why in one
+  dim line: `not logged in · ⏎ to log in`, `loading…`, Spotify's error.
+  Keys: `j k ↑ ↓` move, `g G` / page up / down jump, `⏎` / `l` open or
+  choose, `p` play all, `esc` / `h` back (closes at the top), `q`
+  close. Hints: `↑↓ move  ⏎ open  p play  esc close` (`⏎ play  p play
+  all  esc back` in a playlist, `⏎ add  esc close`).
 
 80×24, captured from the app (`--color none`):
 
@@ -892,7 +909,7 @@ is last in the registry, so it shrinks first):
  Voices (From "The Be…   ← title, cut with … to the card's width
  Dario G                 ← artist (dim)
  Sunmachine              ← album (dim)
-
+ ◂◂  ‖  ▸▸      ♥  +  ≡  ← controls (dim; ♥ accent when liked)
  ━━━━━━━━━━━━──────────  ← elapsed in text (dim while paused), rest dim
  ▶ 3:28     vol 68  5:19 ← play state + elapsed · ⇄ ↻ vol (dim) · total (dim)
 ```
@@ -903,8 +920,35 @@ glyph turns `accent` while the player keys are on (the one sign of the
 mode besides the status bar's hints). Shuffle `⇄` and repeat `↻` show
 only for players that can change them (`MediaSource::capabilities`):
 Spotify's AppleScript can't (its setters are no-ops, lava-75z.9), so for
-it they're neither shown nor offered. On the lava the forms line up by the
-anchor (centred lines under a centred cover).
+it they're neither shown nor offered, unless the Web API is logged in
+and Spotify lets it change them (Premium, a device playing; lava-75z.12):
+then `x` / `r` go through `PUT /me/player/shuffle|repeat`, the state is
+read from `GET /me/player` (on each track change and every 30 s), and a
+refusal hides them again until the next login. On the lava the forms
+line up by the anchor (centred lines under a centred cover).
+
+**Controls row** (the card's fourth row, the card forms only). Left:
+previous `◂◂`, play / pause (`‖` while playing, `▶` paused: the action),
+next `▸▸`. Right, with a library login: the heart (`♥` in `accent` when
+liked, `♡` dim), add to playlist `+` (Spotify tracks) and the playlist
+browser `≡`; logged out, a dim `log in` (`logging in…` while the browser
+is open); without a Client ID nothing. All `dim`, two spaces apart, one
+when that keeps them all; then the right-hand ones drop from the end and
+the left group goes rather than crowd. Each is a mouse target and has a
+player key (`␣ n p s a b i`). With `input.mouse = false` the row shows
+only a liked `♥`. The compact form keeps the heart at the end of its
+title row and its play glyph is the play / pause target; the one-line
+form is key-only. Clicking the progress bar (card and compact) seeks to
+that point. Hit-testing (`dock::music::hit`) uses the same `parts` /
+controls geometry the widget draws with.
+
+**The library** (`app/model/library.rs`, all network on the
+`SpotifyWeb` worker, events drained once a frame): `i` logs in (the
+browser opens on Spotify's consent page; `i` again cancels), and logged
+in, `i` twice within 2 s logs out. Toasts say how it went (`logged in to
+Spotify`, `Spotify login expired · A i to log in again`). `s` likes /
+unlikes at once (the heart flips, a refusal flips it back). `b` opens
+the playlist browser and `a` the add-to-playlist picker (§4.4).
 
 **Covers.** Fetched on a background thread when the track changes
 (`https` only, ≤ 8 MB), kept on disk in `$XDG_CACHE_HOME/lavatui/art`
@@ -1208,7 +1252,8 @@ so they can't drift.
 | help | `j k ↑ ↓` scroll · `?` `esc` `q` close |
 | picker | `j k ↑ ↓` move (live preview) · `1`–`9` jump · `⏎` `space` keep · `esc` `q` revert · opening key = keep + close |
 | tiny inline picker | `h l ← →` (also `j k`) move · `⏎` keep · `esc` revert |
-| player keys (`A`) | `␣` play / pause · `n` `p` next / previous · `← →` (`h l`) seek ∓ 10 s · `↑ ↓` (`k j`, `+ -`) volume ± 5 · `x` `r` shuffle / repeat (where the player can) · `esc` `q` `A` done · `?` help (ends them) |
+| player keys (`A`) | `␣` play / pause · `n` `p` next / previous · `← →` (`h l`) seek ∓ 10 s · `↑ ↓` (`k j`, `+ -`) volume ± 5 · `x` `r` shuffle / repeat (where the player can) · `s` like · `a` add to playlist · `b` playlists · `i` log in / out · `esc` `q` `A` done · `?` help (ends them) |
+| library sheets | `j k ↑ ↓` move · `g G` page up / down jump · `⏎` `l` open / play / add · `p` play the playlist · `esc` `h` back · `q` close |
 
 **The player keys** are a mode, like an overlay without a sheet: `A`
 turns them on and they take the keyboard until `esc`, `q` or `A`. That
@@ -1226,10 +1271,14 @@ while an overlay (or the player keys) is open.
 
 ### 6.3 Mouse
 
-`input.mouse = false` by default, because mouse capture breaks the
-terminal's native text selection. When it's on: click/drag on the lamp
-= a local heat pulse (the wax there warms and rises), scroll in pickers
-and help, click a picker item to preview, double-click to keep.
+`input.mouse = true` by default (since v1.3; a file that sets it keeps
+its value). Mouse capture takes the terminal's own text selection, which
+then needs shift held while dragging (option in macOS Terminal and
+iTerm2); help and the README say so. What it does: click the music
+widget's controls and progress bar (§4.6), click/drag on the lamp = a
+local heat pulse (the wax there warms and rises), scroll in pickers,
+help and the library sheets, click an item to preview / pick,
+double-click to keep / open. Every click has a key.
 
 ---
 
@@ -1369,7 +1418,7 @@ status_bar = true
 clock = "corner"         # corner | off
 
 [input]
-mouse = false
+mouse = true
 
 [dock]
 clock = "side"           # side | overlay | off

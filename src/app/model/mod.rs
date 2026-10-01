@@ -7,6 +7,7 @@
 //! effects the loop must perform (bell, full clear) are flags it drains.
 
 mod actions;
+mod library;
 mod lyrics;
 mod music;
 mod pickers;
@@ -30,6 +31,7 @@ use crate::timing::{FixedStep, Quality};
 use crate::ui::keymap::InputMode;
 use crate::ui::layout::{self, DockItem, Layout, LayoutInput, SizeTier};
 
+pub use library::{Account, Library, ListKind, ListView};
 pub use lyrics::{Fetch, LyricsState};
 pub use music::Music;
 pub use pickers::{Picker, PickerKind};
@@ -65,8 +67,12 @@ const WAKE_SLACK: Duration = Duration::from_millis(5);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Overlay {
     None,
-    Help { scroll: u16 },
+    Help {
+        scroll: u16,
+    },
     Picker(Picker),
+    /// The playlist browser / add-to-playlist picker.
+    Library(ListView),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,6 +138,8 @@ pub struct Model {
 
     /// The music widget's player, cover and keys.
     pub music: Music,
+    /// The Spotify library (Web API): login, playlists, likes.
+    pub library: Library,
     /// The lyrics widget's lookups and sync.
     pub lyrics: LyricsState,
     /// The widget on the lava `l` moves (`L` picks another).
@@ -206,6 +214,7 @@ impl Model {
             reset_pending: None,
             last_reset_key: None,
             music: Music::default(),
+            library: Library::new(settings.spotify_client_id()),
             lyrics: LyricsState::default(),
             lava_focus: None,
             overlay: Overlay::None,
@@ -255,6 +264,9 @@ impl Model {
             Overlay::Help { .. } => InputMode::Help,
             Overlay::Picker(p) => InputMode::Picker {
                 opener: p.kind.opener(),
+                inline: self.inline_pickers(),
+            },
+            Overlay::Library(_) => InputMode::Library {
                 inline: self.inline_pickers(),
             },
         }
@@ -330,8 +342,9 @@ impl Model {
             // The next line (or the end of a fade).
             wake = wake.min(at);
         }
-        if self.saver.as_ref().is_some_and(saving::Saver::busy) {
-            // Frozen frames still collect save errors promptly.
+        if self.saver.as_ref().is_some_and(saving::Saver::busy) || self.library.busy() {
+            // Frozen frames still collect save errors and Spotify's
+            // answers promptly.
             wake = wake.min(self.now + Duration::from_millis(100));
         }
         Some(wake + WAKE_SLACK)
@@ -425,6 +438,7 @@ impl Model {
             self.stats.save_us = started.elapsed().as_micros() as u64;
         }
         self.sync_music();
+        self.sync_library();
 
         self.relayout(area);
         if let Some(aspect) = self.lamp_aspect() {
@@ -633,5 +647,7 @@ fn pomodoro_config(settings: &Settings) -> PomodoroConfig {
     }
 }
 
+#[cfg(test)]
+mod library_tests;
 #[cfg(test)]
 mod tests;

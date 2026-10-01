@@ -100,11 +100,19 @@ pub struct Minimal {
     pub clock: MinimalClock,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Input {
-    /// Mouse capture (off by default: it breaks native text selection).
+    /// Mouse capture: clicks on the music widget, the pickers and the wax.
+    /// On by default since v1.3; the terminal's own text selection then
+    /// needs shift (option on macOS Terminal / iTerm2) held while dragging.
     pub mouse: bool,
+}
+
+impl Default for Input {
+    fn default() -> Self {
+        Self { mouse: true }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -533,6 +541,14 @@ pub fn to_persist(live: &Settings, file: &Settings, overridden: &[Overridden]) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mouse_is_on_unless_a_file_says_otherwise() {
+        assert!(Settings::default().input.mouse);
+        assert!(Settings::parse("").unwrap().settings.input.mouse);
+        let off = Settings::parse("[input]\nmouse = false\n").unwrap();
+        assert!(!off.settings.input.mouse, "an explicit value is kept");
+    }
 
     #[test]
     fn spotify_client_id_is_a_plain_setting() {

@@ -96,31 +96,57 @@ impl InlineText {
     }
 }
 
+/// What a sheet holds, for [`place`]: the picker's or the library's.
+#[derive(Debug, Clone, Copy)]
+pub struct Spec<'a> {
+    /// Item rows (at least 1: an empty list shows a message there).
+    pub n: usize,
+    /// The roomy sheet's width.
+    pub width: u16,
+    /// Prefer the left side, when that keeps the panel and the widgets on
+    /// the lava clear (the face picker: the face it previews stays seen).
+    pub left: bool,
+    /// The inline selector's text (the cursor's item).
+    pub current: &'a str,
+}
+
 /// Where `picker` goes in `area`, which `layout` was made for.
 pub fn placement(area: Rect, layout: &Layout, picker: &Picker) -> Option<Placement> {
+    let items = picker.kind.items();
+    let spec = Spec {
+        n: items.len(),
+        width: SHEET_W,
+        left: picker.kind == PickerKind::Face,
+        current: items.get(picker.cursor).copied().unwrap_or(""),
+    };
+    place(area, layout, spec)
+}
+
+/// Where a sheet for `spec` goes in `area`, which `layout` was made for:
+/// a roomy sheet, a bottom sheet, or the inline selector (§4.4).
+pub fn place(area: Rect, layout: &Layout, spec: Spec) -> Option<Placement> {
     if area.is_empty() {
         return None;
     }
-    let items = picker.kind.items();
     // From the drawn area, not the model's: they differ mid-resize.
     if SizeTier::of(area) <= SizeTier::Tiny {
-        let name = items[picker.cursor];
-        let text = InlineText::fit(name, area.width)?;
-        let w = text.render(name).chars().count() as u16;
+        let text = InlineText::fit(spec.current, area.width)?;
+        let w = text.render(spec.current).chars().count() as u16;
         let rect = Rect::new(area.x + (area.width - w) / 2, area.y, w, 1);
         return Some(Placement::Inline { rect, text });
     }
 
-    let n = items.len() as u16;
+    let n = spec.n.max(1).min(usize::from(u16::MAX - 8)) as u16;
     let status = u16::from(layout.status.is_some());
     if reaches(area.width, area.height, PICKER_SHEET) {
         let h = (n + 6).min(area.height - 2);
         let hm = side_margin(area.width);
+        let sheet_w = spec.width.min(area.width - 2 * hm);
         let y = area.y + (area.height - status - h) / 2;
-        let right = Rect::new(area.right().saturating_sub(hm + SHEET_W), y, SHEET_W, h);
-        let left = Rect::new(area.x + hm, y, SHEET_W, h);
-        // The face picker previews the clock: keep the sheet off the panel
-        // and the widgets on the lava when the other side is free.
+        let right = Rect::new(area.right().saturating_sub(hm + sheet_w), y, sheet_w, h);
+        let left = Rect::new(area.x + hm, y, sheet_w, h);
+        // Keep the sheet off the panel and the widgets on the lava when
+        // the other side is free.
         let clear_of_clock = |r: Rect| {
             let panel = layout.panel.as_ref().map(|p| grow(p.rect, 1));
             let lava = layout.lava_footprint().map(|f| grow(f, 1));
@@ -129,12 +155,12 @@ pub fn placement(area: Rect, layout: &Layout, picker: &Picker) -> Option<Placeme
                 .flatten()
                 .all(|c| !c.intersects(r))
         };
-        let sheet = if picker.kind == PickerKind::Face && clear_of_clock(left) {
+        let sheet = if spec.left && clear_of_clock(left) {
             left
         } else {
             right
         };
-        let list = Rect::new(sheet.x + 1, y + 2, SHEET_W - 2, h - 6);
+        let list = Rect::new(sheet.x + 1, y + 2, sheet_w - 2, h - 6);
         return Some(Placement::Sheet {
             sheet,
             list,
@@ -188,8 +214,23 @@ pub enum Hit {
 }
 
 pub fn hit(area: Rect, layout: &Layout, picker: &Picker, col: u16, row: u16) -> Option<Hit> {
+    let place = placement(area, layout, picker)?;
+    let n = picker.kind.items().len();
+    hit_in(place, picker.top, picker.cursor, n, col, row)
+}
+
+/// What a click lands on in a sheet placed at `place` with `n` items, the
+/// cursor at `cursor` and `top` the first row shown last frame.
+pub fn hit_in(
+    place: Placement,
+    top: usize,
+    cursor: usize,
+    n: usize,
+    col: u16,
+    row: u16,
+) -> Option<Hit> {
     let at = (col, row).into();
-    match placement(area, layout, picker)? {
+    match place {
         Placement::Inline { rect, text } => {
             if !rect.contains(at) {
                 return None;
@@ -205,15 +246,14 @@ pub fn hit(area: Rect, layout: &Layout, picker: &Picker, col: u16, row: u16) -> 
             } else if col >= rect.right() - edge {
                 Hit::Next
             } else {
-                Hit::Item(picker.cursor)
+                Hit::Item(cursor)
             })
         }
         Placement::Sheet { list, .. } => {
             if !list.contains(at) {
                 return None;
             }
-            let n = picker.kind.items().len();
-            let top = visible_top(picker.top, picker.cursor, usize::from(list.height), n);
+            let top = visible_top(top, cursor, usize::from(list.height), n);
             let i = top + usize::from(row - list.y);
             (i < n).then_some(Hit::Item(i))
         }
