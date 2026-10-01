@@ -18,8 +18,8 @@
  q       quit · ctrl-c
  b d     status bar · debug
  ctrl-l  redraw
+ ⇧ drag  select text
 
- lamp
 ── style picker ──
 ~~~~~~~~~ ‹ solid › ~~~~~~~~~~
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -26,6 +26,7 @@
  q       quit · ctrl-c
  b d     status bar · debug hud
  ctrl-l  redraw
+ ⇧ drag  select text
 
  lamp
  s    next style
@@ -35,7 +36,6 @@
  [ ]  heat − +
  - +  speed
  z    freeze
- 0    reset heat & speed
 ── style picker ──
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -12,6 +12,7 @@
 use std::time::{Duration, Instant};
 
 use super::{Model, Overlay};
+use crate::media::Capabilities;
 use crate::spotify_web::{
     Error, Event, PlayerState, Playlist, Repeat, Reply, Request, RequestId, Track, User, Web,
 };
@@ -410,16 +411,24 @@ impl Library {
             (Want::Mode, Err(e)) => {
                 // Read it back: our optimistic guess may be wrong.
                 self.player.asked_at = None;
-                if let Error::Forbidden(why) = &e {
-                    self.player.allowed = Some(false);
-                    self.player.needs_login = why.contains("scope");
-                    self.player.state = None;
+                match &e {
+                    Error::Forbidden(why) if refuses_account(why) => {
+                        self.player.allowed = Some(false);
+                        self.player.needs_login = why.contains("scope");
+                        self.player.state = None;
+                    }
+                    // "Restriction violated": not here, not now (a lone
+                    // track, an ad); the next read says what's allowed.
+                    Error::Forbidden(_) => {
+                        return Some("Spotify won't change that right now".into());
+                    }
+                    _ => {}
                 }
                 return Some(e.to_string());
             }
             (Want::Play { .. }, Ok(_)) => self.player.asked_at = Some(now - PLAYER_EVERY),
             (Want::Play { fallback }, Err(e)) => {
-                if matches!(e, Error::Forbidden(_)) {
+                if matches!(&e, Error::Forbidden(why) if refuses_account(why)) {
                     self.player.allowed = Some(false);
                 }
                 if fallback.is_none() || !matches!(e, Error::Forbidden(_)) {
@@ -430,6 +439,13 @@ impl Library {
         }
         None
     }
+}
+
+/// A 403 about the account (no Premium, a login without the playback
+/// scopes) rather than the moment ("Restriction violated").
+fn refuses_account(why: &str) -> bool {
+    let why = why.to_ascii_lowercase();
+    why.contains("premium") || why.contains("scope")
 }
 
 fn message(result: Result<Reply, Error>) -> String {
@@ -507,11 +523,12 @@ impl Model {
     /// Shuffle / repeat from the Web API, where the desktop app's own
     /// controls can't change them.
     pub(super) fn patch_modes(&mut self) {
-        let modes = self
-            .library
-            .modes()
-            .map(|p| (p.shuffle, p.repeat != Repeat::Off));
-        self.music.web_modes = modes;
+        let state = self.library.modes();
+        let modes = state.map(|p| (p.shuffle, p.repeat != Repeat::Off));
+        self.music.web_caps = state.map_or(Capabilities::NONE, |p| Capabilities {
+            shuffle: !p.shuffle_blocked,
+            repeat: !p.repeat_blocked,
+        });
         if let (Some((shuffle, repeat)), Some(snap)) = (modes, &mut self.music.snapshot) {
             snap.shuffle = shuffle;
             snap.repeat = repeat;

@@ -40,6 +40,9 @@ in the OS credential store (macOS Keychain, Windows Credential Manager,
 Secret Service on Linux), or, if there isn't one, in
 `<data dir>/lavatui/spotify-tokens.json`, readable by you only. Logging out
 deletes both.
+`LAVATUI_SPOTIFY_TOKEN_FILE=/path/tokens.json` keeps it in that file
+(0600) instead, never touching the keyring: for headless runs, scripted
+screenshots, or a macOS Keychain that asks again after every rebuild.
 
 ## Spotify's rules (checked 2026-10-01)
 
@@ -108,6 +111,14 @@ Feb 2026 migration guide, the 2026-06-18 refresh-token blog post.
 | Like / unlike (40 per call) | `PUT` / `DELETE /me/library` | `user-library-modify` |
 | Search tracks (max 10) | `GET /search?type=track` | none |
 | More like this | `GET /search?q=artist:"…"` (top tracks is gone) | none |
+| Player state (shuffle / repeat / device) | `GET /me/player` (204: nothing playing) | `user-read-playback-state` |
+| Shuffle / repeat | `PUT /me/player/shuffle?state=…`, `PUT /me/player/repeat?state=off\|context\|track` | `user-modify-playback-state` (Premium) |
+| Play a track in a playlist | `PUT /me/player/play` `{context_uri, offset: {uri}}` | `user-modify-playback-state` (Premium) |
+
+The player endpoints need Premium (a non-Premium account gets `403
+PREMIUM_REQUIRED`, which hides shuffle / repeat until the next login).
+Logins made before the playback scopes were added lack them (`403
+Insufficient client scope`); log out and in again (`A`, `i` `i`, `i`).
 
 The playlist browser should only offer to open or add to playlists where
 `Playlist::editable_by(&me)` is true (owned or collaborative). Other
@@ -119,7 +130,17 @@ Error handling: 401 refreshes the token and retries once. A 429 with
 Network failures are `Error::Offline`, 403 is `Forbidden` and 404 is
 `NotFound`.
 
-## Using it from the UI
+## In the app
+
+All of it lives in the player keys (`A`, with the music widget placed):
+`i` log in (browser; `i` again cancels; logged in, `i` twice logs out),
+`b` the playlist browser, `a` add the playing track to a playlist, `s`
+like / unlike (the `♥` in the widget), and `x` / `r` shuffle / repeat
+through the Web API when Spotify allows them. With the mouse on, the
+widget's `log in`, `♡`, `+` and `≡` do the same. See docs/design.md §4.4
+and §4.6.
+
+## Using it from the code
 
 ```rust
 use crate::spotify_web::{SpotifyWeb, Request, Reply, Event, client_id_from_env};
@@ -145,7 +166,8 @@ Requests: `Me`, `MyPlaylists`, `PlaylistTracks { playlist_id, offset }`,
 `CreatePlaylist { name, public }`, `AddToPlaylist { playlist_id, uris }`,
 `LibraryContains { uris }`,
 `Like { uris }`, `Unlike { uris }`, `SearchTracks { query, limit, offset }`,
-`ArtistTracks { artist }`. They run one at a time, in order, on one worker
+`ArtistTracks { artist }`, `Player`, `SetShuffle(bool)`,
+`SetRepeat(Repeat)`, `Play { context_uri, offset_uri }`. They run one at a time, in order, on one worker
 thread (blocking `ureq`, no async runtime).
 
 Tests: `cargo test` covers it all with a scripted HTTP layer. Against the

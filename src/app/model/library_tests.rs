@@ -274,6 +274,8 @@ fn premium(shuffle: bool) -> PlayerState {
         is_playing: true,
         device: Some("Mac".into()),
         item_uri: Some(PLAYING.into()),
+        shuffle_blocked: false,
+        repeat_blocked: false,
     }
 }
 
@@ -318,6 +320,37 @@ fn shuffle_and_repeat_go_through_the_web_api_when_allowed() {
     assert!(toast(&m).contains("Premium"), "{}", toast(&m));
     key(&mut m, t0, P::Shuffle);
     assert!(toast(&m).contains("can't shuffle"), "{}", toast(&m));
+}
+
+#[test]
+fn a_context_that_blocks_toggles_hides_them_but_keeps_the_login() {
+    let account = demo();
+    let blocked = PlayerState {
+        shuffle_blocked: true,
+        ..premium(false)
+    };
+    account.state().player = Ok(Some(blocked));
+    let (mut m, t0, source) = rig("web-modes-blocked", &account);
+    source.set_capabilities(Capabilities::NONE);
+    tick(&mut m, t0);
+    let caps = m.music.capabilities();
+    assert!(!caps.shuffle && caps.repeat, "{caps:?}");
+    key(&mut m, t0, P::Shuffle);
+    assert!(toast(&m).contains("won't change"), "{}", toast(&m));
+    assert!(
+        !account
+            .state()
+            .requests
+            .contains(&Request::SetShuffle(true))
+    );
+    // A momentary refusal ("Restriction violated") isn't the account's.
+    account.state().fail = Some(Error::Forbidden(
+        "Player command failed: Restriction violated".into(),
+    ));
+    key(&mut m, t0, P::Repeat);
+    tick(&mut m, t0);
+    assert!(toast(&m).contains("won't change"), "{}", toast(&m));
+    assert_eq!(m.library.player.allowed, Some(true));
 }
 
 #[test]

@@ -24,6 +24,7 @@
  q       quit · ctrl-c
  b d     status bar · debug hud
  ctrl-l  redraw
+ ⇧ drag  select text
 
  lamp
  s    next style
@@ -31,7 +32,6 @@
  p    next palette
  P    palette picker
  [ ]  heat − +
- - +  speed
 ── style picker ──
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

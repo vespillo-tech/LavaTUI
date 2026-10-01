@@ -301,6 +301,11 @@ pub struct PlayerState {
     pub device: Option<String>,
     /// URI of what's playing, if anything.
     pub item_uri: Option<String>,
+    /// Spotify won't toggle shuffle here (`actions.disallows`: a lone
+    /// track, some contexts).
+    pub shuffle_blocked: bool,
+    /// Nor repeat (neither the context nor the track).
+    pub repeat_blocked: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -313,6 +318,13 @@ pub(super) struct RawPlayer {
     is_playing: bool,
     device: Option<Named>,
     item: Option<RawUri>,
+    actions: Option<RawActions>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawActions {
+    #[serde(default)]
+    disallows: std::collections::HashMap<String, bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -322,7 +334,11 @@ struct RawUri {
 
 impl From<RawPlayer> for PlayerState {
     fn from(p: RawPlayer) -> Self {
+        let disallows = p.actions.unwrap_or_default().disallows;
+        let no = |k: &str| disallows.get(k).copied().unwrap_or(false);
         PlayerState {
+            shuffle_blocked: no("toggling_shuffle"),
+            repeat_blocked: no("toggling_repeat_context") && no("toggling_repeat_track"),
             shuffle: p.shuffle_state,
             repeat: Repeat::parse(&p.repeat_state),
             is_playing: p.is_playing,

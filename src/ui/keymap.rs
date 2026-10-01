@@ -271,6 +271,8 @@ pub static KEYMAP: &[Row] = &[
         &[(K('b'), A::ToggleStatusBar), (K('d'), A::DebugHud)],
     ),
     row(App, "ctrl-l", "redraw", &[(Ctrl('l'), A::Redraw)]),
+    // Not a key: with mouse capture on, the terminal's own selection.
+    row(App, "⇧ drag", "select text", &[]),
     // The player keys, after `A` (their own mode: they may reuse keys).
     row(
         Music,

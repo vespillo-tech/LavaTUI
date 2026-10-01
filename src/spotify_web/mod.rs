@@ -50,6 +50,8 @@ use pkce::Pkce;
 pub const REDIRECT_URI: &str = "http://127.0.0.1:8731/callback";
 /// Where a Client ID can come from when the config doesn't set one.
 pub const CLIENT_ID_ENV: &str = "LAVATUI_SPOTIFY_CLIENT_ID";
+/// Keep the login in this file (0600) instead of the OS keyring.
+pub const TOKEN_FILE_ENV: &str = "LAVATUI_SPOTIFY_TOKEN_FILE";
 /// What we ask the user to grant.
 pub const SCOPES: &[&str] = &[
     "playlist-read-private",
@@ -183,8 +185,15 @@ impl SpotifyWeb {
     pub fn new(client_id: impl Into<String>) -> Self {
         let client_id = client_id.into();
         let id = client_id.clone();
+        // A token file instead of the OS keyring (headless runs, scripted
+        // screenshots, a Keychain that would prompt after every rebuild).
+        let file = std::env::var_os(TOKEN_FILE_ENV).filter(|f| !f.is_empty());
         Self::spawn(client_id, move || {
-            Client::new(http::Ureq::new(), id, Box::new(store::SystemStore::new()))
+            let store: Box<dyn store::TokenStore> = match file {
+                Some(f) => Box::new(store::FileStore(f.into())),
+                None => Box::new(store::SystemStore::new()),
+            };
+            Client::new(http::Ureq::new(), id, store)
         })
     }
 

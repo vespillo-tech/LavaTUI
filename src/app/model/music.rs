@@ -30,9 +30,10 @@ pub struct Music {
     /// The player keys are live (`A`): they take over the keyboard until
     /// esc.
     pub keys: bool,
-    /// Shuffle and repeat as the Web API reads them, when they're changed
-    /// through it (the desktop app's own setters don't work: lava-75z.12).
-    pub web_modes: Option<(bool, bool)>,
+    /// Shuffle and repeat the Web API can change right now (logged in,
+    /// Premium, a device playing, the context allows it), where the
+    /// desktop app's own setters don't work (lava-75z.12).
+    pub web_caps: Capabilities,
     connect: Connect,
     load_art: LoadArt,
 }
@@ -44,7 +45,7 @@ impl Default for Music {
             art: None,
             snapshot: None,
             keys: false,
-            web_modes: None,
+            web_caps: Capabilities::NONE,
             connect: Box::new(media::detect),
             load_art: Box::new(ArtLoader::start),
         }
@@ -98,11 +99,10 @@ impl Music {
     /// What the player can do: its own controls, plus shuffle / repeat
     /// through the Web API when that's on.
     pub fn capabilities(&self) -> Capabilities {
-        let own = self.source_capabilities();
-        let web = self.web_modes.is_some();
+        let (own, web) = (self.source_capabilities(), self.web_caps);
         Capabilities {
-            shuffle: own.shuffle || web,
-            repeat: own.repeat || web,
+            shuffle: own.shuffle || web.shuffle,
+            repeat: own.repeat || web.repeat,
         }
     }
 
@@ -211,7 +211,7 @@ impl Model {
             return;
         }
         let caps = self.music.source_capabilities();
-        let web = self.music.web_modes.is_some();
+        let web = self.music.web_caps;
         let player = snap.player_name().to_owned();
         let command = match key {
             PlayerKey::PlayPause => Command::PlayPause,
@@ -244,8 +244,16 @@ impl Model {
                 });
                 Command::SetRepeat(!snap.repeat)
             }
-            PlayerKey::Shuffle | PlayerKey::Repeat if web => {
-                self.web_mode(key == PlayerKey::Shuffle);
+            PlayerKey::Shuffle if web.shuffle => {
+                self.web_mode(true);
+                return;
+            }
+            PlayerKey::Repeat if web.repeat => {
+                self.web_mode(false);
+                return;
+            }
+            PlayerKey::Shuffle | PlayerKey::Repeat if self.library.modes().is_some() => {
+                self.toast("Spotify won't change that for what's playing");
                 return;
             }
             PlayerKey::Shuffle | PlayerKey::Repeat => {

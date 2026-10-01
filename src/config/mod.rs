@@ -543,6 +543,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn mouse_is_on_unless_a_file_says_otherwise() {
+        assert!(Settings::default().input.mouse);
+        assert!(Settings::parse("").unwrap().settings.input.mouse);
+        let off = Settings::parse("[input]\nmouse = false\n").unwrap();
+        assert!(!off.settings.input.mouse, "an explicit value is kept");
+    }
+
+    #[test]
     fn spotify_client_id_is_a_plain_setting() {
         let parsed = Settings::parse("[spotify]\nclient_id = \" 0123abcdEF \"\n").unwrap();
         assert_eq!(parsed.settings.spotify.client_id, "0123abcdEF");

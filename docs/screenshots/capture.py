@@ -254,6 +254,17 @@ LIVE = {
     "music-side": Shot(120, 36, '[lamp];style="solid";[dock];music="side"', frames=420),
     "music-lava": Shot(120, 36, '[lamp];style="braille";[theme];palette="abyss";[dock];music="overlay"', frames=420),
 }
+# Live, logged in to the Web API (needs LAVATUI_SPOTIFY_CLIENT_ID and a
+# LAVATUI_SPOTIFY_TOKEN_FILE from a login, e.g. live_library's): the
+# library UI over your real playlists. `capture.py library`.
+LIBRARY = {
+    "library-widget": Shot(120, 36, '[lamp];style="solid";[dock];music="side"', frames=420),
+    "library-playlists": Shot(120, 36, '[lamp];style="solid";[dock];music="side"', "2:A,3:b,4:j", frames=420),
+    "library-tracks": Shot(120, 36, '[lamp];style="solid";[dock];music="side"', "2:A,3:b,4:\\r,5:j", frames=480),
+    "library-add": Shot(120, 36, '[lamp];style="braille";[theme];palette="abyss";[dock];music="side"', "2:A,3:a", frames=420),
+    "library-small": Shot(60, 18, '[lamp];style="solid";[dock];music="side"', "2:A,3:b", frames=420),
+    "library-tiny": Shot(28, 10, '[lamp];style="solid";[dock];music="side"', "2:A,3:b,4:j", frames=420),
+}
 LYRICS = {
     f"lyrics-{c}x{r}-{style}": Shot(c, r, f'[lamp];style="{style}";[dock];lyrics="overlay"', frames=600)
     for (c, r) in [(80, 24), (120, 36), (200, 50)]
@@ -278,6 +289,8 @@ def main(names):
         jobs |= LIVE
     if "lyrics" in want:
         jobs |= LYRICS
+    if "library" in want:
+        jobs |= LIBRARY
     if "styles" in want:
         jobs |= {n: s for n, s in TILES.items() if n.startswith("style-")}
     if "palettes" in want:
@@ -286,7 +299,7 @@ def main(names):
     def one(item):
         name, shot = item
         out = os.path.join(HERE if name in SHOTS else tmp, name + ".png")
-        if name in LIVE or name in LYRICS:
+        if name in LIVE or name in LYRICS or name in LIBRARY:
             live = os.environ.get("LAVATUI_SHOT_OUT", tempfile.gettempdir())
             out = os.path.join(live, name + ".png")
         render(run(shot), out)
