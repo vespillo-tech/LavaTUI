@@ -44,8 +44,8 @@ impl Style for Topo {
                         light += c.light(x, y);
                         // A line pixel sits on the high side of a level crossing.
                         let low = band(c, x + 1, y).min(band(c, x, y + 1));
-                        let low = low.min(band(c, x.wrapping_sub(1), y));
-                        let low = low.min(band(c, x, y.wrapping_sub(1)));
+                        let low = low.min(band(c, x.saturating_sub(1), y));
+                        let low = low.min(band(c, x, y.saturating_sub(1)));
                         if low < b {
                             bits |= braille_bit(dx, dy);
                             top_line = top_line.max(b);
@@ -74,7 +74,9 @@ impl Style for Topo {
 }
 
 /// Which contour band a pixel is in: the number of levels at or below its
-/// density. Off-canvas repeats the edge, so the frame isn't contoured.
+/// density. Off-canvas repeats the edge (callers step left / up with
+/// `saturating_sub`, right / down past the end), so the frame isn't
+/// contoured.
 fn band(c: &Canvas, x: usize, y: usize) -> u8 {
     level(c.at(x.min(c.width - 1), y.min(c.height - 1)).density)
 }

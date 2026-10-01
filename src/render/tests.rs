@@ -678,3 +678,117 @@ fn bottle_walls_are_half_cells_and_mirrored() {
         }
     }
 }
+
+/// The synthetic field drawn as `LampView` draws a bottle: mask from the
+/// walls, then the half-cell edge pass.
+fn draw_synthetic_bottle(style: &dyn Style, theme: &Theme, area: Rect) -> Buffer {
+    let grid = style.grid();
+    let width = usize::from(area.width * grid.x);
+    let height = usize::from(area.height * grid.y);
+    let aspect = f32::from(area.width) / (2.0 * f32::from(area.height));
+    let mut samples = synthetic(width, height, aspect);
+    let mut mask = Vec::new();
+    walls::mask(Shape::Bottle, area, grid, &mut mask);
+    // The sim keeps wax inside its walls; so does this field.
+    for (row, &(lo, hi)) in samples.chunks_exact_mut(width).zip(&mask) {
+        for (x, s) in row.iter_mut().enumerate() {
+            if !(lo..hi).contains(&x) {
+                s.density = 0.0;
+            }
+        }
+    }
+    let canvas = Canvas {
+        samples: &samples,
+        light: None,
+        mask: &mask,
+        width,
+        height,
+        theme,
+        time: 0.0,
+    };
+    let mut buf = Buffer::empty(area);
+    style.draw(&canvas, area, &mut buf);
+    if theme.blends() {
+        walls::smooth(Shape::Bottle, theme, area, &mut buf);
+    }
+    buf
+}
+
+/// Outside the glass every style leaves the plain app background: no
+/// scanlines, vignette or tint (lava-ebq.12). Snapshots show glyphs plus a
+/// map of cells that show only `bg` (`.`), the half-cell wall
+/// glyphs (`|`), and everything else (`#`).
+#[test]
+fn bottle_snapshots_leave_the_outside_plain() {
+    let area = Rect::new(0, 0, 24, 14);
+    let mut mask = Vec::new();
+    walls::mask(Shape::Bottle, area, Grid::CELL, &mut mask);
+    for name in ["solid", "crt"] {
+        let style = StyleId::by_name(name).unwrap().style();
+        for (depth, depth_name) in [
+            (ColorDepth::TrueColor, "truecolor"),
+            (ColorDepth::None, "none"),
+        ] {
+            let theme = theme(depth);
+            let buf = draw_synthetic_bottle(style, &theme, area);
+            let bg = theme.role(Role::Bg);
+            let mut map = String::new();
+            for y in 0..area.height {
+                let (lo, hi) = mask[usize::from(y)];
+                for x in 0..area.width {
+                    let cell = &buf[(x, y)];
+                    let inside = (lo..hi).contains(&usize::from(x));
+                    // Shows nothing but `bg` (solid paints `█` in it).
+                    let plain = cell.bg == bg && (cell.symbol() == " " || cell.fg == bg);
+                    if !inside {
+                        assert!(plain, "{name} {depth_name}: ({x}, {y}) outside the glass");
+                    }
+                    map.push(match (plain, cell.bg == bg) {
+                        (true, _) => '.',
+                        (false, true) if theme.blends() => '|',
+                        _ => '#',
+                    });
+                }
+                map.push('\n');
+            }
+            let text = format!("{}-- bg\n{map}", glyphs(&buf));
+            assert_snapshot(&format!("bottle_{name}_{depth_name}"), &text);
+        }
+    }
+}
+
+/// Wax against the left wall only: column 0 is compared with itself, not
+/// wrapped to the far edge, so it gets no contour dots (lava-ebq.17).
+#[test]
+fn topo_left_wall_has_no_wrapped_contours() {
+    let (cols, rows) = (8u16, 4u16);
+    let (width, height) = (usize::from(cols) * 2, usize::from(rows) * 4);
+    let samples: Vec<Sample> = (0..width * height)
+        .map(|i| Sample {
+            density: if i % width < 3 { 1.0 } else { 0.0 },
+            temp: 0.5,
+        })
+        .collect();
+    let mask = vec![(0, width); height];
+    let theme = theme(ColorDepth::TrueColor);
+    let canvas = Canvas {
+        samples: &samples,
+        light: None,
+        mask: &mask,
+        width,
+        height,
+        theme: &theme,
+        time: 0.0,
+    };
+    let area = Rect::new(0, 0, cols, rows);
+    let mut buf = Buffer::empty(area);
+    StyleId::by_name("topo")
+        .unwrap()
+        .style()
+        .draw(&canvas, area, &mut buf);
+    for y in 0..rows {
+        assert_eq!(buf[(0, y)].symbol(), " ", "row {y}: column 0 has dots");
+        // The real surface crossing (x = 2) is still traced.
+        assert_ne!(buf[(1, y)].symbol(), " ", "row {y}: surface missing");
+    }
+}

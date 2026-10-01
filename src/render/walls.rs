@@ -13,6 +13,7 @@ use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
+use super::Grid;
 use crate::sim::Shape;
 use crate::theme::{Role, Theme};
 
@@ -26,7 +27,7 @@ pub fn wall(shape: Shape, cols: u16, world_y: f64) -> u32 {
 
 /// Inside span `[lo, hi)`, in half columns from the view's left edge, for
 /// each half row of cell row `row`: `[top, bottom]`.
-pub fn spans(shape: Shape, cols: u16, rows: u16, row: u16) -> [(u32, u32); 2] {
+fn spans(shape: Shape, cols: u16, rows: u16, row: u16) -> [(u32, u32); 2] {
     let half_row = |h: u32| {
         let world_y = 1.0 - (f64::from(h) + 0.5) / (2.0 * f64::from(rows));
         let n = wall(shape, cols, world_y);
@@ -37,12 +38,25 @@ pub fn spans(shape: Shape, cols: u16, rows: u16, row: u16) -> [(u32, u32); 2] {
 }
 
 /// The cells `[lo, hi)` of a row that the container touches at all.
-pub fn cells(spans: [(u32, u32); 2]) -> (usize, usize) {
+fn cells(spans: [(u32, u32); 2]) -> (usize, usize) {
     let [(lo_t, hi_t), (lo_b, hi_b)] = spans;
     (
         (lo_t.min(lo_b) / 2) as usize,
         hi_t.max(hi_b).div_ceil(2) as usize,
     )
+}
+
+/// The container mask for a `grid` canvas over `area`: per sample row,
+/// the `[lo, hi)` sample columns inside. Per cell row, so a cell the wall
+/// cuts through is wholly inside for the style; [`smooth`] shapes it
+/// afterwards.
+pub fn mask(shape: Shape, area: Rect, grid: Grid, mask: &mut Vec<(usize, usize)>) {
+    mask.clear();
+    for row in 0..area.height {
+        let (lo, hi) = cells(spans(shape, area.width, area.height, row));
+        let span = (lo * usize::from(grid.x), hi * usize::from(grid.x));
+        mask.extend(std::iter::repeat_n(span, usize::from(grid.y)));
+    }
 }
 
 /// Reshape the cells of `area` that the walls cut through into quadrant

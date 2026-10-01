@@ -68,7 +68,14 @@ pub fn draw(frame: &mut Frame, model: &Model, lamp: &mut LampState) {
         };
         frame.render_stateful_widget(view, l.view, lamp);
         if let Some(g) = l.glass {
-            glass::draw(frame.buffer_mut(), &l, g, model);
+            glass::draw(
+                frame.buffer_mut(),
+                &l,
+                g,
+                theme,
+                flash,
+                model.settings.lamp.lighting,
+            );
         }
     }
 

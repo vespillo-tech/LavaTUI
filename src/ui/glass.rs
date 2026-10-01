@@ -10,10 +10,9 @@
 use ratatui::buffer::Buffer;
 use ratatui::style::Style;
 
-use crate::app::Model;
 use crate::render::{smoothstep, wall};
 use crate::sim::Shape;
-use crate::theme::{Ink, Role};
+use crate::theme::{Ink, Role, Theme};
 use crate::ui::layout::{Glass, Lamp};
 
 /// Cap: 0.18 → 0.40 of the lamp width; base: 0.56 → 1.0 (§2.1).
@@ -27,10 +26,20 @@ const SHADE: (f32, f32) = (1.25, 0.7);
 const STREAK: f32 = 0.18;
 const STREAK_INSET: f64 = 0.32;
 
-pub fn draw(buf: &mut Buffer, lamp: &Lamp, glass: Glass, model: &Model) {
+/// Draw the cap, base and (by depth) the wall edges or highlight streak.
+/// `flash` is the phase-change flash level (0..1).
+pub fn draw(
+    buf: &mut Buffer,
+    lamp: &Lamp,
+    glass: Glass,
+    theme: &Theme,
+    flash: f32,
+    lighting: bool,
+) {
     let r = lamp.region;
-    let theme = &model.theme;
-    let flash = model.flash_level();
+    // NO_COLOR: metal and wax are both the terminal's foreground, so metal
+    // takes a lighter texture to keep the pool apart from the base.
+    let fill = if theme.has_color() { '█' } else { '▒' };
     let metal = |row: u16| {
         let t = f32::from(row) / f32::from(r.height.max(2) - 1);
         theme
@@ -50,20 +59,20 @@ pub fn draw(buf: &mut Buffer, lamp: &Lamp, glass: Glass, model: &Model) {
             let frac = from + (to - from) * t;
             let row = top + i;
             let style = Style::new().fg(metal(row));
-            span(buf, lamp, r.y + row, frac, style);
+            span(buf, lamp, r.y + row, frac, fill, style);
         }
     }
 
     if !theme.blends() {
         edges(buf, lamp, Style::new().fg(theme.role(Role::Metal)));
-    } else if model.settings.lamp.lighting {
-        streak(buf, lamp, model);
+    } else if lighting {
+        streak(buf, lamp, theme);
     }
 }
 
 /// One row of metal `frac` of the lamp width, centred, with half-cell
-/// precision.
-fn span(buf: &mut Buffer, lamp: &Lamp, y: u16, frac: f64, style: Style) {
+/// precision; whole cells are `fill`.
+fn span(buf: &mut Buffer, lamp: &Lamp, y: u16, frac: f64, fill: char, style: Style) {
     let r = lamp.region;
     // Half-column units: a span `n` cols wide reaches `n` half-columns
     // either side of the centre, so edges land on half cells.
@@ -76,7 +85,7 @@ fn span(buf: &mut Buffer, lamp: &Lamp, y: u16, frac: f64, style: Style) {
         let in_a = (left..right).contains(&a);
         let in_b = (left..right).contains(&b);
         let ch = match (in_a, in_b) {
-            (true, true) => '█',
+            (true, true) => fill,
             (true, false) => '▌',
             (false, true) => '▐',
             (false, false) => continue,
@@ -120,9 +129,8 @@ fn edges(buf: &mut Buffer, lamp: &Lamp, style: Style) {
 /// following its curve, brightest down the upper body and fading out at
 /// the shoulder and above the base light. It sits on the glass, so wax
 /// passing behind it is lifted too.
-fn streak(buf: &mut Buffer, lamp: &Lamp, model: &Model) {
+fn streak(buf: &mut Buffer, lamp: &Lamp, theme: &Theme) {
     let v = lamp.view;
-    let theme = &model.theme;
     let text = theme.role(Role::Text);
     let rows = f64::from(v.height);
     for j in 0..v.height {
@@ -160,5 +168,43 @@ fn streak(buf: &mut Buffer, lamp: &Lamp, model: &Model) {
                     .set_bg(theme.blend(bg, text, amount));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::layout::Rect;
+
+    use super::*;
+    use crate::theme::{ColorDepth, Palette};
+    use crate::ui::layout::LampFrame;
+
+    fn base_row(depth: ColorDepth) -> String {
+        let region = Rect::new(0, 0, 16, 20);
+        let glass = Glass {
+            cap: 3,
+            bottle: 13,
+            base: 4,
+        };
+        let lamp = Lamp {
+            region,
+            view: Rect::new(2, 3, 12, 13),
+            frame: LampFrame::Glass,
+            glass: Some(glass),
+        };
+        let theme = Theme::new(&Palette::all()[0], depth);
+        let mut buf = Buffer::empty(region);
+        draw(&mut buf, &lamp, glass, &theme, 0.0, false);
+        (0..16).map(|x| buf[(x, 17)].symbol()).collect()
+    }
+
+    /// NO_COLOR metal is textured, so the wax pool (solid in the terminal
+    /// foreground) stays apart from the base (lava-ebq.13).
+    #[test]
+    fn no_color_metal_is_textured() {
+        assert!(base_row(ColorDepth::None).contains('▒'));
+        assert!(!base_row(ColorDepth::None).contains('█'));
+        assert!(base_row(ColorDepth::Ansi16).contains('█'));
+        assert!(base_row(ColorDepth::TrueColor).contains('█'));
     }
 }

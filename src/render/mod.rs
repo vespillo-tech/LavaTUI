@@ -246,17 +246,8 @@ impl StatefulWidget for LampView<'_> {
             upsample(&state.coarse, cw, ch, &mut state.samples, width, height);
         }
 
-        // Per cell row, so a cell the wall cuts through is wholly inside
-        // for the style; `walls::smooth` shapes it afterwards.
         let shape = self.field.shape();
-        state.mask.clear();
-        for row in 0..area.height {
-            let (lo, hi) = walls::cells(walls::spans(shape, area.width, area.height, row));
-            let span = (lo * usize::from(grid.x), hi * usize::from(grid.x));
-            state
-                .mask
-                .extend(std::iter::repeat_n(span, usize::from(grid.y)));
-        }
+        walls::mask(shape, area, grid, &mut state.mask);
 
         let light = match self.lighting {
             Some(lighting) => {
