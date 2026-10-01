@@ -15,8 +15,9 @@
 //!   adaptive cadence and runs commands as they arrive. Nothing here ever
 //!   blocks the caller. A new backend implements `Backend` and gets the
 //!   threading, optimistic state and smoothing for free.
-//! - `spotify` (macOS): the Spotify desktop app, through `osascript`
-//!   (`runner` runs it with a timeout). It never launches Spotify.
+//! - `spotify` (macOS): the Spotify desktop app, through one long-lived
+//!   `osascript` process (`runner`: requests over stdin, replies with a
+//!   timeout). It never launches Spotify.
 //! - [`fake`]: [`FakeSource`], an in-memory player for tests and for
 //!   building the UI without a real one.
 //! - [`art`]: [`ArtLoader`](art::ArtLoader), album covers fetched, cached
@@ -93,7 +94,7 @@ pub fn detect() -> Box<dyn MediaSource> {
     #[cfg(target_os = "macos")]
     {
         Box::new(Polled::spawn(
-            spotify::Spotify::new(runner::Osascript),
+            spotify::Spotify::new(runner::Osascript::new(spotify::script())),
             worker::Cadence::default(),
         ))
     }

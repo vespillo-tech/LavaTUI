@@ -329,10 +329,11 @@ frame since removed); render times are `bench_lamp` on v1.1.
 
 Braille changes few cells per frame, so it is the cheapest to send.
 
-With music on and Spotify playing, the widget's drawing costs next to
-nothing, but asking Spotify through `osascript` once a second does:
-about 11 % of a core at 80×24 (vs 2.5 % without), 17 % at 200×50.
-Making that cheaper is tracked as lava-75z.11.
+With music on and Spotify playing, the cost is lost in the noise: 3.4 %
+of a core at 80×24 with the music panel vs 3.4 % with music off (60 s
+each, solid). Spotify is asked once a second through one `osascript`
+process that stays up, two Apple events per poll (~25 ms, ~0.4 % of a
+core); starting `osascript` for every poll used to cost 12.6 %.
 
 Here is the render time per frame at 200×60 in truecolor: the field
 sampling plus the style draw (`bench_lamp`: a full-area lamp, two sim
