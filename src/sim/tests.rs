@@ -330,7 +330,7 @@ fn pool_is_dense_at_the_base() {
     assert!(f64::from(s.temp) > 0.85 && f64::from(s.temp) <= POOL_TEMP);
     let skin = world.sample(
         0.5,
-        1.0 - world.pool_surface(world.pool_level(), 0.0) + 0.01,
+        1.0 - pool_surface(world.pool_level(), 0.0, world.bottom_width(), world.time) + 0.01,
     );
     assert!(
         skin.density > SURFACE && skin.temp < s.temp - 0.15,
@@ -338,30 +338,115 @@ fn pool_is_dense_at_the_base() {
     );
 }
 
+/// `fill` (which culls by bounding boxes and the pool's ceiling) matches
+/// sampling every pixel one by one, over a mound's whole breath, in both
+/// shapes and at grids coarse enough to fade lobes and floor the pool.
 #[test]
 fn fill_matches_single_samples() {
-    let mut world = World::new(21, 1.6, Shape::Tank);
-    world.run(1500);
     let mut field = Field::default();
-    field.prepare(&world, 0.4);
-    let (cols, rows) = (57, 33);
-    let mut grid = vec![Sample::default(); cols * rows];
-    field.fill(&mut grid, cols, rows);
-    let mut wax = 0;
-    for j in 0..rows {
-        for i in 0..cols {
-            let u = (i as f32 + 0.5) / cols as f32;
-            let v = (j as f32 + 0.5) / rows as f32;
-            let (a, b) = (grid[j * cols + i], field.sample(u, v));
-            assert!(
-                (a.density - b.density).abs() < 1e-4,
-                "({i},{j}) {a:?} {b:?}"
-            );
-            assert!((a.temp - b.temp).abs() < 1e-4, "({i},{j}) {a:?} {b:?}");
-            wax += usize::from(a.density >= SURFACE);
+    for (seed, aspect, shape) in [
+        (21, 1.6, Shape::Tank),
+        (4, 0.6, Shape::Tank),
+        (9, 0.5, Shape::Bottle),
+    ] {
+        let mut world = World::new(seed, aspect, shape);
+        world.run(1500);
+        // Ten frames 8 s apart span the mounds' 70 s breath.
+        for frame in 0..10 {
+            world.run(960);
+            field.prepare(&world, 0.4);
+            for (cols, rows) in [(57, 33), (14, 20), (9, 7)] {
+                let mut grid = vec![Sample::default(); cols * rows];
+                field.fill(&mut grid, cols, rows);
+                let mut wax = 0;
+                for j in 0..rows {
+                    for i in 0..cols {
+                        let u = (i as f32 + 0.5) / cols as f32;
+                        let v = (j as f32 + 0.5) / rows as f32;
+                        let (a, b) = (grid[j * cols + i], field.sample_on_grid(u, v, cols, rows));
+                        let at = format!("seed {seed} frame {frame} {cols}x{rows} ({i},{j})");
+                        assert!((a.density - b.density).abs() < 1e-4, "{at}: {a:?} {b:?}");
+                        assert!((a.temp - b.temp).abs() < 1e-4, "{at}: {a:?} {b:?}");
+                        wax += usize::from(a.density >= SURFACE);
+                    }
+                }
+                assert!(wax > 0 && wax < cols * rows);
+            }
         }
     }
-    assert!(wax > 0 && wax < cols * rows);
+}
+
+/// The pool's surface never rises above [`pool_ceiling`], the bound
+/// `fill` culls the pool's rows by, at any level, place or time.
+#[test]
+fn pool_surface_stays_under_its_ceiling() {
+    let mut highest: f64 = 0.0;
+    for level in [0.01, 0.045, 0.07, MOUND_DEPTH, 0.2] {
+        let mound = MAX_MOUND * f64::min(level, MOUND_DEPTH);
+        for floor in [0.3, 0.9, 2.5] {
+            for t in 0..4000 {
+                let time = f64::from(t) * 0.37;
+                for k in 0..=64 {
+                    let x = (f64::from(k) / 64.0 - 0.5) * floor;
+                    let surface = pool_surface(level, x, floor, time);
+                    assert!(surface <= pool_ceiling(level), "{level} {x} {time}");
+                    highest = highest.max((surface - level - POOL_WAVE * 1.6) / mound);
+                }
+            }
+        }
+    }
+    // The bound is tight: real mounds come close to it.
+    assert!(highest > 0.95, "highest mound {highest:.3} of the bound");
+}
+
+/// A small lamp keeps its pool at least [`MIN_POOL_PIXELS`] rows deep,
+/// even at a mound's trough and with nearly all the wax afloat.
+#[test]
+fn coarse_grid_keeps_the_pool_two_rows_deep() {
+    let mut world = World::bare(0.6);
+    world.time = 30.0;
+    let mut field = Field::default();
+    field.prepare(&world, 1.0);
+    let (cols, rows) = (12, 24);
+    let mut grid = vec![Sample::default(); cols * rows];
+    field.fill(&mut grid, cols, rows);
+    for i in 0..cols {
+        for j in rows - 2..rows {
+            assert!(
+                grid[j * cols + i].density >= SURFACE,
+                "({i},{j}) is not pool"
+            );
+        }
+    }
+}
+
+/// On a coarse grid a blob only a couple of pixels across draws as one
+/// round bump, with no lobes to tear its outline: its wax is a solid,
+/// convex patch whatever its id and the time.
+#[test]
+fn coarse_grid_draws_small_blobs_round() {
+    let (cols, rows) = (24, 24);
+    let mut grid = vec![Sample::default(); cols * rows];
+    let mut field = Field::default();
+    for id in 0..50 {
+        let mut world = World::bare(1.0);
+        // 2.4 px in radius: below where lobes start to show.
+        world.add(0.0, 0.5, 0.1, 0.5);
+        world.blobs[0].id = id;
+        world.time = f64::from(id as u32) * 3.7;
+        field.prepare(&world, 1.0);
+        field.fill(&mut grid, cols, rows);
+        // Each row and column of wax is one unbroken run, symmetric about
+        // the centre (the blob sits on a pixel corner).
+        let wax = |i: usize, j: usize| grid[j * cols + i].density >= SURFACE;
+        for j in 0..rows - 4 {
+            let row: Vec<usize> = (0..cols).filter(|&i| wax(i, j)).collect();
+            if let (Some(&lo), Some(&hi)) = (row.first(), row.last()) {
+                assert_eq!(hi - lo + 1, row.len(), "id {id}: row {j} is broken");
+                assert_eq!(lo + hi, cols - 1, "id {id}: row {j} is lopsided");
+            }
+        }
+    }
 }
 
 #[test]
@@ -381,7 +466,7 @@ fn interpolation_moves_between_steps() {
     world.add(0.0, 0.5, 0.08, 1.0);
     world.run(240);
     let mut field = Field::default();
-    let y_at = |field: &Field| field.kernels[0].y;
+    let y_at = |field: &Field| field.blobs[0].y;
     field.prepare(&world, 0.0);
     let start = y_at(&field);
     field.prepare(&world, 1.0);

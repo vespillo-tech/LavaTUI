@@ -529,7 +529,11 @@ otherwise **2.0**. Recompute on every resize.
   the deeper it gets.
 * Blobs are drawn lumpy (a main bump plus slowly orbiting lobes), stretch
   and teardrop along their motion, and join the pool with a skirt that
-  draws in to a neck as a bud lets go (`sim/field.rs`).
+  draws in to a neck as a bud lets go (`sim/field.rs`). Lobes need
+  resolution: a blob under ~2.5 sample pixels in radius draws as one
+  round bump, with lobes fading in up to 5 px, so small lamps (80×24
+  glass) show round droplets, not torn clumps. The pool is drawn at
+  least 2 sample rows deep (its mean lifted to that, mounds on top).
 
 ---
 

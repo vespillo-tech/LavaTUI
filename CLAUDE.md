@@ -166,9 +166,13 @@ numbers); `docs/design.md` is the layout/visual contract.
                 merge + split, melt back into the pool; wax area conserved.
                 `field.rs`: `Field::prepare(&world, alpha)` once per frame,
                 then `fill(&mut [Sample], cols, rows)` / `sample(u, v)`
-                (v down; density `>= SURFACE` is wax). `controls.rs`: heat,
-                reseed, heat pulse, `SimSpeed`, `set_shape` (glass ↔ bleed:
-                melts the wax into the pool and re-buds, like reseed). Model
+                (v down; density `>= SURFACE` is wax). Kernels are built per
+                fill for its pixel size: lobes fade out on blobs only a few
+                pixels across and the pool is drawn >= `MIN_POOL_PIXELS`
+                deep. Randomness: `rng.rs` (`Rng`, stateless `hash`).
+                `controls.rs`: heat, reseed, heat pulse, `SimSpeed`,
+                `set_shape` (glass ↔ bleed: melts the wax into the pool and
+                re-buds, like reseed). Model
                 notes and all tuning constants are at the top of `sim/mod.rs`
                 (incl. `WAX_TEMP`, the span renderers map onto wax colours).
                 Accessors only tests read are `#[cfg(test)]`.
