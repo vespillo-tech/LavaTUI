@@ -6,9 +6,9 @@
 //! a partial file is fine. [`Settings::parse`] is tolerant per field: a
 //! value of the wrong type, or a style / palette / face name that doesn't
 //! exist, is reported and replaced by its default while every other value
-//! is kept. Values out of range are clamped. Keys it doesn't know are
-//! reported separately: saving keeps them. A stale or hand-mangled file
-//! never stops the lamp.
+//! is kept. Values out of range (or NaN) are clamped and reported too
+//! ([`Parsed::clamped`]). Keys it doesn't know are reported separately:
+//! saving keeps them. A stale or hand-mangled file never stops the lamp.
 //!
 //! [`Session`] is what the CLI adds on top: flags win for this run only and
 //! are never written back (§9).
@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::clock;
 use crate::render::StyleId;
+use crate::sim::SimSpeed;
 use crate::theme::Palette;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -242,6 +243,10 @@ pub struct Parsed {
     /// Keys that aren't settings (`lamp.future_key`): unused, but a save
     /// leaves them in the file.
     pub unknown: Vec<String>,
+    /// Values [`Settings::sanitized`] changed, sorted by key:
+    /// `("lamp.heat", "99 → 5")`. The app runs on the new value; the file
+    /// keeps the old one until that setting is changed in the app.
+    pub clamped: Vec<(String, String)>,
 }
 
 impl Settings {
@@ -258,6 +263,7 @@ impl Settings {
             settings: Settings::default(),
             ignored: Vec::new(),
             unknown: Vec::new(),
+            clamped: Vec::new(),
         };
         for key in file.keys() {
             if !Self::SECTIONS.contains(&key.as_str()) {
@@ -276,7 +282,14 @@ impl Settings {
             input: section("input", &file, ig, un),
         };
         settings.check_names(&mut out.ignored);
-        out.settings = settings.sanitized();
+        out.settings = settings.clone().sanitized();
+        out.clamped = changed(Some(&settings), &out.settings)
+            .into_iter()
+            .map(|(key, old, new)| {
+                let old = old.map_or_else(String::new, |v| v.to_string());
+                (key, format!("{old} → {new}"))
+            })
+            .collect();
         Ok(out)
     }
 
@@ -320,9 +333,11 @@ impl Settings {
             };
         }
         self.lamp.heat = self.lamp.heat.clamp(1, 5);
-        if !self.lamp.speed.is_finite() || self.lamp.speed <= 0.0 {
-            self.lamp.speed = 1.0;
-        }
+        self.lamp.speed = if self.lamp.speed.is_finite() && self.lamp.speed > 0.0 {
+            SimSpeed::from_factor(self.lamp.speed).factor()
+        } else {
+            1.0
+        };
         let p = &mut self.pomodoro;
         for min in [
             &mut p.focus_min,
@@ -338,6 +353,31 @@ impl Settings {
     pub fn minimal(&self) -> bool {
         self.ui.mode == UiMode::Minimal
     }
+}
+
+/// The values of `new` that differ from `old` (every value when `old` is
+/// `None`), as `(section.key, old value, new value)`, sorted by key.
+/// Generic over the sections, like [`section`]: new fields need no code.
+pub fn changed(
+    old: Option<&Settings>,
+    new: &Settings,
+) -> Vec<(String, Option<toml::Value>, toml::Value)> {
+    let table = |s: &Settings| toml::Table::try_from(s).unwrap_or_default();
+    let old = old.map(table);
+    let mut out = Vec::new();
+    for (name, section) in table(new) {
+        let Some(section) = section.as_table() else {
+            continue;
+        };
+        let old_section = old.as_ref().and_then(|o| o.get(&name)?.as_table().cloned());
+        for (key, value) in section {
+            let before = old_section.as_ref().and_then(|o| o.get(key)).cloned();
+            if before.as_ref() != Some(value) {
+                out.push((format!("{name}.{key}"), before, value.clone()));
+            }
+        }
+    }
+    out
 }
 
 /// One section, key by key: each user value is tried on top of the

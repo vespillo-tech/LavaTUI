@@ -378,9 +378,32 @@ fn corrupt_config_toasts_and_uses_defaults() {
     let (m, _) = model_with(Session::default(), path, 80, 24);
     assert_eq!(
         m.toast.as_ref().unwrap().text,
-        "config unreadable · using defaults"
+        "config: invalid TOML line 1 · using defaults"
     );
     assert_eq!(m.style, StyleId::default());
+}
+
+/// lava-ebq.33: a save writes only what changed in the app, so hand edits
+/// made to the file while the lamp runs survive it.
+#[test]
+fn saving_keeps_hand_edits_made_while_running() {
+    let path = temp_config("hand-edit");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "[lamp]\nheat = 2\n").unwrap();
+    let (mut m, t0) = model_with(Session::default(), path.clone(), 80, 24);
+    std::fs::write(&path, "[lamp]\nheat = 5\n\n[pomodoro]\nfocus_min = 50\n").unwrap();
+    m.update(Action::ToggleLighting, t0);
+    m.save();
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        saved,
+        "[lamp]\nheat = 5\nlighting = true\n\n[pomodoro]\nfocus_min = 50\n"
+    );
+    assert!(
+        m.toast
+            .as_ref()
+            .is_none_or(|t| !t.text.starts_with("config"))
+    );
 }
 
 #[test]

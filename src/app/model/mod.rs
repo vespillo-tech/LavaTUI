@@ -487,8 +487,13 @@ impl Model {
         let out = config::to_persist(&self.settings, &self.file, &self.overridden);
         match self.store.save(&out) {
             Ok(()) => self.file = out,
-            Err(_) => self.toast("couldn't save settings"),
+            Err(problem) => self.toast(problem),
         }
+    }
+
+    /// Config problems to print once the terminal is restored.
+    pub fn config_report(&self) -> Vec<String> {
+        self.store.report()
     }
 
     /// The phase-change flash right now: 0 → 1 → 0 over [`FLASH_TIME`].

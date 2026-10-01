@@ -33,12 +33,13 @@ use crate::ui::{self, keymap};
 use replies::ReplyFilter;
 
 /// Run the app. `panic_after` (hidden `--panic-after`) panics after that
-/// many frames, to check the terminal is restored on a crash.
+/// many frames, to check the terminal is restored on a crash. Returns the
+/// config problems to print after the terminal is restored.
 pub fn run(
     terminal: &mut DefaultTerminal,
     session: &Session,
     panic_after: Option<u64>,
-) -> io::Result<()> {
+) -> io::Result<Vec<String>> {
     let store = Store::new(session.config_path.clone());
     let size = terminal.size()?;
     let mut model = Model::new(
@@ -54,7 +55,7 @@ pub fn run(
     let result = run_loop(terminal, &mut model, session.max_frames, panic_after);
     model.save();
     drop(modes);
-    result
+    result.map(|()| model.config_report())
 }
 
 /// Focus reports (always: they let us drop to 10 fps in the background;

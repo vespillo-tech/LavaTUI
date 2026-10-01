@@ -56,7 +56,12 @@ fn main() -> ExitCode {
     let result = app::run(&mut terminal, &session, panic_after);
     ratatui::restore();
     match result {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(report) => {
+            for line in report {
+                eprintln!("lavatui: {line}");
+            }
+            ExitCode::SUCCESS
+        }
         Err(err) => fail(&err.to_string()),
     }
 }
