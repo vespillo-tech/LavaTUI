@@ -147,29 +147,47 @@ as much as the code.
 ## Build & Test
 
 ```bash
-cargo build                      # debug build
-cargo run --release              # run the lamp (release: the sim wants the speed)
-cargo run --release -- --minimal # TODO: confirm flag name once CLI exists
-cargo test                       # unit + integration tests
-cargo fmt --check                # formatting gate
+cargo build                          # debug build
+cargo run --release                  # run the lamp (release: the sim wants the speed)
+cargo run --release -- --minimal     # just the lamp, no chrome
+cargo run --release -- --fps 30      # target render fps (1..=240, default 60)
+cargo run --release -- --frames 300  # hidden: exit after N frames (smoke test / timing)
+cargo test                           # unit tests (timing, keymap, CLI)
+cargo fmt --check                    # formatting gate
 cargo clippy --all-targets -- -D warnings   # lint gate
 ```
+
+The binary needs a real TTY (it errors out cleanly without one). To smoke-test
+headlessly, run it under a pty with a window size set (e.g. Python `pty.fork`
++ `TIOCSWINSZ`) and `--frames N`; `script` alone gives a 0x0 pty.
 
 TODO: add benchmark command (e.g. `cargo bench`) once the sim has a bench.
 
 ## Architecture Overview
 
-Planned module layout (TODO: update once scaffolded):
+- `main.rs`   — parse CLI, `ratatui::try_init` (raw mode, alt screen, panic
+                hook that restores the terminal), run app, `ratatui::restore`.
+- `cli.rs`    — clap derive flags (`--minimal`, `--fps`, hidden `--frames`)
+                folded into `Config`.
+- `config/`   — `Config` + defaults. TOML load/save (XDG dir) still TODO.
+- `app.rs`    — the loop: wait for input until the next frame deadline →
+                run N fixed sim steps → draw. Tiny on purpose.
+- `timing.rs` — pure loop timing: `FixedStep` (accumulator, max 8 steps per
+                frame, `alpha()` for interpolation), `FramePacer` (fixed-grid
+                frame deadlines, resyncs when late), `FpsMeter` (EMA).
+- `sim/`      — wax simulation. Stub: `World { time }` + `step(dt)`, always
+                called with the fixed `dt` (`SIM_HZ = 120` in `app.rs`).
+                Pure, no terminal code, deterministic with a seed.
+- `render/`   — stub. Planned: `Style` trait + registry, one file per style.
+- `light/`    — stub. Optional lighting/glow pass on the sampled field.
+- `clock/`    — stub. Clock faces (`Face` trait) + pomodoro state machine.
+- `ui/`       — the only terminal-facing code. `draw(frame, &Scene)`;
+                `input.rs` maps crossterm events → `Action` (q/Esc/Ctrl-C quit,
+                resize → immediate redraw); `placeholder.rs` is a temporary
+                half-block lava gradient to delete once real styles land.
 
-- `sim/`     — wax simulation: blobs, temperature field, buoyancy, metaball
-               field sampling. No terminal code. Deterministic with a seed.
-- `render/`  — `Style` trait: turns a sampled field into a cell buffer.
-               One file per style; adding a style = one file + registry entry.
-- `light/`   — optional lighting/glow pass applied to sampled field.
-- `clock/`   — clock faces (`Face` trait) and the pomodoro state machine.
-- `ui/`      — ratatui app: layout, modes (full / minimal), keymap, overlays.
-- `config/`  — settings load/save, defaults.
-- `app.rs`   — fixed-timestep loop wiring sim → light → render → ui.
+crossterm is used via ratatui's re-export (`ratatui::crossterm`) so the two
+never drift apart; there is no direct crossterm dependency.
 
 ## Conventions & Patterns
 
