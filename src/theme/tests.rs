@@ -126,6 +126,52 @@ fn ansi256_uses_hand_picked_indices_then_nearest() {
 }
 
 #[test]
+fn ansi256_match_is_perceptual() {
+    // Every cube / grey-ramp colour finds itself (through the cache's
+    // 6-bit buckets).
+    for i in 16..=255 {
+        assert_eq!(xterm::nearest(xterm::rgb(i)), i, "{:?}", xterm::rgb(i));
+    }
+    let is_grey = |i: u8| i >= 232 || matches!(i, 16 | 59 | 102 | 145 | 188 | 231);
+    // Near-neutrals land on greys, not tinted cube colours (paper's metal
+    // used to go olive).
+    for c in [
+        Rgb(0x8A, 0x7E, 0x68),
+        Rgb(0x6B, 0x5A, 0x4E),
+        Rgb(0x30, 0x30, 0x32),
+    ] {
+        assert!(is_grey(xterm::nearest(c)), "{c:?} → {}", xterm::nearest(c));
+    }
+    // Dark tints stay dark: no jump to a loud cube colour.
+    for c in [
+        Rgb(0x1B, 0x0B, 0x2B),
+        Rgb(0x17, 0x0F, 0x2C),
+        Rgb(0x0B, 0x1A, 0x24),
+    ] {
+        let Rgb(r, g, b) = xterm::rgb(xterm::nearest(c));
+        assert!(r.max(g).max(b) < 0x40, "{c:?} → {:?}", (r, g, b));
+    }
+    // Saturated colours keep their hue: orange wax edges don't go olive or
+    // yellow (red stays well above green), purples stay purple.
+    for c in [
+        Rgb(0xB5, 0x48, 0x2A),
+        Rgb(0xE2, 0x47, 0x1B),
+        Rgb(0x8E, 0x1B, 0x12),
+    ] {
+        let Rgb(r, g, b) = xterm::rgb(xterm::nearest(c));
+        assert!(
+            r > g.saturating_add(60) && g >= b,
+            "{c:?} → {:?}",
+            (r, g, b)
+        );
+    }
+    for c in [Rgb(0x4B, 0x1D, 0x8F), Rgb(0xB5, 0x17, 0x9E)] {
+        let Rgb(r, g, b) = xterm::rgb(xterm::nearest(c));
+        assert!(b > g && r > g, "{c:?} → {:?}", (r, g, b));
+    }
+}
+
+#[test]
 fn ansi16_steps_and_never_blends() {
     let theme = Theme::new(lava(), ColorDepth::Ansi16);
     assert!(!theme.blends());
