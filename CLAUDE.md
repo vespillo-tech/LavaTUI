@@ -128,11 +128,17 @@ reads your quit key; on macOS a read on the master after exit is EOF/EIO.
                 focus reports (+ mouse capture if `input.mouse`) behind a
                 Drop guard; `main`'s chained panic hook turns them off too.
                 ctrl-l repaints via `Terminal::resize`, never
-                `Terminal::clear` (that blocks on a cursor-position query). `model.rs`: all state (settings, world,
-                style/theme/face, pomodoro, overlay, toast, layout) and all
-                behaviour: `update` applies one `Action` (overlay keys first;
-                under an overlay only quit/resize/focus get through),
-                `tick` advances pomodoro/toasts/flash/eased speed/sim steps,
+                `Terminal::clear` (that blocks on a cursor-position query).
+                `model/`: all state (settings, world, style/theme/face,
+                pomodoro, overlay, toast, layout) and all behaviour.
+                `mod.rs`: the state, queries and the per-frame `tick`;
+                `actions.rs`: `update` applies one `Action` (overlay keys
+                first; under an overlay only quit/resize/focus get through),
+                `global_action` is one exhaustive match, one arm per action,
+                onto small helpers (`toggle` for any bool setting);
+                `pickers.rs`: `PickerKind`/`Picker`, picker keys and clicks,
+                live preview / keep / revert. `tick` advances
+                pomodoro/toasts/flash/eased speed/sim steps,
                 recomputes the layout, matches the sim's `Shape` to the frame,
                 and does the debounced (1 s) save. Fps: 10 unfocused; frozen
                 frames sleep until the clock / pomodoro readout changes
@@ -154,7 +160,15 @@ reads your quit key; on macOS a read on the master after exit is EOF/EIO.
                 (v down; density `>= SURFACE` is wax). `controls.rs`: heat,
                 reseed, heat pulse, `SimSpeed`, `set_shape` (glass ↔ bleed:
                 melts the wax into the pool and re-buds, like reseed). Model
-                notes and all tuning constants are at the top of `sim/mod.rs`.
+                notes and all tuning constants are at the top of `sim/mod.rs`
+                (incl. `WAX_TEMP`, the span renderers map onto wax colours).
+                Accessors only tests read are `#[cfg(test)]`.
+- `silhouette.rs` — the glass lamp's shape (§2.1), defined once: bottle
+                profile (0.56 foot → 0.78 bulge 28 % up → 0.40 neck), cap
+                and base widths and row shares, bottle inset, lamp / bottle
+                aspect, and `wall` / `row_span` (a row's inside span in half
+                columns). The sim's walls, the layout's cap/bottle/base
+                split, `ui::glass` and the render mask all read it.
 - `theme/`    — palettes + colour depth: the only place colours are decided.
                 `Palette` (9 `Role`s × 8 palettes from design §5.2, hex/256/16),
                 `ColorDepth::detect()` (NO_COLOR → COLORTERM → TERM, §5.3),
@@ -164,16 +178,36 @@ reads your quit key; on macOS a read on the master after exit is EOF/EIO.
                 `Ink::Wax(t)` (cool→mid→hot) or `Ink::Heat(t)` (liquid→hot) via
                 `theme.color(ink)` / `theme.paint(ink).mix(..).scale(..).color()`;
                 16/none never blend (dominant side wins), 256 snaps to xterm.
+                `theme.background(transparent)` is the app background (`bg`,
+                or `TERMINAL_DEFAULT` when `theme.transparent`): the lamp's
+                outside, the base fill and every bit of chrome use it, so
+                transparent paints no `bg` anywhere. `fade_to_bg` dims what
+                a sheet covers. No `Color::` outside `theme/` except
+                `render/cell.rs` and tests. The paint path's small helpers
+                are `#[inline]` (they sit in every style's pixel loop);
+                `fallback` deliberately isn't (see its doc).
 - `render/`   — render pipeline. `LampView { field, style, theme, time,
                 lighting }` is a `StatefulWidget` (state `LampState` = reused
                 scratch buffers); it samples the field at the style's `Grid`
                 (half-block 1×2, braille 2×4, …; >400k samples → coarse fill +
                 bilinear upsample), builds the glass mask, runs the optional
-                lighting pass, then calls `Style::draw(&Canvas, area, buf)`.
-                Styles live one per file in `render/styles/`, registered in
-                `styles::ALL` (`StyleId` cycles/looks up). Shared helpers:
-                `coverage` (quantised AA edge), `wax_heat`, `bayer`,
-                `cell::{half_block, braille}`. `walls.rs`: the bottle's
+                lighting pass, then calls the style's `draw(&Canvas, buf)`.
+                A style is a unit struct implementing `LampStyle` (`NAME`,
+                `GRID` consts + `draw`), one per file in `render/styles/`,
+                listed in `styles::ALL` as `StyleEntry::of::<S>()` (cycle
+                order; `StyleId` looks up by name; `styles::ALIASES` maps
+                old names, e.g. `glass` → `chrome`). `canvas.rs`: `Canvas`
+                (samples, mask, light, theme, time, its `area`) and the
+                shared cell loops: `for_each_cell(buf, |at, cell|)` (an
+                `At` carries the cell, its top-left pixel, backdrop ink and
+                base colour), `draw_half_blocks(buf, |x, y| Option<Color>)`,
+                `cell_at` / `cell_mut` for styles that walk their own order
+                (matrix, column by column). `cell.rs`: `half_block`,
+                `braille_dots(cx, cy, |x, y| bool)`, `blank` / `glyph` /
+                `mark`. Level helpers in `mod.rs`: `coverage` (quantised AA
+                edge), `soft_edge`, `wax_heat`, `lit`, `bayer`,
+                `smoothstep`; in `styles/mod.rs`: `is_edge`, `quantise`,
+                `stepped_heat` (16 wax steps), `hash`. `walls.rs`: the bottle's
                 walls at half-column / half-row precision; the mask is per
                 cell row (cut cells count as inside), then `smooth`
                 reshapes cut cells into quadrant glyphs (blending themes;
@@ -196,7 +230,7 @@ reads your quit key; on macOS a read on the master after exit is EOF/EIO.
                 brightening by lightness; `scale` stays a plain multiply for a
                 style's own effects); glyph depths use `render::lit` to shift
                 density instead (§5.3). Styles with their own key light
-                (glass) take it on the liquid only. `LampView` resets light
+                (chrome) take it on the liquid only. `LampView` resets light
                 to 1.0 outside the glass. Tuning at the top of the file.
                 `ui::draw` passes it when `lamp.lighting` is on (`l` toggles);
                 `ui::glass` then adds the §2.1 highlight streak.
@@ -214,8 +248,11 @@ reads your quit key; on macOS a read on the master after exit is EOF/EIO.
                 overlay. `mod.rs` draws back to front; `glass.rs` (cap/base in
                 shaded metal with half-cell edges, `▕ ▏` walls in 16/none),
                 `panel.rs` (face + date + pomodoro, chip), `chrome.rs` (status
-                bar + hint fitting, HUD, toasts), `help.rs`, `picker.rs`
-                (`placement`/`hit`: geometry shared by draw and mouse).
+                bar + hint fitting, HUD, toasts), `help/` (`sheet.rs`: the
+                pure geometry the model also reads — form per size, lines,
+                body rect, `footprint`, `max_scroll`; `mod.rs` draws),
+                `picker.rs` (`placement`/`hit`: geometry shared by draw and
+                mouse).
                 Chrome never shares cells: `ui::draw` leaves out whole any
                 panel/chip/toast/HUD an overlay (or a toast) would touch.
                 `render_tests.rs`: whole frames via `TestBackend` at the
@@ -228,11 +265,36 @@ reads your quit key; on macOS a read on the master after exit is EOF/EIO.
 crossterm is used via ratatui's re-export (`ratatui::crossterm`) so the two
 never drift apart; there is no direct crossterm dependency.
 
+## Adding things
+
+- **A render style**: `render/styles/<name>.rs` with `pub struct X;` and
+  `impl LampStyle for X { const NAME; const GRID; fn draw(c, buf) }`;
+  draw with `c.draw_half_blocks` (half-block pixels) or `c.for_each_cell`
+  (+ `cell::braille_dots` / `mark`), colours only via `c.theme`. Then
+  `mod <name>;` and one `StyleEntry::of::<<name>::X>()` line in
+  `styles::ALL`. The style tests (every style at every depth, snapshots,
+  lighting, stays-in-area, time-purity) pick it up; run
+  `UPDATE_SNAPSHOTS=1 cargo test`, review the new snapshots, and check
+  `bench_lamp`. Renamed a style? Add the old name to `styles::ALIASES`.
+- **A clock face**: `clock/<name>.rs` implementing `Face` (`name`,
+  fixed-size `forms` most-preferred first, `draw` inside the form via
+  `draw::Pen`), then add it to `clock::FACES`. The text fallback form is
+  appended for you (`all_forms`).
+- **A key**: add an `Action` variant (`ui/keymap.rs`), a `row(section,
+  keys, label, &[(key, action)])` in `KEYMAP` (that's both dispatch and
+  the help overlay), and its arm in `Model::global_action`
+  (`app/model/actions.rs`); the match is exhaustive, so the compiler
+  points at it. A bool setting is one line: `self.toggle(now, |s| &mut
+  s.<field>, ["on toast", "off toast"])`. Status-bar hint? `chrome::HINTS`.
+
 ## Conventions & Patterns
 
 - Simulation, clock, pomodoro, layout and the app `Model` are pure and
   testable; only `ui/` drawing and `app/mod.rs` touch the terminal.
-- New render styles / clock faces plug in via a trait + registry; no
-  match-arms sprinkled across the codebase.
+- New render styles / clock faces / keys plug in via a trait or table +
+  registry (see "Adding things"); no match-arms sprinkled across the
+  codebase.
+- Colours are decided only in `theme/`; geometry of the lamp only in
+  `silhouette.rs`.
 - Fixed simulation timestep, decoupled from render frame rate.
 - Gate before handing off: `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`.
