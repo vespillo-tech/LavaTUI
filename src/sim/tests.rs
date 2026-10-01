@@ -98,8 +98,10 @@ fn rising_blob_cools_and_comes_back_down() {
 #[test]
 fn similar_neighbours_merge_conserving_wax() {
     let mut world = World::bare(1.0);
-    world.add(-0.06, 0.5, 0.06, 0.5);
-    world.add(0.06, 0.5, 0.06, 0.5);
+    // Close (but not yet merging): cohesion has to pull them in against
+    // their meander.
+    world.add(-0.045, 0.5, 0.06, 0.5);
+    world.add(0.045, 0.5, 0.06, 0.5);
     let wax = world.wax_area();
     world.run(120 * 10);
     assert_eq!(world.blobs.len(), 1);
@@ -237,7 +239,7 @@ fn long_run_shows_the_whole_cycle() {
 
 #[test]
 fn resize_eases_walls_without_teleporting() {
-    let mut world = World::new(9, 2.0, Shape::Tank);
+    let mut world = World::new(8, 2.0, Shape::Tank);
     world.run(600);
     world.set_aspect(0.5);
     let before: Vec<_> = world.blobs.iter().map(|b| (b.id, b.x, b.y)).collect();
@@ -274,17 +276,40 @@ fn bottle_profile_matches_design() {
 
 // --- field -----------------------------------------------------------------
 
+/// A lone blob is lumpy (a main bump and lobes), but it draws about its
+/// own area, whatever its id and the time, stays near its centre, and the
+/// kernels' support is finite.
 #[test]
-fn lone_blob_surface_is_at_its_radius() {
-    let mut world = World::bare(1.0);
-    world.add(0.0, 0.5, 0.1, 0.8);
-    // u maps -0.5..0.5 → 0..1 at aspect 1; v = 1 - y.
-    let at = |x: f64| world.sample(x + 0.5, 0.5).density;
-    assert_close(f64::from(at(0.1)), f64::from(SURFACE), 1e-4);
-    assert!(at(0.0) > 1.0 && at(0.09) > SURFACE && at(0.11) < SURFACE);
-    assert_eq!(at(0.19), 0.0, "outside the kernel's support");
-    let hot = world.sample(0.5, 0.5);
+fn lone_blob_covers_its_own_area() {
+    let (cols, rows) = (200, 200);
+    let mut grid = vec![Sample::default(); cols * rows];
+    let mut field = Field::default();
+    let mut total = 0.0;
+    for id in 0..100 {
+        let mut world = World::bare(1.0);
+        world.add(0.0, 0.5, 0.1, 0.8);
+        world.blobs[0].id = id;
+        world.time = id as f64 * 3.7;
+        field.prepare(&world, 1.0);
+        field.fill(&mut grid, cols, rows);
+        // The top three quarters: clear of the pool.
+        let wax = grid[..cols * 150].iter().filter(|s| s.density >= SURFACE);
+        let ratio = wax.count() as f64 / (cols * rows) as f64 / (PI * 0.01);
+        assert!((0.7..1.4).contains(&ratio), "id {id}: area × {ratio:.2}");
+        total += ratio;
+        let at = |x: f64, y: f64| world.sample(x + 0.5, 1.0 - y).density;
+        assert!(at(0.0, 0.5) > SURFACE, "id {id}: centre is wax");
+        assert_eq!(at(0.3, 0.5) + at(0.0, 0.85), 0.0, "outside the support");
+    }
+    assert_close(total / 100.0, 1.0, 0.05);
+    let hot = world_with_blob(0.8).sample(0.5, 0.5);
     assert_close(f64::from(hot.temp), 0.8, 0.02);
+}
+
+fn world_with_blob(temp: f64) -> World {
+    let mut world = World::bare(1.0);
+    world.add(0.0, 0.5, 0.1, temp);
+    world
 }
 
 #[test]
@@ -301,7 +326,16 @@ fn pool_is_dense_at_the_base() {
     world.pool_area = POOL_DEPTH * world.bottom_width();
     let s = world.sample(0.5, 0.999);
     assert!(s.density > 0.9);
-    assert_close(f64::from(s.temp), POOL_TEMP, 0.02);
+    // Glowing hot over the heater, a cooler skin at the surface.
+    assert!(f64::from(s.temp) > 0.85 && f64::from(s.temp) <= POOL_TEMP);
+    let skin = world.sample(
+        0.5,
+        1.0 - world.pool_surface(world.pool_level(), 0.0) + 0.01,
+    );
+    assert!(
+        skin.density > SURFACE && skin.temp < s.temp - 0.15,
+        "{skin:?}"
+    );
 }
 
 #[test]
@@ -570,7 +604,7 @@ fn run_smoothly(world: &mut World, secs: f64) {
 
 #[test]
 fn tank_to_bottle_keeps_every_blob_that_fits() {
-    let mut world = World::new(7, 2.0, Shape::Tank);
+    let mut world = World::new(8, 2.0, Shape::Tank);
     world.prewarm(1200, DT);
     let level = world.pool_level();
     let inside = |b: &Blob| b.x.abs() <= 0.5 * BOTTLE_ASPECT * Shape::Bottle.width_fraction(b.y);

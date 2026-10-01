@@ -15,12 +15,14 @@
 //!
 //! # Model
 //!
-//! - A thin **pool** of molten wax sits on the heater. It buds: a wide bulge
+//! - A **pool** of molten wax sits on the heater, heaped into soft, slowly
+//!   breathing mounds. It buds, mostly off the mound tops: a wide bulge
 //!   swells out of it, necks off and rises. The deeper the pool, the sooner
 //!   it buds, so wax never piles up into a slab.
-//! - A few big blobs of quite different sizes, not many equal ones. Moving
-//!   blobs stretch along their motion, and the field draws them as
-//!   teardrops trailing a tail (see `field.rs`).
+//! - A few blobs of quite different sizes (now and then a big, slow one),
+//!   not many equal ones. Moving blobs stretch along their motion, and the
+//!   field draws each as a lumpy cluster of bumps, teardropped to trail a
+//!   tail (see `field.rs`).
 //! - Free blobs exchange heat with the liquid, which is warm at the base and
 //!   cool at the top (smaller blobs change temperature faster). Buoyancy is
 //!   proportional to `temp - NEUTRAL_TEMP`; strong, implicit viscous drag
@@ -68,13 +70,13 @@ pub const WAX_TEMP: (f32, f32) = (0.25, 0.9);
 
 /// Upward acceleration per unit of `temp - NEUTRAL_TEMP` for a
 /// reference-size blob (world units / s²).
-const BUOYANCY: f64 = 0.2;
+const BUOYANCY: f64 = 0.24;
 /// Viscous drag rate (1/s). Terminal velocity = buoyancy / drag, so the
-/// hottest blobs top out near 0.06 lamp-heights per second.
+/// hottest blobs top out near 0.07 lamp-heights per second.
 const DRAG: f64 = 1.5;
 /// Heat exchange rate (1/s) with the liquid for a reference-size blob.
 /// Exchange scales with surface / volume, i.e. `1 / radius`.
-const COOL_RATE: f64 = 0.045;
+const COOL_RATE: f64 = 0.06;
 const REF_RADIUS: f64 = 0.08;
 /// Free blobs just above the pool are warmed by the heater.
 const HEATER_BAND: f64 = 0.04;
@@ -83,17 +85,32 @@ const HEATER_RATE: f64 = 0.25;
 const POOL_HEAT_RATE: f64 = 0.6;
 
 /// Wax as a fraction of the container's area.
-const FILL: f64 = 0.26;
+const FILL: f64 = 0.30;
 /// Pool depth (lamp heights) the world aims for, and the least it keeps.
-const POOL_DEPTH: f64 = 0.045;
-const MIN_POOL_DEPTH: f64 = 0.022;
-/// Bud sizes, as a range of multiples of the typical radius: with merges
-/// and splits on top, the lamp shows a 3:1 spread or more.
-const BUD_SIZE: (f64, f64) = (0.35, 1.5);
+const POOL_DEPTH: f64 = 0.07;
+const MIN_POOL_DEPTH: f64 = 0.045;
+/// Bud sizes, as ranges of multiples of the typical radius: mostly
+/// middling, a quarter big, a fifth small. With merges and splits on top,
+/// the lamp shows a 3:1 spread or more.
+const BUD_SIZE: (f64, f64) = (0.7, 1.1);
+const BIG_BUD: (f64, f64) = (1.4, 2.0);
+const BIG_BUD_CHANCE: f64 = 0.25;
+const SMALL_BUD: (f64, f64) = (0.3, 0.5);
+const SMALL_BUD_CHANCE: f64 = 0.2;
+/// Buds start this much of the way from a random spot to the nearest
+/// mound top.
+const BUD_CENTRING: f64 = 0.5;
 /// Largest bud, as a fraction of the largest blob.
 const MAX_BUD: f64 = 0.95;
 /// Pool surface ripple amplitude.
-const POOL_WAVE: f64 = 0.006;
+const POOL_WAVE: f64 = 0.005;
+/// The pool heaps into mounds about this wide (lamp heights), each rising
+/// `POOL_MOUND` times the mean depth above it in the middle and thinning by
+/// as much toward its edges.
+const POOL_HUMP: f64 = 0.9;
+const POOL_MOUND: f64 = 0.55;
+/// A pool deeper than this (lamp heights) heaps no higher.
+const MOUND_DEPTH: f64 = 0.08;
 /// Seconds a bud takes to grow to full size.
 const BUD_TIME: f64 = 6.0;
 /// Seconds between bud attempts (random in range). A pool deeper than
@@ -143,18 +160,18 @@ const MAX_BLOBS: usize = 40;
 const WALL: f64 = 12.0;
 /// Hard caps that keep the sim sane whatever happens.
 const MAX_SPEED: f64 = 0.3;
-const STRETCH_RANGE: (f64, f64) = (0.65, 1.9);
+const STRETCH_RANGE: (f64, f64) = (0.6, 2.3);
 /// Stretch follows velocity: tall when moving vertically, wide when moving
 /// sideways, relaxing at `STRETCH_RELAX` per second. A hot blob at full
-/// speed (~0.06/s) aims for about 1.4.
-const STRETCH_GAIN: f64 = 7.0;
-const STRETCH_RELAX: f64 = 0.8;
+/// speed (~0.06/s) aims for about 1.7.
+const STRETCH_GAIN: f64 = 12.0;
+const STRETCH_RELAX: f64 = 0.6;
 
 /// Lateral meander acceleration amplitude, and frequency range (rad/s).
 const WANDER: f64 = 0.008;
 const WANDER_FREQ: (f64, f64) = (0.08, 0.25);
 /// Background convection: peak liquid speed, and preferred cell width.
-const FLOW: f64 = 0.012;
+const FLOW: f64 = 0.008;
 const FLOW_CELL: f64 = 0.8;
 
 /// Wall easing time constant on resize (≈ 95 % in 250 ms).
@@ -209,9 +226,17 @@ pub fn ambient_temp(y: f64) -> f64 {
     AMBIENT_BOTTOM + (AMBIENT_TOP - AMBIENT_BOTTOM) * y.clamp(0.0, 1.0)
 }
 
-/// Pool surface height at `x`: the mean `level` plus a slow ripple.
-fn pool_surface(level: f64, x: f64, time: f64) -> f64 {
-    level + POOL_WAVE * ((x * 7.0 + time * 0.35).sin() + 0.5 * (x * 17.0 - time * 0.6).sin())
+/// Pool surface height at `x` over a floor `floor` wide: the mean `level`,
+/// heaped into soft mounds (one per [`POOL_HUMP`] of floor, lowest at the
+/// walls) that slowly breathe and drift, plus a slow ripple. The mounds
+/// average out to about `level`; they are shape only and move no wax.
+fn pool_surface(level: f64, x: f64, floor: f64, time: f64) -> f64 {
+    let humps = (floor / POOL_HUMP).round().max(1.0);
+    let s = (x / floor + 0.5) * humps;
+    let mound = POOL_MOUND * (1.0 + 0.3 * (time * 0.09).sin()) * level.min(MOUND_DEPTH);
+    let ripple = (x * 9.0 + time * 0.21).sin() + 0.6 * (x * 23.0 - time * 0.37).sin();
+    let heap = (2.0 * PI * s).cos() - 0.3 * (2.0 * PI * 1.7 * s + time * 0.04).sin();
+    level - mound * heap + POOL_WAVE * ripple
 }
 
 /// Event counters, for tests and a debug HUD.
@@ -388,6 +413,10 @@ impl World {
         (self.pool_level() / (POOL_DEPTH * self.heat_deep_pool())).clamp(1.0, 4.0)
     }
 
+    fn pool_surface(&self, level: f64, x: f64) -> f64 {
+        pool_surface(level, x, self.bottom_width(), self.time)
+    }
+
     fn min_pool_area(&self) -> f64 {
         MIN_POOL_DEPTH * self.bottom_width()
     }
@@ -396,8 +425,8 @@ impl World {
     /// Scales with heat, which eases, so the count changes gradually.
     fn target_blobs(&self) -> usize {
         let base = match self.shape {
-            Shape::Tank => (3.5 * self.wall_width).clamp(3.0, 20.0),
-            Shape::Bottle => 5.0,
+            Shape::Tank => (2.8 * self.wall_width).clamp(3.0, 16.0),
+            Shape::Bottle => 4.0,
         };
         ((base * self.heat_blobs()).round() as usize).clamp(2, MAX_BLOBS)
     }
@@ -474,6 +503,7 @@ impl World {
 
         let damp = 1.0 / (1.0 + DRAG * dt);
         let level = self.pool_level();
+        let floor = self.bottom_width();
         let buoyancy = BUOYANCY * self.heat_buoyancy();
         for i in 0..self.blobs.len() {
             let blob = &self.blobs[i];
@@ -482,8 +512,9 @@ impl World {
             }
             let (mut ax, mut ay) = self.accel[i];
             let (hx, hy) = blob.half_extents();
-            // Stokes-ish: bigger blobs rise and sink a little faster.
-            let size = (blob.radius / REF_RADIUS).sqrt().clamp(0.6, 1.4);
+            // Stokes-ish: bigger blobs rise and sink a little faster, but
+            // not much: the big ones should still look heavy.
+            let size = (blob.radius / REF_RADIUS).powf(0.25).clamp(0.7, 1.1);
             ay += buoyancy * size * (blob.temp - NEUTRAL_TEMP);
             ax += WANDER * (blob.wander_freq * self.time + blob.wander_phase).sin();
 
@@ -504,7 +535,7 @@ impl World {
 
             // Settled onto the pool while sinking: start melting in.
             let bottom = blob.y - blob.radius * blob.stretch;
-            let surface = pool_surface(level, blob.x, self.time);
+            let surface = pool_surface(level, blob.x, floor, self.time);
             if bottom < surface + 0.004 && blob.vy < 0.0 && blob.cooldown <= 0.0 {
                 blob.phase = Phase::Melting;
             }
@@ -514,6 +545,7 @@ impl World {
     /// Buds and melting blobs are attached to the pool and move with it.
     fn move_attached(&mut self, dt: f64) {
         let level = self.pool_level();
+        let floor = self.bottom_width();
         let min_pool = self.min_pool_area();
         let (melt_rate, bud_time) = match self.reseed {
             Some(Reseed::Melting) => (controls::RESEED_MELT_RATE, BUD_TIME),
@@ -531,7 +563,7 @@ impl World {
             if excess > 0.0 {
                 blob.x -= blob.x.signum() * excess.min(MAX_SPEED * dt);
             }
-            let surface = pool_surface(level, blob.x, self.time);
+            let surface = pool_surface(level, blob.x, floor, self.time);
             let old_y = blob.y;
             match blob.phase {
                 Phase::Free => unreachable!("skipped above"),
@@ -551,10 +583,10 @@ impl World {
                     self.pool_area -= grow;
                     blob.set_area(blob.area() + grow);
                     let g = (blob.radius / target).min(1.0);
-                    // A wide, low bulge on the pool that rises as it swells
-                    // and draws up tall at the neck before letting go.
-                    blob.y = surface + blob.radius * (1.6 * g - 0.7);
-                    blob.stretch = 0.7 + 0.65 * g * g;
+                    // A wide, low bulge on the pool that rises and rounds out
+                    // as it swells; the field draws the neck below it.
+                    blob.y = surface + blob.radius * (1.7 * g - 0.75);
+                    blob.stretch = 0.72 + 0.4 * g * g;
                     if g >= 1.0 {
                         blob.phase = Phase::Free;
                         blob.cooldown = COOLDOWN;
@@ -708,7 +740,7 @@ impl World {
         if self.blobs.len() >= MAX_BLOBS {
             return;
         }
-        let target = (self.typical_radius() * self.rng.range(BUD_SIZE.0, BUD_SIZE.1))
+        let target = (self.typical_radius() * self.bud_size())
             .min(MAX_BUD * self.max_radius())
             .max(2.0 * MELTED_RADIUS);
         if self.pool_area - self.min_pool_area() < 0.5 * PI * target * target {
@@ -717,13 +749,35 @@ impl World {
         let half = (self.half_width_at(0.0) - target).max(0.0);
         let x = match x {
             Some(x) => x.clamp(-half, half),
-            None => self.rng.range(-half, half),
+            // Mostly off the tops of the mounds, where the pool is deepest.
+            None => {
+                let x = self.rng.range(-half, half);
+                let floor = self.bottom_width();
+                let humps = (floor / POOL_HUMP).round().max(1.0);
+                let top = ((x / floor + 0.5) * humps).floor().min(humps - 1.0) + 0.5;
+                let top = (top / humps - 0.5) * floor;
+                (x + BUD_CENTRING * (top - x)).clamp(-half, half)
+            }
         };
         // Just under the surface, where the bud's first step puts it.
-        let y = pool_surface(self.pool_level(), x, self.time) - 0.7 * MELTED_RADIUS;
+        let y = self.pool_surface(self.pool_level(), x) - 0.7 * MELTED_RADIUS;
         let blob = self.new_blob(x, y, MELTED_RADIUS, POOL_TEMP, Phase::Budding { target });
         self.pool_area -= blob.area();
         self.blobs.push(blob);
+    }
+
+    /// A new blob's size, in typical radii: mostly middling, now and then a
+    /// big one or a small one.
+    fn bud_size(&mut self) -> f64 {
+        let pick = self.rng.unit();
+        let (lo, hi) = if pick < BIG_BUD_CHANCE {
+            BIG_BUD
+        } else if pick < BIG_BUD_CHANCE + SMALL_BUD_CHANCE {
+            SMALL_BUD
+        } else {
+            BUD_SIZE
+        };
+        self.rng.range(lo, hi)
     }
 
     /// After a width change, nudge the pool so total wax matches the target.
@@ -817,7 +871,7 @@ impl World {
         let max_radius = MAX_BUD * self.max_radius();
         let mut afloat = 0.0;
         for _ in 0..count {
-            let radius = (typical * self.rng.range(BUD_SIZE.0, BUD_SIZE.1)).min(max_radius);
+            let radius = (typical * self.bud_size()).min(max_radius);
             // A few tries at a spot that doesn't overlap anything.
             let (mut x, mut y) = (0.0, 0.0);
             for _ in 0..8 {
