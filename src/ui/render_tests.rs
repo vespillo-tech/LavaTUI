@@ -18,6 +18,7 @@ use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
+use ratatui::style::Modifier;
 
 use super::chrome::{HINTS, PICKER_HINTS, PLAYER_HINTS};
 use super::keymap::{Action, InputMode, KEYMAP, PlayerKey, action_for};
@@ -579,6 +580,76 @@ fn lyrics_messages_are_never_clipped() {
 }
 
 const COVER: &str = "https://i.example/cover";
+
+/// The row of `buf` that starts (after spaces) with `starts`, and under
+/// it how each glyph is drawn: `T` sung (bold), `A` being sung (accent, or
+/// underlined without colours), `d` still to come.
+fn karaoke(m: &Model, buf: &Buffer, starts: &str) -> String {
+    let accent = m.theme.role(Role::Accent);
+    for y in 0..buf.area.height {
+        let row: String = (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect();
+        let Some(x0) = row.find(starts) else { continue };
+        let x0 = row[..x0].chars().count() as u16;
+        let mut text = String::new();
+        let mut marks = String::new();
+        for x in x0..buf.area.width {
+            let cell = &buf[(x, y)];
+            text.push_str(cell.symbol());
+            marks.push(match cell.symbol() {
+                " " => ' ',
+                _ if cell.modifier.contains(Modifier::UNDERLINED) => 'A',
+                _ if m.theme.has_color() && cell.fg == accent => 'A',
+                _ if cell.modifier.contains(Modifier::BOLD) => 'T',
+                _ => 'd',
+            });
+        }
+        return format!("{}\n{}", text.trim_end(), marks.trim_end());
+    }
+    panic!("no row starts with {starts:?}");
+}
+
+#[test]
+fn lyrics_highlight_the_word_being_sung() {
+    // Word tags from the source: exact.
+    const TAGGED: &str = "[00:05.00]<00:05.00>Wax <00:05.40>rises <00:06.20>slowly \
+        <00:07.00>up <00:07.30>to <00:07.60>the <00:07.80>light<00:08.60>\\n[00:10.00]Cooling";
+    let (mut m, t) = model(160, 40, 7);
+    lyrics_lrc(&mut m, t, 1, 6, TAGGED);
+    let buf = draw(&m, 160, 40);
+    assert_eq!(
+        karaoke(&m, &buf, "Wax rises"),
+        "Wax rises slowly up to the light\n\
+         TTT AAAAA dddddd dd dd ddd ddddd"
+    );
+    // Sung through, waiting for the next line: all of it.
+    let (mut m, t) = model(160, 40, 7);
+    lyrics_lrc(&mut m, t, 1, 9, TAGGED);
+    let buf = draw(&m, 160, 40);
+    assert!(karaoke(&m, &buf, "Wax rises").ends_with("TTT TTTTT TTTTTT TT TT TTT TTTTT"));
+
+    // Line times only: words estimated, two seconds into a five-second
+    // line: about half way.
+    let (mut m, t) = model(160, 40, 7);
+    lyrics(&mut m, t, 1, 7);
+    let buf = draw(&m, 160, 40);
+    let shown = karaoke(&m, &buf, "Wax rises");
+    let marks = shown.lines().nth(1).unwrap();
+    assert_eq!(
+        marks.matches('A').count(),
+        marks
+            .split(' ')
+            .filter(|w| w.contains('A'))
+            .map(str::len)
+            .sum::<usize>()
+    );
+    assert_eq!(
+        marks.split(' ').filter(|w| w.starts_with('A')).count(),
+        1,
+        "{shown}"
+    );
+    let at = marks.find('A').unwrap();
+    assert!((10..=24).contains(&at), "{shown}");
+}
 
 /// The music widget on a fake player in `status`, placed by `presses` of
 /// `a` (1 side, 2 on the lava), its cover already loaded.

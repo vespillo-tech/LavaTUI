@@ -5,19 +5,31 @@
 //! [00:12.34]A line                            mm:ss.xx (also .x, .xxx, :xx, none)
 //! [00:40.00][01:20.00]A chorus                one line at several times
 //! [00:50.00]                                  empty text: an instrumental gap
-//! [01:00.00]<01:00.00>Word <01:00.50>level    enhanced word tags: stripped
+//! [01:00.00]<01:00.00>Word <01:00.50>level    enhanced word tags: kept as word times
 //! ```
 //!
 //! Nothing is an error: a line that isn't understood is skipped, so a
 //! partly broken file still syncs what it can.
+//!
+//! Every line comes out with its words timed ([`super::words`]): from the
+//! word tags when the file has them, else estimated.
 
 use std::time::Duration;
+
+use super::words::{self, Tag, Timing, Word};
 
 /// One timed line. `text` is empty for a gap (a break between lines).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Line {
     pub at: Duration,
     pub text: String,
+    /// Its words (or characters, in scripts without spaces) and when each
+    /// is sung; empty for a gap.
+    pub words: Vec<Word>,
+    /// When the singing of the line ends (by the next line's start).
+    pub end: Duration,
+    /// The word times come from the file's word tags, not an estimate.
+    pub exact: bool,
 }
 
 impl Line {
@@ -48,21 +60,57 @@ pub struct Synced {
 
 impl Synced {
     pub fn parse(src: &str) -> Self {
-        let mut out = Self::default();
+        let mut meta = Meta::default();
+        let mut parsed = Vec::new();
         let src = src.strip_prefix('\u{feff}').unwrap_or(src);
         for raw in src.lines() {
-            parse_line(raw.trim(), &mut out);
+            parse_line(raw.trim(), &mut meta, &mut parsed);
         }
-        let offset = out.meta.offset_ms;
+        let offset = meta.offset_ms;
         if offset != 0 {
-            for line in &mut out.lines {
+            for line in &mut parsed {
                 line.at = shift(line.at, offset);
             }
         }
         // Stable: lines sharing a time keep their file order.
-        out.lines.sort_by_key(|l| l.at);
-        out
+        parsed.sort_by_key(|l| l.at);
+        Self {
+            lines: time_words(parsed),
+            meta,
+        }
     }
+}
+
+/// A line as read, before its words are timed.
+struct Parsed {
+    at: Duration,
+    text: String,
+    tags: Vec<Tag>,
+}
+
+/// Times every line's words, now that each line's next is known.
+fn time_words(parsed: Vec<Parsed>) -> Vec<Line> {
+    let timings: Vec<Timing> = (0..parsed.len())
+        .map(|i| Timing {
+            text: &parsed[i].text,
+            at: parsed[i].at,
+            next: parsed.get(i + 1).map(|n| n.at),
+            tags: &parsed[i].tags,
+        })
+        .collect();
+    let pace = words::pace(&timings);
+    let timed: Vec<_> = timings.iter().map(|t| words::time(t, pace)).collect();
+    parsed
+        .into_iter()
+        .zip(timed)
+        .map(|(line, (words, end, exact))| Line {
+            at: line.at,
+            text: line.text,
+            words,
+            end,
+            exact,
+        })
+        .collect()
 }
 
 /// `at` moved `offset_ms` earlier, clamped at zero.
@@ -71,7 +119,7 @@ fn shift(at: Duration, offset_ms: i64) -> Duration {
     Duration::from_millis(u64::try_from(ms.max(0)).unwrap_or(u64::MAX))
 }
 
-fn parse_line(line: &str, out: &mut Synced) {
+fn parse_line(line: &str, meta: &mut Meta, out: &mut Vec<Parsed>) {
     let mut rest = line;
     let mut times = Vec::new();
     while let Some(tag) = rest.strip_prefix('[') {
@@ -80,7 +128,7 @@ fn parse_line(line: &str, out: &mut Synced) {
         if let Some(at) = parse_time(body) {
             times.push(at);
         } else if times.is_empty() && tag[end + 1..].trim().is_empty() {
-            meta_tag(body, &mut out.meta);
+            meta_tag(body, meta);
             return;
         } else {
             // `[00:01.00][Chorus]`: the bracket is part of the text.
@@ -91,10 +139,22 @@ fn parse_line(line: &str, out: &mut Synced) {
     if times.is_empty() {
         return;
     }
-    let text = strip_word_tags(rest);
-    out.lines.extend(times.into_iter().map(|at| Line {
-        at,
-        text: text.clone(),
+    let (text, tags) = word_tags(rest);
+    let first = times[0];
+    out.extend(times.into_iter().map(|at| {
+        Parsed {
+            at,
+            text: text.clone(),
+            // Relative to the line's first time, so a repeated line (a chorus
+            // with several times) carries them along.
+            tags: tags
+                .iter()
+                .map(|&(pos, t)| Tag {
+                    pos,
+                    at: t.saturating_sub(first),
+                })
+                .collect(),
+        }
     }));
 }
 
@@ -165,24 +225,37 @@ fn meta_tag(body: &str, meta: &mut Meta) {
     }
 }
 
-/// Removes enhanced-LRC word timings (`<mm:ss.xx>`), keeping other `<…>`.
-fn strip_word_tags(text: &str) -> String {
+/// The text without its enhanced-LRC word timings (`<mm:ss.xx>`; other
+/// `<…>` stay) and whitespace runs made one space, plus each timing with
+/// where it stood in that text: at the start of the word it times (or at
+/// the end of the one before), past the end for the line's end.
+fn word_tags(text: &str) -> (String, Vec<(u32, Duration)>) {
     let mut out = String::with_capacity(text.len());
+    let mut tags = Vec::new();
+    let mut space = false;
     let mut rest = text;
-    while let Some(open) = rest.find('<') {
-        out.push_str(&rest[..open]);
-        let after = &rest[open + 1..];
-        match after.find('>') {
-            Some(close) if parse_time(&after[..close]).is_some() => rest = &after[close + 1..],
-            _ => {
-                out.push('<');
-                rest = after;
-            }
+    while let Some(c) = rest.chars().next() {
+        if c == '<'
+            && let Some(close) = rest.find('>')
+            && let Some(at) = parse_time(&rest[1..close])
+        {
+            let pos = out.len() + usize::from(space && !out.is_empty());
+            tags.push((pos as u32, at));
+            rest = &rest[close + 1..];
+            continue;
         }
+        rest = &rest[c.len_utf8()..];
+        if c.is_whitespace() {
+            space = true;
+            continue;
+        }
+        if space && !out.is_empty() {
+            out.push(' ');
+        }
+        space = false;
+        out.push(c);
     }
-    out.push_str(rest);
-    // Word tags leave doubled spaces behind.
-    out.split_whitespace().collect::<Vec<_>>().join(" ")
+    (out, tags)
 }
 
 /// Plain lyrics as display lines: trimmed, runs of blank lines collapsed to

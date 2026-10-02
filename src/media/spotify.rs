@@ -24,7 +24,9 @@
 //! locale decimal separators). The track's details come only when its id
 //! isn't the known one (they cost five more Apple events), its free text
 //! last, name last of all, so a stray separator inside a name only ever
-//! lands in the name. Not running is `lavatui1 ␞ not running`; an
+//! lands in the name. When the details are read the position is read
+//! again after them, so it's always taken just before the reply (the
+//! worker's `Baseline` puts it there). Not running is `lavatui1 ␞ not running`; an
 //! AppleScript error is `lavatui1 ␞ error ␞ number ␞ message`.
 
 use std::sync::Arc;
@@ -228,12 +230,12 @@ fn spotify_part() -> String {
          end try\n\
          end repeat\n\
          set p to properties\n\
-         set out to \"{HEADER}\" & rs & ((player state of p) as text)\n\
-         set pos to 0\n\
+         set pos to -1\n\
          try\n\
          set pos to ((player position of p) * 1000) as integer\n\
          end try\n\
-         set out to out & rs & pos & rs & ((shuffling of p) as integer) & rs & ((repeating of p) as integer) & rs & ((sound volume of p) as integer)\n\
+         set out to rs & ((shuffling of p) as integer) & rs & ((repeating of p) as integer) & rs & ((sound volume of p) as integer)\n\
+         set fresh to false\n\
          try\n\
          set t to current track\n\
          set tid to id of t\n\
@@ -243,7 +245,8 @@ fn spotify_part() -> String {
          end considering\n\
          if same then\n\
          set out to out & rs & tid\n\
-         else if tid is not \"\" then\n"
+         else if tid is not \"\" then\n\
+         set fresh to true\n"
     );
     // One read per detail, each allowed to fail (ads and local files lack
     // some), in record order.
@@ -262,14 +265,26 @@ fn spotify_part() -> String {
              end try\n"
         );
     }
-    s += "set out to out & rs & tid & rs & dur & rs & art & rs & ar & rs & al & rs & nm\n\
+    // The position comes from the first read, unless the track's details
+    // were read too (five more Apple events, up to seconds at a track
+    // change): then it's read again, last, so it was taken just before
+    // the reply and the worker can tell when.
+    s += &format!(
+        "set out to out & rs & tid & rs & dur & rs & art & rs & ar & rs & al & rs & nm\n\
           end if\n\
           end try\n\
-          return out\n\
+          if fresh or pos < 0 then\n\
+          set pos to 0\n\
+          try\n\
+          set pos to ((player position) * 1000) as integer\n\
+          end try\n\
+          end if\n\
+          return \"{HEADER}\" & rs & ((player state of p) as text) & rs & pos & out\n\
           end timeout\n\
           end tell\n\
           end poll\n\
-          end script\n";
+          end script\n"
+    );
     s
 }
 
@@ -1085,6 +1100,228 @@ mod tests {
             }
             assert!(!flickered, "the snapshot went back and forth");
             assert_eq!(source.snapshot().status, optimistic, "confirmed by Spotify");
+        }
+    }
+
+    /// How far the app's extrapolated position is from the truth, against
+    /// the real Spotify app (read-only: no commands).
+    /// `LAVATUI_TIMING_SECS=300 cargo test --release -- --ignored
+    /// --nocapture live_timing_audit`
+    ///
+    /// The truth: a second osascript polling back to back (~20 ms apart).
+    /// Spotify's position is exact (thousands of reads fit one line to a
+    /// few ms), so each reading pins playback to within its round trip;
+    /// the intersection over a stretch of steady playback is the truth.
+    /// Meanwhile the app's own worker polls as the app does and its
+    /// snapshot is read every 10 ms, as a frame would. Prints the error
+    /// (snapshot minus truth: positive is early), and how long a natural
+    /// pause, resume, seek or track change took to show up. No song names
+    /// or ids are printed.
+    #[test]
+    #[ignore = "reads the real Spotify app"]
+    fn live_timing_audit() {
+        use super::super::worker::Cadence;
+        use std::sync::mpsc;
+
+        let secs: u64 = std::env::var("LAVATUI_TIMING_SECS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(120);
+        let run = Duration::from_secs(secs);
+        let t0 = Instant::now();
+        let ms = move |t: Instant| t.saturating_duration_since(t0).as_secs_f64() * 1000.0;
+
+        // The truth poller.
+        struct Read {
+            send: f64,
+            recv: f64,
+            playing: bool,
+            pos: f64,
+            track: String,
+        }
+        let (tx, rx) = mpsc::channel();
+        let truth = thread::spawn(move || {
+            let mut runner = Osascript::new(script());
+            let mut known = String::new();
+            while t0.elapsed() < run + Duration::from_secs(2) {
+                let send = Instant::now();
+                let Ok(out) = runner.run(&request(&[], &known), TIMEOUT) else {
+                    continue;
+                };
+                let recv = Instant::now();
+                let fields: Vec<&str> = out.split(SEP).collect();
+                if let Some(id) = fields.get(6) {
+                    known = (*id).to_owned();
+                }
+                let _ = tx.send(Read {
+                    send: ms(send),
+                    recv: ms(recv),
+                    playing: fields.get(1) == Some(&"playing"),
+                    pos: fields
+                        .get(2)
+                        .and_then(|p| p.trim().parse().ok())
+                        .unwrap_or(0.0),
+                    track: known.clone(),
+                });
+                thread::sleep(Duration::from_millis(5));
+            }
+        });
+
+        // The app's view, every 10 ms.
+        let source = Polled::spawn(Spotify::new(Osascript::new(script())), Cadence::default());
+        // As with synced lyrics on screen.
+        source.follow_closely(std::env::var_os("LAVATUI_TIMING_CLOSE").is_some());
+        let mut seen = Vec::new();
+        while t0.elapsed() < run {
+            let now = Instant::now();
+            let snap = source.snapshot();
+            if snap.status.is_available() {
+                let id = snap.track.as_ref().map_or(String::new(), |t| t.id.clone());
+                seen.push((
+                    ms(now),
+                    snap.position_at(now).as_secs_f64() * 1000.0,
+                    snap.status == Status::Playing,
+                    id,
+                ));
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        drop(source);
+        truth.join().expect("truth poller");
+        let reads: Vec<Read> = rx.try_iter().collect();
+
+        // Steady stretches of the truth: same track, same state, and each
+        // reading within 40 ms of the stretch so far. A stretch's baseline
+        // (position − time while playing) is the median of its quicker
+        // readings' midpoints (each reading's error: ± half its round trip).
+        // (from, to, playing, track, baseline)
+        let mut spans: Vec<(f64, f64, bool, String, f64)> = Vec::new();
+        let mut mids: Vec<Vec<(f64, f64)>> = Vec::new();
+        let median = |v: &mut Vec<f64>| {
+            v.sort_by(f64::total_cmp);
+            v[v.len() / 2]
+        };
+        for r in &reads {
+            let mid = if r.playing {
+                r.pos - (r.send + r.recv) / 2.0
+            } else {
+                r.pos
+            };
+            let rtt = r.recv - r.send;
+            let joins = spans.last().zip(mids.last()).is_some_and(|(s, m)| {
+                let mut recent: Vec<f64> = m.iter().rev().take(15).map(|x| x.0).collect();
+                s.2 == r.playing && s.3 == r.track && (mid - median(&mut recent)).abs() <= 40.0
+            });
+            if joins {
+                spans.last_mut().unwrap().1 = r.recv;
+                mids.last_mut().unwrap().push((mid, rtt));
+            } else {
+                spans.push((r.send, r.recv, r.playing, r.track.clone(), mid));
+                mids.push(vec![(mid, rtt)]);
+            }
+        }
+        for (s, m) in spans.iter_mut().zip(&mids) {
+            let mut rtts: Vec<f64> = m.iter().map(|x| x.1).collect();
+            let quick = median(&mut rtts);
+            let mut best: Vec<f64> = m.iter().filter(|x| x.1 <= quick).map(|x| x.0).collect();
+            s.4 = median(&mut best);
+        }
+        // Short stretches (Spotify settling after a seek or at a track
+        // start) are skipped.
+        let counts: Vec<usize> = mids.iter().map(Vec::len).collect();
+        let (spans, counts): (Vec<_>, Vec<_>) = spans
+            .into_iter()
+            .zip(counts)
+            .filter(|(s, _)| s.1 - s.0 >= 1000.0)
+            .unzip();
+        println!(
+            "truth: {} reads, {} steady stretches",
+            reads.len(),
+            spans.len()
+        );
+        for (s, n) in spans.iter().zip(&counts) {
+            println!(
+                "  {:>8.0}..{:>8.0} ms {} ({n} reads)",
+                s.0,
+                s.1,
+                if s.2 { "playing" } else { "paused " },
+            );
+        }
+        if let Ok(path) = std::env::var("LAVATUI_TIMING_CSV") {
+            use std::fmt::Write as _;
+            let mut csv = String::from("kind,t,send_or_pos,recv,playing,pos,track\n");
+            for r in &reads {
+                let _ = writeln!(
+                    csv,
+                    "truth,,{:.3},{:.3},{},{},{}",
+                    r.send,
+                    r.recv,
+                    r.playing,
+                    r.pos,
+                    r.track.len() % 97
+                );
+            }
+            for (t, pos, playing, track) in &seen {
+                let _ = writeln!(csv, "app,{t:.3},{pos:.3},,{playing},,{}", track.len() % 97);
+            }
+            std::fs::write(path, csv).expect("write csv");
+        }
+
+        // The error wherever the truth is steady (a second into a stretch,
+        // so detection delays are counted apart, below).
+        let mut errors = Vec::new();
+        let mut lagged = Vec::new();
+        for (t, pos, playing, track) in &seen {
+            let Some(s) = spans.iter().find(|s| s.0 <= *t && *t <= s.1) else {
+                continue;
+            };
+            let truth = if s.2 { t + s.4 } else { s.4 };
+            let err = pos - truth;
+            if *t >= s.0 + 1500.0 && s.2 == *playing && &s.3 == track {
+                errors.push(err);
+            } else if *t < s.0 + 1500.0 {
+                lagged.push((s.0, *t, err));
+            }
+        }
+        errors.sort_by(f64::total_cmp);
+        let q = |p: f64| errors[((errors.len() - 1) as f64 * p) as usize];
+        if errors.is_empty() {
+            println!("no steady playback seen");
+            return;
+        }
+        let mean = errors.iter().sum::<f64>() / errors.len() as f64;
+        let abs_max = q(0.0).abs().max(q(1.0).abs());
+        println!(
+            "steady error (snapshot - truth, ms): mean {mean:+.1}  p1 {:+.1}  p50 {:+.1}  p99 {:+.1}  max |{abs_max:.1}|  ({} frames)",
+            q(0.01),
+            q(0.5),
+            q(0.99),
+            errors.len()
+        );
+        // After each change in the truth: how long until the snapshot was
+        // within 50 ms of it.
+        for s in spans.iter().skip(1) {
+            let settled =
+                seen.iter()
+                    .filter(|(t, ..)| *t >= s.0 && *t <= s.1)
+                    .find(|(t, pos, ..)| {
+                        let truth = if s.2 { t + s.4 } else { s.4 };
+                        (pos - truth).abs() < 50.0
+                    });
+            let worst = lagged
+                .iter()
+                .filter(|l| l.0 == s.0)
+                .map(|l| l.2)
+                .fold(0.0f64, |a, b| if b.abs() > a.abs() { b } else { a });
+            match settled {
+                Some((t, ..)) => println!(
+                    "  change at {:.0} ms ({}): shown within 50 ms after {:.0} ms; worst error before {worst:+.0} ms",
+                    s.0,
+                    if s.2 { "playing" } else { "paused" },
+                    t - s.0
+                ),
+                None => println!("  change at {:.0} ms: never settled", s.0),
+            }
         }
     }
 }

@@ -1,19 +1,25 @@
-//! Which line is playing: position → line index, progress, neighbours.
+//! Which line and word are playing: position → line index, progress,
+//! the word being sung, neighbours.
 //!
-//! The position is extrapolated from the last player sample, so it runs a
-//! little ahead or behind; each new sample can nudge it back. [`Syncer`]
-//! keeps that jitter from flicking the highlight back a line, while a real
-//! seek (in either direction) is followed at once and flagged so the widget
-//! can cut instead of animating.
+//! The position is extrapolated from the player's position (pinned down
+//! over polls by the media worker to a few ms), so it may still step back
+//! a little when a reading corrects it; [`Syncer`] holds the cursor still
+//! until playback catches up rather than flicking the highlight back a
+//! word or a line, while a real seek (in either direction) is followed at
+//! once and flagged so the widget can cut instead of animating.
 
 use std::time::{Duration, Instant};
 
 use super::Playback;
 use super::lrc::{Line, Synced};
 
-/// Default lead: lines light up slightly early, which reads as on time.
+/// Lines light up this much early: the eye reads a line ahead of the voice.
 pub const DEFAULT_LEAD: Duration = Duration::from_millis(150);
-/// A step back smaller than this past a line's start keeps the line.
+/// Words light up this much early: about with the voice (a highlight a
+/// hair early reads as on time; one late reads as late).
+pub const WORD_LEAD: Duration = Duration::from_millis(50);
+/// A step back smaller than this holds the cursor where it was until
+/// playback catches up.
 pub const JITTER: Duration = Duration::from_millis(400);
 /// Further than this from where the position should be is a seek.
 pub const SEEK: Duration = Duration::from_millis(1500);
@@ -27,10 +33,20 @@ pub struct Cursor {
     pub index: Option<usize>,
     /// 0..=1 through the current line (or the intro before the first).
     pub progress: f32,
-    /// The position used, lead included.
+    /// The position used for lines, lead included.
     pub position: Duration,
     /// The position jumped (seek, track restart): don't animate.
     pub seeked: bool,
+    /// The word of the current line being sung: `None` just before its
+    /// first (the line lights up a little ahead), and once it's all sung.
+    pub word: Option<usize>,
+    /// How many of the current line's words have been sung.
+    pub sung: usize,
+    /// When (in playback position, no lead) what's shown next changes on
+    /// its own: a word, a line, a gap's dot. `None` at the end.
+    pub next_change: Option<Duration>,
+    /// The position is moving.
+    pub playing: bool,
 }
 
 impl Cursor {
@@ -53,13 +69,16 @@ impl Cursor {
 /// on track change.
 #[derive(Clone, Debug)]
 pub struct Syncer {
+    /// How early lines light up ([`DEFAULT_LEAD`]).
     pub lead: Duration,
+    /// How early words light up ([`WORD_LEAD`]).
+    pub word_lead: Duration,
     last: Option<Last>,
 }
 
 #[derive(Clone, Copy, Debug)]
 struct Last {
-    index: Option<usize>,
+    /// The playback position used (no lead).
     position: Duration,
     at: Instant,
     playing: bool,
@@ -67,13 +86,17 @@ struct Last {
 
 impl Default for Syncer {
     fn default() -> Self {
-        Self::new(DEFAULT_LEAD)
+        Self::new(DEFAULT_LEAD, WORD_LEAD)
     }
 }
 
 impl Syncer {
-    pub fn new(lead: Duration) -> Self {
-        Self { lead, last: None }
+    pub fn new(lead: Duration, word_lead: Duration) -> Self {
+        Self {
+            lead,
+            word_lead,
+            last: None,
+        }
     }
 
     pub fn reset(&mut self) {
@@ -88,36 +111,32 @@ impl Syncer {
         playback: &Playback,
         now: Instant,
     ) -> Cursor {
-        let position = playback.position_at(now) + self.lead;
-        let lines = &lyrics.lines;
-        let mut index = lines.partition_point(|l| l.at <= position).checked_sub(1);
-
+        let mut base = playback.position_at(now);
         let seeked = self.last.is_some_and(|last| {
             let expected = if last.playing {
                 last.position + now.saturating_duration_since(last.at)
             } else {
                 last.position
             };
-            position.abs_diff(expected) > SEEK
+            base.abs_diff(expected) > SEEK
         });
-        if let Some(last) = self.last.filter(|_| !seeked) {
-            // A small step back across a line start: hold the later line.
-            if let Some(held) = last.index
-                && index.is_none_or(|i| i < held)
-                && lines
-                    .get(held)
-                    .is_some_and(|l| l.at.saturating_sub(position) <= JITTER)
-            {
-                index = Some(held);
-            }
+        // A small step back while playing: hold still until playback
+        // catches up (never back a word or a line by a correction).
+        if let Some(last) = self.last.filter(|_| !seeked && playback.playing)
+            && base < last.position
+            && last.position - base <= JITTER
+        {
+            base = last.position;
         }
         self.last = Some(Last {
-            index,
-            position,
+            position: base,
             at: now,
             playing: playback.playing,
         });
 
+        let position = base + self.lead;
+        let lines = &lyrics.lines;
+        let index = lines.partition_point(|l| l.at <= position).checked_sub(1);
         let (start, end) = match index {
             None => (
                 Duration::ZERO,
@@ -140,11 +159,50 @@ impl Syncer {
         } else {
             1.0
         };
+
+        // The word, and the next moment anything shown changes.
+        let word_at = base + self.word_lead;
+        let mut word = None;
+        let mut sung = 0;
+        let mut next: Option<Duration> = lines
+            .get(index.map_or(0, |i| i + 1))
+            .map(|l| l.at.saturating_sub(self.lead));
+        let mut soonest = |t: Duration, lead: Duration| {
+            let t = t.saturating_sub(lead);
+            if t > base && next.is_none_or(|n| t < n) {
+                next = Some(t);
+            }
+        };
+        match index.map(|i| &lines[i]) {
+            Some(line) if !line.words.is_empty() => {
+                sung = line.words.partition_point(|w| w.at <= word_at);
+                if word_at >= line.end {
+                    sung = line.words.len();
+                } else if sung > 0 {
+                    word = Some(sung - 1);
+                    sung -= 1;
+                }
+                match line.words.get(sung + usize::from(word.is_some())) {
+                    Some(w) => soonest(w.at, self.word_lead),
+                    None => soonest(line.end, self.word_lead),
+                }
+            }
+            // A gap or the intro: its dots light at each third.
+            _ => {
+                for third in 1..3 {
+                    soonest(start + (end - start) * third / 3, self.lead);
+                }
+            }
+        }
         Cursor {
             index,
             progress,
             position,
             seeked,
+            word,
+            sung,
+            next_change: next,
+            playing: playback.playing,
         }
     }
 }
@@ -186,7 +244,7 @@ mod tests {
     fn intro_lines_gaps_and_end() {
         let l = lyrics();
         let c = clock();
-        let mut s = Syncer::new(Duration::ZERO);
+        let mut s = Syncer::new(Duration::ZERO, Duration::ZERO);
         let p = c.playing(0.0, 0.0);
         let at = |s: &mut Syncer, t| s.cursor(&l, Some(secs(30.0)), &p, c.t(t));
 
@@ -230,7 +288,7 @@ mod tests {
     fn unknown_track_length_and_paused() {
         let l = lyrics();
         let c = clock();
-        let mut s = Syncer::new(Duration::ZERO);
+        let mut s = Syncer::new(Duration::ZERO, Duration::ZERO);
         let paused = Playback {
             playing: false,
             ..c.playing(23.0, 0.0)
@@ -247,25 +305,104 @@ mod tests {
     fn small_backward_correction_holds_the_line() {
         let l = lyrics();
         let c = clock();
-        let mut s = Syncer::new(Duration::ZERO);
+        let mut s = Syncer::new(Duration::ZERO, Duration::ZERO);
         // Extrapolated just past "two"...
         let ahead = s.cursor(&l, None, &c.playing(9.0, 0.0), c.t(1.1));
         assert_eq!(ahead.index, Some(1));
-        // ...then a fresh sample says we're 0.2 s behind that.
+        // ...then a fresh sample says we're 0.2 s behind that: held still
+        // where it was, until playback catches up.
         let behind = s.cursor(&l, None, &c.playing(9.9, 1.15), c.t(1.15));
         assert_eq!(behind.index, Some(1));
-        assert_eq!(behind.progress, 0.0);
+        assert_eq!(behind.position, ahead.position);
         assert!(!behind.seeked);
+        let held = s.cursor(&l, None, &c.playing(9.9, 1.15), c.t(1.25));
+        assert_eq!(held.position, ahead.position);
         // And it carries on normally.
         let on = s.cursor(&l, None, &c.playing(9.9, 1.15), c.t(1.4));
         assert_eq!(on.index, Some(1));
+        assert!(on.position > ahead.position);
+    }
+
+    #[test]
+    fn a_pause_shows_where_it_stopped() {
+        let l = lyrics();
+        let c = clock();
+        let mut s = Syncer::new(Duration::ZERO, Duration::ZERO);
+        let ahead = s.cursor(&l, None, &c.playing(10.2, 0.0), c.t(0.0));
+        assert_eq!(ahead.index, Some(1));
+        // The player paused 300 ms before we heard: back to where it is.
+        let paused = Playback {
+            playing: false,
+            ..c.playing(9.9, 0.0)
+        };
+        let cur = s.cursor(&l, None, &paused, c.t(0.0));
+        assert_eq!(cur.index, Some(0));
+        assert!(!cur.playing);
+    }
+
+    /// "a b c" from 5 s, a word a second, sung by 8 s; next line at 10 s.
+    fn worded() -> Synced {
+        Synced::parse("[00:05.00]<00:05.00>a <00:06.00>b <00:07.00>c <00:08.00>\n[00:10.00]next")
+    }
+
+    #[test]
+    fn the_word_being_sung() {
+        let l = worded();
+        assert!(l.lines[0].exact);
+        let c = clock();
+        let mut s = Syncer::new(Duration::ZERO, Duration::ZERO);
+        let p = c.playing(0.0, 0.0);
+        let mut at = |t| s.cursor(&l, None, &p, c.t(t));
+        let words = |cur: Cursor| (cur.word, cur.sung);
+        assert_eq!(words(at(4.9)), (None, 0), "the intro");
+        assert_eq!(words(at(5.0)), (Some(0), 0));
+        assert_eq!(words(at(6.5)), (Some(1), 1));
+        assert_eq!(words(at(7.99)), (Some(2), 2));
+        // Sung, waiting for the next line.
+        assert_eq!(words(at(9.0)), (None, 3));
+        // The next line's words (estimated) start with it.
+        assert_eq!(words(at(10.0)), (Some(0), 0));
+    }
+
+    #[test]
+    fn words_have_their_own_lead() {
+        let l = worded();
+        let c = clock();
+        let p = c.playing(0.0, 0.0);
+        let mut s = Syncer::new(Duration::from_millis(150), Duration::from_millis(50));
+        // The line lights up first, its first word a little later.
+        let early = s.cursor(&l, None, &p, c.t(4.9));
+        assert_eq!((early.index, early.word, early.sung), (Some(0), None, 0));
+        let on = s.cursor(&l, None, &p, c.t(4.96));
+        assert_eq!(on.word, Some(0));
+        let next = s.cursor(&l, None, &p, c.t(5.96));
+        assert_eq!(next.word, Some(1));
+    }
+
+    #[test]
+    fn next_change_is_the_next_word_line_or_dot() {
+        let l = worded();
+        let c = clock();
+        let p = c.playing(0.0, 0.0);
+        let mut s = Syncer::new(Duration::ZERO, Duration::ZERO);
+        let next = |s: &mut Syncer, t| s.cursor(&l, None, &p, c.t(t)).next_change;
+        // The intro's dots light at 5/3 and 10/3 s, then the line.
+        assert_eq!(next(&mut s, 1.0), Some(secs(5.0) / 3));
+        assert_eq!(next(&mut s, 4.0), Some(secs(5.0)));
+        assert_eq!(next(&mut s, 5.5), Some(secs(6.0)));
+        assert_eq!(next(&mut s, 7.5), Some(secs(8.0)), "the line's end");
+        assert_eq!(next(&mut s, 8.5), Some(secs(10.0)), "the next line");
+        // With leads, each comes that much sooner.
+        let mut led = Syncer::new(Duration::from_millis(150), Duration::from_millis(50));
+        assert_eq!(next(&mut led, 5.5), Some(Duration::from_millis(5950)));
+        assert_eq!(next(&mut led, 8.5), Some(Duration::from_millis(9850)));
     }
 
     #[test]
     fn seeks_are_followed_and_flagged() {
         let l = lyrics();
         let c = clock();
-        let mut s = Syncer::new(Duration::ZERO);
+        let mut s = Syncer::new(Duration::ZERO, Duration::ZERO);
         assert_eq!(
             s.cursor(&l, None, &c.playing(21.0, 0.0), c.t(0.0)).index,
             Some(3)
@@ -293,7 +430,7 @@ mod tests {
     fn backward_step_past_jitter_is_not_held() {
         let l = lyrics();
         let c = clock();
-        let mut s = Syncer::new(Duration::ZERO);
+        let mut s = Syncer::new(Duration::ZERO, Duration::ZERO);
         assert_eq!(
             s.cursor(&l, None, &c.playing(10.2, 0.0), c.t(0.0)).index,
             Some(1)
@@ -308,7 +445,7 @@ mod tests {
     fn reset_forgets_the_last_track() {
         let l = lyrics();
         let c = clock();
-        let mut s = Syncer::new(Duration::ZERO);
+        let mut s = Syncer::new(Duration::ZERO, Duration::ZERO);
         s.cursor(&l, None, &c.playing(21.0, 0.0), c.t(0.0));
         s.reset();
         let fresh = s.cursor(&l, None, &c.playing(1.0, 0.0), c.t(0.0));

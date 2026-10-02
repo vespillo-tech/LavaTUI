@@ -63,6 +63,10 @@ pub trait MediaSource: Send {
         Capabilities::ALL
     }
 
+    /// Something follows playback closely (synced lyrics on screen): poll
+    /// the player more often, so changes made in it show sooner.
+    fn follow_closely(&self, _on: bool) {}
+
     fn play_pause(&self) {
         self.send(Command::PlayPause);
     }
