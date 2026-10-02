@@ -768,13 +768,24 @@ mod tests {
         assert_eq!(runner.0.lock().unwrap().requests.len(), runs);
     }
 
+    /// A real runner with all the time it needs: starting osascript and
+    /// compiling the script can take longer than the app's [`TIMEOUT`] on
+    /// a heavily loaded machine (lava-9b3), and that's not what's tested.
+    struct Patient(Osascript);
+
+    impl Runner for Patient {
+        fn run(&mut self, request: &str, _: Duration) -> Result<String, RunError> {
+            self.0.run(request, Duration::from_secs(120))
+        }
+    }
+
     /// Against a real osascript (not Spotify): the script compiles and
     /// keeps answering. Uses a bundle id that doesn't exist, so it can't
     /// launch anything, and checks that maps to `NotInstalled`.
     #[test]
     fn script_runs_and_a_missing_app_is_not_installed() {
         let s = script().replace(BUNDLE_ID, "com.lavatui.nonexistent");
-        let mut spotify = Spotify::new(Osascript::new(s));
+        let mut spotify = Spotify::new(Patient(Osascript::new(s)));
         for commands in [&[][..], &[Command::Next, Command::SetVolume(3)], &[]] {
             let snap = spotify.exchange(commands);
             // The bundle id differs, so this is a plain error naming it.

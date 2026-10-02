@@ -91,6 +91,17 @@ impl Art {
         }
     }
 
+    /// Pixel (`x`, `y`) of the square source from `f`, for tests.
+    #[cfg(test)]
+    pub fn from_fn(f: impl Fn(u32, u32) -> Rgb) -> Self {
+        Self {
+            pixels: (0..ART_PX * ART_PX)
+                .map(|i| f(i % ART_PX, i / ART_PX))
+                .collect(),
+            hires: None,
+        }
+    }
+
     /// With a sharp copy (`b64`, standing in for a PNG), for tests.
     #[cfg(test)]
     pub fn with_hires(mut self, b64: &str) -> Self {

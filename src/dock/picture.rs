@@ -13,6 +13,14 @@
 //! [`Theme::image`]: exact in truecolor, the nearest xterm index in 256.
 //! The cells for a cover at a size are worked out once and kept (covers
 //! don't change frame to frame).
+//!
+//! Opacity-safe, as the lamp's half blocks (`render::cell::half_block`):
+//! where a terminal shows cell backgrounds see-through but glyphs opaque
+//! (Ghostty's `background-opacity-cells`), a background colour shows
+//! darker than an ink one. So a cell whose two colours look the same (or
+//! that has only one) is a `█` in their mean, and with `translucent` (the
+//! terminal is known to do this) every cell is: one colour a cell, but no
+//! streaks.
 
 use std::cell::RefCell;
 
@@ -21,7 +29,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 use crate::media::art::Art;
-use crate::theme::{Rgb, Theme};
+use crate::theme::{NEAR, Rgb, Theme};
 
 /// How a cover is drawn in text cells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -48,7 +56,7 @@ type PictureCell = (char, Color, Color);
 /// The cells last worked out, by what they were worked out for.
 #[derive(Default)]
 struct Cache {
-    key: Option<(String, u16, u16, TextMode, u8)>,
+    key: Option<(String, u16, u16, TextMode, u8, bool)>,
     cells: Vec<PictureCell>,
 }
 
@@ -57,8 +65,16 @@ thread_local! {
     static CACHE: RefCell<Cache> = RefCell::default();
 }
 
-/// Draw `art` (the cover at `source`) into `area` in `mode`.
-pub fn draw(buf: &mut Buffer, area: Rect, art: &Art, source: &str, mode: TextMode, theme: &Theme) {
+/// Draw `art` (the cover at `source`) into `area` in `mode`; for
+/// see-through cell backgrounds if `translucent`.
+pub fn draw(
+    buf: &mut Buffer,
+    area: Rect,
+    art: &Art,
+    source: &str,
+    (mode, translucent): (TextMode, bool),
+    theme: &Theme,
+) {
     let area = area.intersection(buf.area);
     if area.is_empty() || !theme.shows_images() {
         return;
@@ -69,10 +85,11 @@ pub fn draw(buf: &mut Buffer, area: Rect, art: &Art, source: &str, mode: TextMod
         area.height,
         mode,
         theme.depth() as u8,
+        translucent,
     );
     CACHE.with_borrow_mut(|cache| {
         if cache.key.as_ref() != Some(&key) {
-            cache.cells = cells(art, area.width, area.height, mode, theme);
+            cache.cells = cells(art, area.width, area.height, (mode, translucent), theme);
             cache.key = Some(key);
         }
         let w = usize::from(area.width);
@@ -87,7 +104,13 @@ pub fn draw(buf: &mut Buffer, area: Rect, art: &Art, source: &str, mode: TextMod
 }
 
 /// The cells of `art` at `cols × rows` in `mode` (pure).
-pub fn cells(art: &Art, cols: u16, rows: u16, mode: TextMode, theme: &Theme) -> Vec<PictureCell> {
+pub fn cells(
+    art: &Art,
+    cols: u16,
+    rows: u16,
+    (mode, translucent): (TextMode, bool),
+    theme: &Theme,
+) -> Vec<PictureCell> {
     let (gw, gh) = mode.grid();
     let (w, h) = (usize::from(cols), usize::from(rows));
     let px = art.scaled(cols * gw as u16, rows * gh as u16);
@@ -103,21 +126,40 @@ pub fn cells(art: &Art, cols: u16, rows: u16, mode: TextMode, theme: &Theme) -> 
                 }
             }
             let pixels = &block[..gw * gh];
-            let (ch, fg, bg) = match mode {
-                TextMode::HalfBlock => ('▀', pixels[0], pixels[1]),
+            let (ch, fg, bg, mask) = match mode {
+                TextMode::HalfBlock => ('▀', pixels[0], pixels[1], 1),
                 TextMode::Quadrant => {
                     let (mask, ink, paper) = split(pixels);
-                    (quadrant(mask), ink, paper)
+                    (quadrant(mask), ink, paper, mask)
                 }
                 TextMode::Sextant => {
                     let (mask, ink, paper) = split(pixels);
-                    (sextant(mask), ink, paper)
+                    (sextant(mask), ink, paper, mask)
                 }
             };
-            out.push((ch, color(fg), color(bg)));
+            let alike = |a: Rgb, b: Rgb| {
+                let rgb = |c: Rgb| Color::Rgb(c.0, c.1, c.2);
+                theme.merge(rgb(a), rgb(b), NEAR).is_some()
+            };
+            if translucent || mask == 0 || alike(fg, bg) {
+                let c = color(mean(pixels));
+                out.push(('█', c, c));
+            } else {
+                out.push((ch, color(fg), color(bg)));
+            }
         }
     }
     out
+}
+
+/// The mean colour of `pixels`.
+fn mean(pixels: &[Rgb]) -> Rgb {
+    let n = pixels.len() as u32;
+    let sum = |f: fn(&Rgb) -> u8| {
+        let total: u32 = pixels.iter().map(|p| u32::from(f(p))).sum();
+        ((total + n / 2) / n) as u8
+    };
+    Rgb(sum(|p| p.0), sum(|p| p.1), sum(|p| p.2))
 }
 
 /// The best two-colour split of a cell's pixels: the mask of the ink
@@ -221,7 +263,7 @@ mod tests {
         for mode in [TextMode::HalfBlock, TextMode::Quadrant, TextMode::Sextant] {
             for depth in [ColorDepth::TrueColor, ColorDepth::Ansi256] {
                 let t = theme(depth);
-                let cells = cells(&art, 7, 3, mode, &t);
+                let cells = cells(&art, 7, 3, (mode, false), &t);
                 assert_eq!(cells.len(), 21);
                 let want = t.image(Rgb(200, 120, 40)).unwrap();
                 assert!(cells.iter().all(|&(_, _, bg)| bg == want), "{mode:?}");
@@ -230,7 +272,31 @@ mod tests {
         let mut buf = Buffer::empty(Rect::new(0, 0, 10, 4));
         let t = theme(ColorDepth::Ansi16);
         let area = buf.area;
-        draw(&mut buf, area, &art, "x", TextMode::Sextant, &t);
+        draw(&mut buf, area, &art, "x", (TextMode::Sextant, false), &t);
         assert_eq!(buf, Buffer::empty(buf.area), "no pictures in 16 colours");
+    }
+
+    /// Opacity-safe: a smooth gradient is whole `█` cells (no colour in a
+    /// see-through background), a hard edge still splits, and drawn for
+    /// translucent backgrounds nothing does.
+    #[test]
+    fn alike_colours_and_translucent_cells_are_whole_blocks() {
+        let t = theme(ColorDepth::TrueColor);
+        let gradient = Art::from_fn(|_, y| Rgb(120 + (y / 16) as u8, 60, 40));
+        let stripes = Art::from_fn(|x, _| match x % 2 == 0 {
+            true => Rgb(250, 240, 230),
+            false => Rgb(10, 20, 60),
+        });
+        let whole = |cells: &[PictureCell]| cells.iter().all(|&(ch, fg, bg)| ch == '█' && fg == bg);
+        for mode in [TextMode::HalfBlock, TextMode::Quadrant, TextMode::Sextant] {
+            assert!(
+                whole(&cells(&gradient, 12, 6, (mode, false), &t)),
+                "{mode:?}"
+            );
+            assert!(whole(&cells(&stripes, 12, 6, (mode, true), &t)), "{mode:?}");
+        }
+        // One-pixel stripes at full size: each quadrant cell splits ▌ / ▐.
+        let split = cells(&stripes, 64, 4, (TextMode::Quadrant, false), &t);
+        assert!(split.iter().any(|&(ch, fg, bg)| ch != '█' && fg != bg));
     }
 }

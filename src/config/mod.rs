@@ -53,6 +53,8 @@ pub struct Display {
     /// Cell height ÷ width, used only when the terminal doesn't report
     /// its pixel size (§2.3).
     pub cell_aspect: f64,
+    /// Whether the terminal shows cell backgrounds see-through.
+    pub cells: CellsChoice,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -143,6 +145,19 @@ pub enum ColorChoice {
     None,
 }
 
+/// `display.cells`: whether the terminal blends cell backgrounds over the
+/// window while glyphs stay opaque (Ghostty's `background-opacity-cells`).
+/// `auto` reads Ghostty's config; `translucent` keeps half blocks from
+/// splitting wax across a glyph and its background (no half-row seams).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CellsChoice {
+    #[default]
+    Auto,
+    Opaque,
+    Translucent,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum UiMode {
@@ -168,6 +183,7 @@ impl Default for Display {
             fps: 60,
             color: ColorChoice::Auto,
             cell_aspect: 2.0,
+            cells: CellsChoice::Auto,
         }
     }
 }

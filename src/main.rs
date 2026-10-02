@@ -1,6 +1,7 @@
 //! LavaTUI — a terminal lava lamp.
 
 mod app;
+mod cells;
 mod cli;
 mod clock;
 mod config;

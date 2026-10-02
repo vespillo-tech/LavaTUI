@@ -113,13 +113,14 @@ fn bench_compute() {
                             height,
                             theme: paint,
                             time: frame as f64 / 60.0,
+                            translucent: false,
                         },
                         &mut next,
                     );
                     times[4].record(start);
                     let start = Instant::now();
                     if let Some(paint) = &dithering {
-                        dither256::resolve(paint, area, &mut next);
+                        dither256::resolve(paint, area, &mut next, false);
                     }
                     times[5].record(start);
                     let start = Instant::now();

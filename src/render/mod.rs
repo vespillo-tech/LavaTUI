@@ -18,12 +18,15 @@
 mod bench;
 mod canvas;
 mod cell;
+#[cfg(test)]
+mod composite;
 mod dither256;
 mod styles;
 #[cfg(test)]
 mod tests;
 
 pub use canvas::{At, Canvas, LIQUID};
+pub use cell::Pixel;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -199,6 +202,9 @@ pub struct LampOptions {
     /// Sample at half resolution per axis and upsample (adaptive quality,
     /// docs/design.md §7).
     pub reduced: bool,
+    /// The terminal shows cell backgrounds see-through but glyphs opaque
+    /// (`display.cells`): half blocks never split wax across two colours.
+    pub translucent: bool,
 }
 
 /// Samples a frame of `n` grid pixels actually takes: the budget caps it,
@@ -251,10 +257,11 @@ impl StatefulWidget for LampView<'_> {
             height,
             theme,
             time: self.time,
+            translucent: self.options.translucent,
         };
         self.style.draw(&canvas, buf);
         if let Some(theme) = &dithering {
-            dither256::resolve(theme, area, buf);
+            dither256::resolve(theme, area, buf, self.options.translucent);
         }
     }
 }

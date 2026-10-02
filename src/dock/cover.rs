@@ -370,7 +370,14 @@ pub(super) fn draw_cover(model: &Model, r: Rect, buf: &mut Buffer) {
         Drawn::None => return placeholder(model, r, buf),
     };
     if model.theme.shows_images() {
-        picture::draw(buf, r, &art, url, text, &model.theme);
+        picture::draw(
+            buf,
+            r,
+            &art,
+            url,
+            (text, model.translucent_cells()),
+            &model.theme,
+        );
     } else {
         placeholder(model, r, buf);
     }

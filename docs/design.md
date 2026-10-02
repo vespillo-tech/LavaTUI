@@ -444,6 +444,24 @@ pixels**:
 Each style declares its grid (`LampStyle::GRID`). `ascii` supersamples
 two pixels per glyph.
 
+**Half-block cells are opacity-safe.** Some terminals (Ghostty with
+`background-opacity < 1` and `background-opacity-cells = true`) blend a
+cell's *background* over the window but keep its *glyph* opaque, so a
+`▀`/`▄` cell whose halves are two shades of wax shows its background half
+darker: half-row dashes. So (`render::cell::half_block`, always):
+
+* two halves that look the same (OKLab ΔE ≤ 0.03, `theme::NEAR`) are drawn
+  as one colour: `█` for wax, a space for the liquid or a style's
+  backdrop (each pixel moves < ½ NEAR: invisible on opaque terminals);
+* the liquid / backdrop is always the cell background, so it's as
+  see-through as the rest of the window, and a split cell puts the
+  liquid's half (else the darker half) behind.
+
+With `display.cells = "translucent"` (or `"auto"` in a Ghostty configured
+as above) two wax halves never split: they become their mean, giving up
+colour detail *inside* the wax (never the silhouette) for no seams; the
+256-colour dither then works a cell at a time.
+
 The sim lives in **world units**, independent of the terminal:
 
 * World height is always `1.0`. World width is `A_region` (the visual
@@ -1456,6 +1474,7 @@ than jumping.
 fps = 60                 # 1..=240
 color = "auto"           # auto | truecolor | 256 | 16 | none
 cell_aspect = 2.0        # used only when the terminal doesn't report pixels
+cells = "auto"           # auto | opaque | translucent (see §2.2)
 
 [lamp]
 style = "solid"

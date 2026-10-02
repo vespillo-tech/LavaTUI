@@ -11,7 +11,7 @@ use ratatui::buffer::Buffer;
 use ratatui::style::Color;
 
 use super::{is_edge, quantise};
-use crate::render::{Canvas, Grid, LIQUID, LampStyle, smoothstep, wax_heat};
+use crate::render::{Canvas, Grid, LIQUID, LampStyle, Pixel, smoothstep, wax_heat};
 use crate::sim::SURFACE;
 use crate::theme::{Ink, Role};
 
@@ -36,7 +36,7 @@ impl LampStyle for Synthwave {
     }
 }
 
-fn pixel(c: &Canvas, x: usize, y: usize, scroll: f32) -> Option<Color> {
+fn pixel(c: &Canvas, x: usize, y: usize, scroll: f32) -> Pixel {
     let s = c.at(x, y);
     let v = (y as f32 + 0.5) / c.height as f32;
     let heat = wax_heat(s.temp);
@@ -46,15 +46,17 @@ fn pixel(c: &Canvas, x: usize, y: usize, scroll: f32) -> Option<Color> {
     let neon = Ink::Wax(0.1 + 0.9 * heat);
 
     if wax {
-        return Some(sun_pixel(c, v, heat, rim, neon));
+        return Pixel::Ink(sun_pixel(c, v, heat, rim, neon));
     }
     if !c.theme.blends() {
-        return (floor_line(c, x, y, scroll) >= 0.5)
-            .then(|| c.theme.color(Ink::Role(Role::Accent)));
+        return match floor_line(c, x, y, scroll) >= 0.5 {
+            true => Pixel::Ink(c.theme.color(Ink::Role(Role::Accent))),
+            false => Pixel::Liquid,
+        };
     }
     // Halo: the liquid just outside the wax glows in neon.
     let glow = 0.55 * smoothstep(s.density / SURFACE).powi(3);
-    Some(
+    Pixel::Back(
         backdrop(c, x, y, v, scroll)
             .mix(neon, quantise(glow, 10.0))
             .color(),
@@ -179,11 +181,12 @@ mod tests {
             height: 2 * usize::from(area.height),
             theme,
             time,
+            translucent: false,
         };
         let mut buf = Buffer::empty(area);
         Synthwave::draw(&canvas, &mut buf);
         if dithering.is_some() {
-            dither256::resolve(theme, area, &mut buf);
+            dither256::resolve(theme, area, &mut buf, false);
         }
         buf
     }
@@ -200,7 +203,7 @@ mod tests {
     /// left, never comes back. Returns how many pixel pairs it compared.
     fn assert_smooth(c: &Canvas, monotone: bool, what: &str) -> usize {
         let rgb = |x, y| match pixel(c, x, y, 0.0) {
-            Some(Color::Rgb(r, g, b)) => [r, g, b].map(i32::from),
+            Pixel::Ink(Color::Rgb(r, g, b)) => [r, g, b].map(i32::from),
             other => panic!("{x},{y}: {other:?} ({what})"),
         };
         let body = |x, y| c.at(x, y).density >= SURFACE && !is_edge(c, x, y);
@@ -267,6 +270,7 @@ mod tests {
                     height: big_h,
                     theme: &theme,
                     time: 0.0,
+                    translucent: false,
                 };
                 let what = format!("{what} {}", palette.name);
                 assert!(assert_smooth(&canvas, monotone, &what) > 1000, "{what}");
@@ -286,12 +290,17 @@ mod tests {
                     height,
                     theme,
                     time: 0.0,
+                    translucent: false,
                 };
                 let (a, b) = (canvas(&plain), canvas(&garish));
                 for y in 0..height {
                     for x in (0..width).filter(|&x| wax(x, y)) {
                         let p = pixel(&a, x, y, 0.0);
-                        assert!(p.is_some(), "hole at {x},{y} ({} {depth:?})", palette.name);
+                        assert!(
+                            matches!(p, Pixel::Ink(_)),
+                            "hole at {x},{y} ({} {depth:?})",
+                            palette.name
+                        );
                         assert_eq!(
                             p,
                             pixel(&b, x, y, 0.4),

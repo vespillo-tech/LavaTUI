@@ -149,13 +149,19 @@ Any font with Unicode block elements and braille works, so no Nerd Font
 is needed. On macOS, Terminal.app has no truecolor and gets the 256-colour
 path.
 
-**Ghostty half-block streaks:** if wax or album art has alternating dark
-half-rows, check Ghostty's `background-opacity-cells` setting. With it
-enabled and `background-opacity < 1`, the background half of a `▀` or `▄`
-cell is translucent while the foreground half stays opaque. Set
-`background-opacity-cells = false` in Ghostty's config and reload it to
-keep explicit pixel colours opaque; the window's normal transparency is
-still controlled by `background-opacity`. See
+**Translucent terminals:** with `background-opacity < 1` and
+`background-opacity-cells = true`, Ghostty draws a cell's background
+see-through but its glyph opaque, so a half-block cell split across two
+colours shows its lower or upper half darker. The lamp is drawn for this:
+halves that look alike become one colour, and the liquid is always the
+(see-through) background. In such a Ghostty (`display.cells = "auto"`
+reads its config at start) wax cells are never split at all, so wax and
+pool show no half-row streaks; it costs a little colour detail inside the
+wax, which is why opaque terminals don't get it. Set
+`display.cells = "translucent"` for another terminal that blends this
+way (or a Ghostty configured on the command line), `"opaque"` to turn
+it off. Album covers in text cells follow the same rule (one colour a
+cell when translucent); kitty graphics (pixels) are unaffected. See
 [Ghostty's opacity settings](https://ghostty.org/docs/config/reference#background-opacity-cells).
 
 ## Usage
@@ -288,6 +294,7 @@ defaults:
 fps = 60                 # 1..=240
 color = "auto"           # auto | truecolor | 256 | 16 | none
 cell_aspect = 2.0        # cell height / width; used only when the terminal doesn't report pixels
+cells = "auto"           # auto | opaque | translucent: are cell backgrounds see-through?
 
 [lamp]
 style = "solid"          # see Render styles

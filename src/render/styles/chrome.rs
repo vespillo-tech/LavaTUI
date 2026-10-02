@@ -6,11 +6,10 @@
 //! shade glyphs (`░▒▓█`) with the glint in the text colour.
 
 use ratatui::buffer::Buffer;
-use ratatui::style::Color;
 
 use super::{quantise, stepped_heat};
 use crate::render::cell::mark as mark_cell;
-use crate::render::{Canvas, Grid, LIQUID, LampStyle, coverage, wax_heat};
+use crate::render::{Canvas, Grid, LIQUID, LampStyle, Pixel, coverage, wax_heat};
 use crate::sim::SURFACE;
 use crate::theme::{Ink, Role};
 
@@ -28,7 +27,7 @@ impl LampStyle for Chrome {
 
     fn draw(c: &Canvas, buf: &mut Buffer) {
         if c.theme.blends() {
-            c.draw_half_blocks(buf, |x, y| Some(pixel(c, x, y)));
+            c.draw_half_blocks(buf, |x, y| pixel(c, x, y));
             return;
         }
         c.for_each_cell(buf, |at, cell| {
@@ -92,21 +91,23 @@ fn normalise(v: [f32; 3]) -> [f32; 3] {
     [v[0] / len, v[1] / len, v[2] / len]
 }
 
-fn pixel(c: &Canvas, x: usize, y: usize) -> Color {
+fn pixel(c: &Canvas, x: usize, y: usize) -> Pixel {
     let s = c.at(x, y);
     let cover = coverage(s.density);
     let backdrop = c.theme.paint(LIQUID);
     if cover == 0.0 {
-        return backdrop.color();
+        return Pixel::Back(backdrop.color());
     }
     let sh = shade(c, x, y);
     let heat = stepped_heat(wax_heat(s.temp));
     // Translucent body: more wax where it's lit, the liquid through it in shadow.
     let body = cover * (0.45 + 0.4 * sh.diffuse);
-    backdrop
-        .mix(Ink::Wax(heat), body)
-        .scale(0.7 + 0.5 * sh.diffuse)
-        .mix(Ink::Wax(1.0), cover * 0.75 * sh.rim)
-        .mix(Ink::Role(Role::Text), cover * sh.spec)
-        .color()
+    Pixel::Ink(
+        backdrop
+            .mix(Ink::Wax(heat), body)
+            .scale(0.7 + 0.5 * sh.diffuse)
+            .mix(Ink::Wax(1.0), cover * 0.75 * sh.rim)
+            .mix(Ink::Role(Role::Text), cover * sh.spec)
+            .color(),
+    )
 }
