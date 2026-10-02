@@ -107,6 +107,10 @@ sized pty sessions and summarizes frame intervals/spike locations; see
 `docs/perf/frame-trace.md` for the trace columns and measurement limits.
 `tools/trace_frames.py --summarize /tmp/ghostty-frames.csv` prints native
 terminal interval percentiles and every >2-period gap with its measured stage.
+`tools/ghostty_native.py` (macOS) runs the binary in real native Ghostty
+windows (traces + optional screen recording counted for frames Ghostty
+actually showed; `--ghostty-arg=--custom-shader=` to compare without
+shaders); keep the window in front while it runs.
 `docs/screenshots/capture.py` does exactly this (pyte + Pillow) and
 regenerates the README screenshots; rerun it after visible changes, and
 look at every image. Music shots use `--demo`; never commit real album

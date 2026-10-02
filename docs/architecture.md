@@ -148,8 +148,13 @@ cargo test --release -- --ignored --nocapture bench_fill    # field sampler + si
 cargo test --release -- --ignored --nocapture pop_harness   # frame-to-frame shape jumps
 ```
 
+In native Ghostty at 301×86 (synthwave, music, cover and lyrics on) a
+frame costs 2–3 ms and ~13 KB and the app holds 60 fps; what reaches the
+screen is up to Ghostty: with custom shaders on a big window it showed
+~50 distinct fps against ~56 without (`tools/ghostty_native.py --record`).
+
 [`perf/frame-trace.md`](perf/frame-trace.md) covers frame-interval
-tracing in real terminals; [`performance-compute.md`](performance-compute.md)
+tracing in real terminals (and that native Ghostty measurement); [`performance-compute.md`](performance-compute.md)
 has the compute-side notes.
 
 ## Development

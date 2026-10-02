@@ -152,3 +152,53 @@ cargo run --release -- --trace /tmp/lavatui-ghostty.csv --fps 60 --frames 18000 
 ```
 
 It exits after 18,000 frames (about five minutes at focused 60 fps); `q` ends it early and still writes the trace. Keep the window focused to measure 60 fps. The summary prints p50/p99/max frame intervals, wake lateness, wait CPU, and every gap exceeding two frame periods with its measured stage. Reproduce with the usual widgets/settings so the real workload is captured. Save output alongside the terminal size and host load (`uptime`). The trace measures app frame completion, not Ghostty's actual presentation time; synchronized output lets Ghostty present the completed batch together. Existing captures can be summarized without a TTY using `python3 tools/trace_frames.py --summarize /tmp/lavatui-ghostty.csv`.
+
+## Native Ghostty at large sizes (v1.2.0, 2026-10-02)
+
+Report: lag and skipped frames once the native Ghostty window is made large, with synthwave style and palette, music + cover + clock in the side panel, lyrics on the lamp, art detail auto (kitty pixels), see-through cells (`background-opacity = 0.75` + `background-opacity-cells`) and three custom shaders (`cursor_blaze`, `tft`, `bloom`; `custom-shader-animation = true`). Measured on the same Apple M5 (10 cores) under the same kind of load: 1-minute load 11–31 throughout, WindowServer ~80 %, another app ~85 %, a browser GPU process ~45 %; GPU "Device Utilization" 52–53 % with LavaTUI in a shader-free window.
+
+Ghostty opens new windows on the laptop screen (1512×982 pt, 2×) and clamps them to it, whatever `--window-width` asks: at the user's font size that is 158×44, so earlier "300×90" requests in native Ghostty were not that size. These runs used `--font-size=8` (largest window 301×86). A full window there is 3024×1964 pixels for the shaders, about the same as a full window on the user's 3440×1440 (1×) display. Release build of 7e55dd3, `--demo` (invented player, cover and lyrics), seed 7, 60 fps.
+
+### What the app sends (trace, 60 s per case, window in front)
+
+| Size / style | Interval p50 / p99 / max (ms) | >2-period gaps | Measured stage of the gaps | Tick+draw+diff median (ms) | Write median (ms) | Bytes/frame median (KB) | 1-min load |
+|---|---:|---:|---|---:|---:|---:|---:|
+| 200x60 synthwave | 16.67 / 19.57 / 109.01 | 7 | write 6, diff 1 | 1.9 | 0.24 | 6.1 | 15.9 |
+| 300x80 synthwave | 16.66 / 20.31 / 80.31 | 15 | draw 6, write 6, after overrun 2, wake 1 | 2.9 | 0.44 | 12.8 | 19.7 |
+| 301x86 synthwave | 16.67 / 21.46 / 61.34 | 10 | draw 5, after overrun 4, write 1 | 3.1 | 0.43 | 13.6 | 24.3 |
+| 200x60 solid | 16.66 / 18.26 / 70.56 | 6 | write 3, wake 2, diff 1 | 1.2 | 0.16 | 4.0 | 19.2 |
+| 300x80 solid | 16.66 / 18.67 / 66.29 | 5 | write 3, draw 2 | 2.2 | 0.27 | 7.2 | 16.6 |
+| 301x86 solid | 16.66 / 20.52 / 52.89 | 7 | draw 2, write 2, after overrun 2, wake 1 | 2.3 | 0.28 | 7.6 | 18.9 |
+
+Every case held 60 fps; adaptive quality never engaged, correctly: a frame costs 2–3 ms of the 16.7 ms budget at the largest size (its frame time already includes the write, so sustained terminal backpressure would count). The cover went out once (frame 0; one more on a demo track change), never again. The gaps are 5–15 a minute: a stdout write that normally takes 0.2–0.4 ms blocking for 20–92 ms (Ghostty not reading; the stalled frames are ordinary sizes, median 3.6–18 KB), CPU-only stages (draw/diff, normally 1–3 ms) stretched to 15–37 ms, and wakes up to 55 ms late at USER_INTERACTIVE QoS. With load 3× the core count these are descheduling and terminal stalls, not work of ours.
+
+### What Ghostty shows (screen recordings)
+
+`tools/ghostty_native.py --record` films the display for 8 s from inside the window and counts distinct frames in the lamp (ffmpeg `mpdecimate`; ScreenCaptureKit itself only delivered ~55–57 frames a second under this load, so that is the ceiling). Four interleaved pairs at 301×86 synthwave, same build, shaders on (the user's config) vs `--custom-shader=` (values in run order):
+
+| | Distinct fps shown | Holds > 2 frames per 8 s | Longest hold (ms) | GPU busy | App sent |
+|---|---:|---:|---:|---:|---:|
+| Shaders on | 50.1 / 51.7 / 50.6 / 49.7 | 10 / 5 / 10 / 14 | 41.7 / 41.7 / 45.0 / 41.7 | 72 / 75 / 72 / 69 % | 60 fps, p99 20.5 / 19.4 / 19.2 / 18.7 ms |
+| Shaders off | 55.5 / 56.8 / 56.1 / 56.8 | 0 / 0 / 1 / 0 | 33.3 / 33.3 / 41.7 / 33.3 | 53 / 53 / 53 / 52 % | 60 fps, p99 19.2 / 19.7 / 19.0 / 19.1 ms |
+
+These pairs ran from a scratch script while about twenty window-less Ghostty processes from earlier launches were still alive (found and killed afterwards; see harness notes), equally for both arms. Earlier single runs under heavier load showed the same split more sharply (shaders 44.8–46.7 fps with up to 37 holds and holds up to 117 ms; no shaders 54.0). In a small window (120×36) shaders made no difference (49.3 vs 47.6, both at the recorder's limit then), and `--background-blur-radius=0` did not change the shader case (54.2 vs 54.4). Solid looked the same as synthwave with shaders (46.7 vs 45.5), and `--fps 30` was not smoother (31.2 distinct fps, holds p90 50 ms against 33 ms).
+
+So the size-dependent stutter is Ghostty's custom-shader pass: `bloom.glsl` alone reads 25 texels per pixel, and with `custom-shader-animation` it runs at the display rate over every pixel of the window whatever we send, adding ~20 points of GPU on top of a GPU already half busy; when it misses vsync, frames hold for 2–3 refreshes. It costs the same for any content and any frame rate of ours.
+
+### Ruled out / not changed
+
+- Synthwave's floor at 30 Hz (measured with a churn count at 200×60: floor cells changed per frame 193 → 174, halo 176 → 160, bytes/frame 9.7 → 9.2 KB, about 5 %). The floor's churn comes from its 16-level line coverage, not the frame rate, and bytes are not what stalls. Not kept.
+- Lower fps or the reduced grid when "the terminal can't keep up": the trace cannot see Ghostty's GPU, and 30 fps was measured worse on screen. Adaptive quality already counts write time.
+- Cover/placeholder re-sends: none after the first frame.
+
+What remains is outside the app: Ghostty's shaders on large windows, and host load (descheduling, Ghostty read stalls). README › Questions and fixes says so in plain words.
+
+Reproduce (macOS; keep the window in front, the harness warns about unfocused frames):
+
+```sh
+cargo build --release
+python3 tools/ghostty_native.py --output /tmp/native --font-size 8 --sizes 400x120 --styles synthwave --record --label shaders
+python3 tools/ghostty_native.py --output /tmp/native --font-size 8 --sizes 400x120 --styles synthwave --record --label noshader --ghostty-arg=--custom-shader=
+```
+
+Harness notes: Ghostty re-splits `-e`'s arguments on spaces and asks before running a lone script path, so the harness runs `/bin/sh <case>.sh` from an `--output` without spaces; it runs a copy of the binary from there (a new Ghostty process may need permission to read `~/Documents`); and each `open -na` Ghostty outlives its window despite `--quit-after-last-window-closed`, so it is killed after each case.
