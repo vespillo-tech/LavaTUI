@@ -564,6 +564,8 @@ fn option_drag_terminals() {
 }
 
 #[test]
+// Windows: crossterm's mode switches need a real console (CI has none).
+#[cfg_attr(windows, ignore = "needs a real Windows console")]
 fn cleanup_ends_sync_and_shows_cursor_without_using_the_frame_buffer() {
     if !output::ansi_output() {
         return;
