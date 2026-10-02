@@ -226,8 +226,9 @@ type to find a playlist or song.
 **The mouse** works too. Click the music buttons, or click the progress
 bar to jump in the song. Click or drag on the lamp to warm the wax. Scroll
 in help and lists. To select text with the mouse, hold `Shift` while you
-drag (in Terminal and iTerm2 on a Mac, hold `Option`). You can turn the
-mouse off in the settings.
+drag (in Terminal and iTerm2 on a Mac, hold `Option`). If you'd rather
+LavaTUI ignore the mouse, switch off *mouse* on the *controls* page of
+LavaTUI's settings. This only changes LavaTUI, not your computer's mouse.
 
 ## Settings
 
@@ -351,7 +352,9 @@ rows*.
 
 **I can't select text with the mouse.**
 Hold `Shift` while you drag (`Option` in Terminal and iTerm2 on a Mac).
-Or turn the mouse off in the settings (*controls* page).
+Or tell LavaTUI to ignore the mouse: press `,` to open LavaTUI's
+settings, go to the *controls* page and switch off *mouse*. This only
+affects LavaTUI. Your computer's mouse keeps working as normal.
 
 **The music card says Spotify isn't open.**
 Start your music app and play a song. LavaTUI doesn't open it for you.
