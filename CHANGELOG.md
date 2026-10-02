@@ -51,6 +51,8 @@ What changed in each version of LavaTUI, in plain words.
   the wax is drawn as cell background there.
 - Text on the lamp picks a dark or light colour for each letter, against
   whatever is behind it, so it stays readable over every style.
+  Prefer one colour? Settings › widgets › *text on the lamp*: light or
+  dark.
 - The wax no longer jumps between frames when blobs join or split.
 - Synthwave has a smooth, anti-aliased grid and a crisp horizon.
 - One safe set of symbols for terminals that can't draw the fancy ones.

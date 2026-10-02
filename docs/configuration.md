@@ -77,6 +77,8 @@ cover = "off"            # side | overlay | off
 # center | top | top-right | bottom-right | bottom | bottom-left | top-left
 anchor = { clock = "center", pomodoro = "center", music = "top-left", lyrics = "bottom", cover = "top-right" }
 backing = "none"         # none (text floats on the lamp) | soft (a veiled pool behind)
+text = "auto"            # text on the lamp: auto (light or dark per letter, by the wax
+                         # behind it) | light | dark (always the palette's light / dark ink)
 
 [art]
 detail = "auto"          # auto | pixels (photo) | sextant (fine) | quadrant (medium) | halfblock (coarse)

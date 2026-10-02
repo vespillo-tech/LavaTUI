@@ -277,6 +277,11 @@ keys: `↑` and `↓` pick a line, and `←` and `→` change it. You see each
 change on the lamp right away. Changes save by themselves. Each page has
 a "reset" line to undo your changes.
 
+Text on the lamp (the clock, music or lyrics) picks light or dark for
+each letter, so it stands out from the wax behind it. Want it one colour
+all the time? On the *widgets* page, set *text on the lamp* to *light*
+or *dark*.
+
 Prefer a text file? The settings live in `config.toml`:
 
 | System | Folder |

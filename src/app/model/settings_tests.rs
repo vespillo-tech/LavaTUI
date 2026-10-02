@@ -139,6 +139,29 @@ fn widgets_move_and_their_position_shows_on_the_lamp() {
 }
 
 #[test]
+fn text_on_the_lamp_steps_through_its_modes_and_is_saved() {
+    use crate::dock::TextInk;
+    let path = temp_config("lamp-text");
+    let (mut m, t0) = model_at(path.clone());
+    open(&mut m, t0, 2);
+    to(&mut m, t0, Item::LampText);
+    assert_eq!(row(&m, Item::LampText).value, "automatic");
+    m.update(Action::Change(true), t0);
+    assert_eq!(m.settings.dock.text, TextInk::Light);
+    assert_eq!(row(&m, Item::LampText).value, "light");
+    m.update(Action::Change(true), t0);
+    assert_eq!(m.settings.dock.text, TextInk::Dark);
+    assert_eq!(row(&m, Item::LampText).value, "dark");
+    m.update(Action::Change(true), t0);
+    assert_eq!(m.settings.dock.text, TextInk::Auto, "and round again");
+    m.update(Action::Change(false), t0);
+    assert_eq!(m.settings.dock.text, TextInk::Dark);
+    m.save();
+    let (again, _) = model_at(path);
+    assert_eq!(again.settings.dock.text, TextInk::Dark);
+}
+
+#[test]
 fn reset_needs_a_second_enter_and_puts_the_page_back() {
     let (mut m, t0) = model_at(temp_config("reset"));
     open(&mut m, t0, 1);

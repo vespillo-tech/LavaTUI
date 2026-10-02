@@ -971,6 +971,16 @@ Picked from pty captures of all nine styles and eight palettes at
 80 × 24 and 160 × 40. Earlier rejected alternatives still hold: a halo
 following the glyphs was busy around short lines, per-row spans ragged.
 
+*Fixed ink* (`dock.text`, lava-1xk.41; settings › widgets › *text on
+the lamp*). `auto` (the default) is the adaptive contrast above.
+`light` and `dark` turn it off: every glyph on the lava, text and big
+digits alike, takes the palette's light or dark ink (the same pair
+adaptive contrast picks from), whatever is behind it, with no memory or
+hysteresis. Dim lines stay unbolded, album art keeps its pixels, and the
+soft backing's text takes the same ink. With no colour the glyphs keep
+their own. The side panel is never affected: its widgets keep their role
+inks on the app background.
+
 `dock.backing = "soft"` keeps the v1.2 look: a soft pool of liquid. Under
 the stack and half a row around it the lamp is veiled 82 % of the way to
 `liquid` (its glyphs cleared), and the veil fades to nothing over the

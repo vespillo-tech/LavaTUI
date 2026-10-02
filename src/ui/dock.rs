@@ -9,7 +9,7 @@ use ratatui::layout::{Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 
 use crate::app::Model;
-use crate::dock::{Backdrop, Backing, Look, WIDGETS};
+use crate::dock::{Backdrop, Backing, Look, TextInk, WIDGETS};
 use crate::graphics;
 use crate::theme::{self, ColorDepth, Role, TERMINAL_DEFAULT, Theme};
 use crate::ui::layout::{CHIP_SEP, ChipRow, Stack, halo};
@@ -54,6 +54,7 @@ pub fn draw_on_lava(buf: &mut Buffer, stack: &Stack, model: &Model, lamp: &Theme
     for p in &stack.items {
         WIDGETS[p.widget].draw(model, p.form, p.rect, look, &mut scratch);
     }
+    let text = model.settings.dock.text;
     match model.settings.dock.backing {
         Backing::None => float(
             buf,
@@ -61,8 +62,9 @@ pub fn draw_on_lava(buf: &mut Buffer, stack: &Stack, model: &Model, lamp: &Theme
             model.theme.role(Role::Dim),
             lamp,
             model.cell_opacity(),
+            text,
         ),
-        Backing::Soft => soft(buf, &scratch, lamp),
+        Backing::Soft => soft(buf, &scratch, lamp, text),
     }
 }
 
@@ -101,6 +103,17 @@ enum Ink {
     Own,
     Light,
     Dark,
+}
+
+/// The one ink `dock.text` puts on every glyph, if it asks for one (and
+/// there are colours to choose: with none, glyphs keep their own).
+fn fixed_ink(text: TextInk, lamp: &Theme) -> Option<Ink> {
+    match text {
+        _ if !lamp.has_color() => None,
+        TextInk::Auto => None,
+        TextInk::Light => Some(Ink::Light),
+        TextInk::Dark => Some(Ink::Dark),
+    }
 }
 
 /// What floating glyphs had last frame, by cell: the one memory drawing
@@ -229,7 +242,18 @@ impl Glyph {
 /// wherever that reads ≥ [`LARGE`]. A change waits a frame ([`Memory`])
 /// unless the ink it has reads below [`LARGE`].
 /// `dim` is the ink of secondary lines, drawn without bold.
-fn float(buf: &mut Buffer, scratch: &Buffer, dim: Color, lamp: &Theme, opacity: Option<f32>) {
+///
+/// `text` (`dock.text`) light or dark skips all that: every glyph takes
+/// that ink, whatever is behind it (and nothing is remembered).
+fn float(
+    buf: &mut Buffer,
+    scratch: &Buffer,
+    dim: Color,
+    lamp: &Theme,
+    opacity: Option<f32>,
+    text: TextInk,
+) {
+    let fixed = fixed_ink(text, lamp);
     let translucent = opacity.is_some();
     let area = scratch.area.intersection(buf.area);
     let (w, h) = (usize::from(area.width), usize::from(area.height));
@@ -333,10 +357,11 @@ fn float(buf: &mut Buffer, scratch: &Buffer, dim: Color, lamp: &Theme, opacity: 
                     bars: [bar.min(calm * SLACK).max(LARGE), bar, bar],
                     was: memory.map(|m| m.ink),
                 };
-                let want = glyph.ink(if i % w == 0 { None } else { left });
+                let want = fixed.unwrap_or_else(|| glyph.ink(if i % w == 0 { None } else { left }));
                 // A change shows once it's wanted two frames running, or
                 // at once if the ink it has reads below the least.
                 let ink = match (memory, reads) {
+                    _ if fixed.is_some() => want,
                     (Some(m), Some(r))
                         if want != m.ink && m.next != Some(want) && r[m.ink as usize] >= LARGE =>
                     {
@@ -359,7 +384,7 @@ fn float(buf: &mut Buffer, scratch: &Buffer, dim: Color, lamp: &Theme, opacity: 
     // ink, unless a stroke straddles pale wax and dark liquid.
     let mut seen = vec![false; puts.len()];
     for start in 0..puts.len() {
-        if seen[start] || puts[start] != (Put::Glyph { block: true }) {
+        if fixed.is_some() || seen[start] || puts[start] != (Put::Glyph { block: true }) {
             continue;
         }
         let mut digit = vec![start];
@@ -402,7 +427,7 @@ fn float(buf: &mut Buffer, scratch: &Buffer, dim: Color, lamp: &Theme, opacity: 
     for (i, d) in decided.iter().enumerate() {
         let Some(d) = d else { continue };
         let pos = at(i);
-        if d.reads.is_some() {
+        if d.reads.is_some() && fixed.is_none() {
             let next = (d.want != d.ink).then_some(d.want);
             let memory = Memory {
                 glyph: d.glyph,
@@ -555,7 +580,9 @@ fn ink_halves(symbol: &str) -> Option<(bool, bool)> {
 /// sits in a calm pool that the wax melts into rather than a box. Below
 /// truecolor (256 colours would snap the tints to greys) the backing is
 /// plain liquid where it's at least half strength.
-fn soft(buf: &mut Buffer, scratch: &Buffer, lamp: &Theme) {
+fn soft(buf: &mut Buffer, scratch: &Buffer, lamp: &Theme, text: TextInk) {
+    let (light, dark) = lamp.floating_inks();
+    let fixed = fixed_ink(text, lamp).map(|ink| if ink == Ink::Light { light } else { dark });
     let r = scratch.area;
     let liquid = lamp.role(Role::Liquid);
     // 256 colours would snap the veiled tints to cube greys: a grey box.
@@ -596,6 +623,9 @@ fn soft(buf: &mut Buffer, scratch: &Buffer, lamp: &Theme) {
             to.set_symbol(from.symbol())
                 .set_style(from.style())
                 .set_bg(bg);
+            if let Some(ink) = fixed.filter(|_| !own_bg) {
+                to.set_fg(ink);
+            }
         }
     }
 }
@@ -664,6 +694,7 @@ mod tests {
             lamp.role(Role::Dim),
             lamp,
             translucent.then_some(0.75),
+            TextInk::Auto,
         );
         buf
     }
@@ -816,7 +847,14 @@ mod tests {
             }
             let mut scratch = Buffer::empty(Rect::new(x, 0, 3, 1));
             scratch.set_string(x, 0, "abc", Style::new().fg(text));
-            float(&mut buf, &scratch, t.role(Role::Dim), &t, None);
+            float(
+                &mut buf,
+                &scratch,
+                t.role(Role::Dim),
+                &t,
+                None,
+                TextInk::Auto,
+            );
             buf[(x, 0)].fg
         };
         assert_eq!(draw(0, 150), dark);
@@ -825,6 +863,71 @@ mod tests {
         // keep dark.
         assert_eq!(draw(0, 108), dark);
         assert_eq!(draw(10, 108), dark);
+    }
+
+    /// `dock.text` light / dark: one ink everywhere, over wax and liquid
+    /// alike, text and big digits; with no colour, glyphs keep their own.
+    #[test]
+    fn light_and_dark_text_take_one_ink_whatever_is_behind() {
+        let t = theme("lava");
+        let (liquid, hot, text) = (
+            t.role(Role::Liquid),
+            t.role(Role::WaxHot),
+            t.role(Role::Text),
+        );
+        let (light, dark) = t.floating_inks();
+        let mut cells = vec![(" ", hot, hot); 3];
+        cells.extend([(" ", liquid, liquid); 4]);
+        let area = Rect::new(0, 0, 7, 1);
+        let draw = |theme: &Theme, mode, s: &str| {
+            let mut buf = Buffer::empty(area);
+            for (x, &(symbol, fg, bg)) in cells.iter().enumerate() {
+                buf[(x as u16, 0)].set_symbol(symbol).set_fg(fg).set_bg(bg);
+            }
+            let mut scratch = Buffer::empty(area);
+            scratch.set_string(0, 0, s, Style::new().fg(text));
+            float(&mut buf, &scratch, theme.role(Role::Dim), theme, None, mode);
+            buf
+        };
+        for (mode, ink) in [(TextInk::Light, light), (TextInk::Dark, dark)] {
+            for s in ["abc def", "███████"] {
+                let buf = draw(&t, mode, s);
+                for x in [0, 2, 4, 6] {
+                    assert_eq!(buf[(x, 0)].fg, ink, "{mode:?} {s:?} {x}");
+                }
+            }
+        }
+        // Automatic: dark over the wax, its own on the liquid.
+        let buf = draw(&t, TextInk::Auto, "abc def");
+        assert_eq!((buf[(0, 0)].fg, buf[(4, 0)].fg), (dark, text));
+        // No colour: the setting changes nothing.
+        let none = Theme::new(Palette::by_name("lava").unwrap(), ColorDepth::None);
+        let auto = draw(&none, TextInk::Auto, "abc def");
+        for mode in [TextInk::Light, TextInk::Dark] {
+            assert_eq!(draw(&none, mode, "abc def"), auto, "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn the_soft_backing_takes_light_or_dark_text_too() {
+        let t = theme("lava");
+        let (liquid, text) = (t.role(Role::Liquid), t.role(Role::Text));
+        let (light, dark) = t.floating_inks();
+        let area = Rect::new(0, 0, 3, 1);
+        for (mode, ink) in [
+            (TextInk::Auto, text),
+            (TextInk::Light, light),
+            (TextInk::Dark, dark),
+        ] {
+            let mut buf = Buffer::empty(area);
+            for p in area.positions() {
+                buf[p].set_symbol(" ").set_fg(liquid).set_bg(liquid);
+            }
+            let mut scratch = Buffer::empty(area);
+            scratch.set_string(0, 0, "abc", Style::new().fg(text));
+            soft(&mut buf, &scratch, &t, mode);
+            assert_eq!(buf[(1, 0)].fg, ink, "{mode:?}");
+        }
     }
 
     #[test]

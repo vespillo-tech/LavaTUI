@@ -156,6 +156,8 @@ pub struct DockSettings {
     pub anchor: Anchors,
     /// What the widgets on the lava sit on.
     pub backing: Backing,
+    /// The ink of text on the lava.
+    pub text: TextInk,
     #[serde(flatten)]
     pub places: BTreeMap<String, Place>,
 }
@@ -169,6 +171,24 @@ pub enum Backing {
     None,
     /// A soft pool of veiled liquid behind them (the v1.2 look).
     Soft,
+}
+
+/// `dock.text`: the ink of the widgets' text on the lava (§4.6). The side
+/// panel always keeps the widgets' own colours.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TextInk {
+    /// Each glyph picks its own ink, light or dark, by what's behind it.
+    #[default]
+    Auto,
+    /// Always the palette's light ink.
+    Light,
+    /// Always the palette's dark ink.
+    Dark,
+}
+
+impl TextInk {
+    pub const ALL: [Self; 3] = [Self::Auto, Self::Light, Self::Dark];
 }
 
 /// `dock.anchor`: one per widget. Files from before v1.2 have a single
@@ -197,6 +217,7 @@ impl Default for DockSettings {
         Self {
             anchor: Anchors::default(),
             backing: Backing::default(),
+            text: TextInk::default(),
             places: WIDGETS
                 .iter()
                 .map(|w| (w.name().to_owned(), w.default_place()))
@@ -418,6 +439,7 @@ mod tests {
             assert!(WIDGETS[i + 1..].iter().all(|o| o.name() != w.name()));
             assert_ne!(w.name(), "anchor", "dock.anchor is taken");
             assert_ne!(w.name(), "backing", "dock.backing is taken");
+            assert_ne!(w.name(), "text", "dock.text is taken");
         }
     }
 

@@ -67,8 +67,8 @@
     music player                   off
     lyrics                         off
     album cover                    off
+    text on the lamp         automatic
     behind things on the lamp  nothing
-    reset this page              reset
 
  The time of day.
 
