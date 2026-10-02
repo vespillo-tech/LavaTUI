@@ -357,9 +357,11 @@ settings, go to the *controls* page and switch off *mouse*. This only
 affects LavaTUI. Your computer's mouse keeps working as normal.
 
 **The music card says Spotify isn't open.**
-Start your music app and play a song. LavaTUI doesn't open it for you.
-On a Mac, also check System Settings › Privacy & Security ›
-Automation.
+Just open your music app and start a song, and the card will pick it up
+in a moment. LavaTUI leaves it to you to open your music app, so it
+never starts playing anything unexpectedly. On a Mac, if the card still
+doesn't show your song, check that your terminal is allowed to control
+Spotify in System Settings › Privacy & Security › Automation.
 
 **Space doesn't start the timer.**
 The music controls may be on (a line at the top says so). Press `Esc`
