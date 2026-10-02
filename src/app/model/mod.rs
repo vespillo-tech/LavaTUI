@@ -19,6 +19,7 @@ use std::time::{Duration, Instant, SystemTime};
 use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
 
+use crate::cells::Cells;
 use crate::clock::{
     self, ClockTime, Face, PhaseEnd, Pomodoro, PomodoroConfig, Status, format_remaining,
 };
@@ -154,9 +155,10 @@ pub struct Model {
     /// The pixel protocol the environment promises, being checked with the
     /// terminal (the app writes its query once at start).
     pub probe: Option<Probe>,
-    /// Ghostty's config makes cell backgrounds see-through (read once at
-    /// start, for `display.cells = "auto"`).
-    pub ghostty_translucent: bool,
+    /// How the terminal draws cells, as far as the environment and
+    /// Ghostty's config tell (read once at start, for `display.cells =
+    /// "auto"`).
+    pub detected_cells: Cells,
     /// Draw only glyphs every terminal font has (read once at start;
     /// `dock::music`'s controls).
     pub safe_glyphs: bool,
@@ -261,7 +263,7 @@ impl Model {
             music: Music::default(),
             caps,
             probe: unconfirmed.map(|p| Probe::new(p, now)),
-            ghostty_translucent: crate::cells::detect(),
+            detected_cells: crate::cells::detect(),
             safe_glyphs: crate::cells::safe_glyphs(),
             kitty: Kitty::default(),
             inline: Inline::default(),
@@ -707,14 +709,20 @@ pub fn speed_toast(speed: SimSpeed) -> String {
 }
 
 impl Model {
-    /// Whether the lamp draws for see-through cell backgrounds
-    /// (`display.cells`; see `render::cell::half_block`).
-    pub fn translucent_cells(&self) -> bool {
+    /// How cells are drawn (`display.cells`).
+    pub fn cells(&self) -> Cells {
         match self.settings.display.cells {
-            CellsChoice::Auto => self.ghostty_translucent,
-            CellsChoice::Opaque => false,
-            CellsChoice::Translucent => true,
+            CellsChoice::Auto => self.detected_cells,
+            CellsChoice::Opaque => Cells::Opaque,
+            CellsChoice::Translucent => Cells::Translucent,
+            CellsChoice::Background => Cells::Background,
         }
+    }
+
+    /// Whether the lamp draws for see-through cell backgrounds (see
+    /// `render::cell::half_block`).
+    pub fn translucent_cells(&self) -> bool {
+        self.cells() == Cells::Translucent
     }
 }
 

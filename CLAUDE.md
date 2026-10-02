@@ -175,11 +175,17 @@ numbers); `docs/design.md` is the layout/visual contract.
                 and writes it on normal/error exit (not panic). Fps: 10 unfocused; frozen
                 frames sleep until the clock / pomodoro readout changes
                 (`idle_until`); `frame_drawn` feeds adaptive quality.
-- `cells.rs`  — `display.cells = "auto"`: whether the terminal shows cell
-                backgrounds see-through with opaque glyphs (Ghostty with
-                `background-opacity` < 1 + `background-opacity-cells`;
-                reads its config files and `config-file` includes once at
-                start; `Model::translucent_cells` → `LampOptions.translucent`).
+- `cells.rs`  — `display.cells = "auto"` → `Cells`: `Translucent` when the
+                terminal shows cell backgrounds see-through with opaque glyphs
+                (Ghostty with `background-opacity` < 1 +
+                `background-opacity-cells`; reads its config files and
+                `config-file` includes once at start;
+                `Model::translucent_cells` → `LampOptions.translucent`),
+                `Background` when its block glyphs stop short of the cell's
+                top or side (macOS Terminal: `TERM_PROGRAM=Apple_Terminal`;
+                Ghostex / zmx, `cells::hosted`;
+                `ui::draw` ends with `render::fill_from_background`, which
+                turns blocks so their top edge is the cell background).
 - `timing.rs` — pure loop timing: `FixedStep` (accumulator, no per-frame
                 cap: sim time tracks real time × speed at any fps; only a
                 > 1.5 s `STALL` is cut short; `alpha()` for interpolation),

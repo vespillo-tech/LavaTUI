@@ -280,10 +280,11 @@ const COLOR_RANGES: [ColorChoice; 5] = [
     ColorChoice::Ansi16,
     ColorChoice::None,
 ];
-const STRIPE_FIXES: [CellsChoice; 3] = [
+const STRIPE_FIXES: [CellsChoice; 4] = [
     CellsChoice::Auto,
     CellsChoice::Opaque,
     CellsChoice::Translucent,
+    CellsChoice::Background,
 ];
 const COVER_SIZES: [CoverSize; 4] = [
     CoverSize::Small,
@@ -306,7 +307,8 @@ fn stripe_fix_name(c: CellsChoice) -> &'static str {
     match c {
         CellsChoice::Auto => "automatic",
         CellsChoice::Opaque => "off",
-        CellsChoice::Translucent => "on",
+        CellsChoice::Translucent => "see-through window",
+        CellsChoice::Background => "lines between rows",
     }
 }
 
@@ -467,10 +469,12 @@ impl Model {
                 "How many colours to use. Leave it on automatic unless colours look wrong.",
             ),
             Item::StripeFix => choice(
-                "see-through window fix",
+                "stripe fix",
                 stripe_fix_name(s.display.cells),
-                "Stops thin stripes in the wax when your terminal window is see-through \
-                 (Ghostty with background opacity). Automatic checks Ghostty's settings.",
+                "Stops thin stripes in the wax. See-through window: for a see-through \
+                 terminal window (Ghostty with background opacity). Lines between rows: for \
+                 dark lines between the rows of wax (macOS Terminal, Ghostex). Automatic picks for \
+                 your terminal.",
             ),
             Item::Face => choice(
                 "clock face",

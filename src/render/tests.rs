@@ -554,3 +554,66 @@ fn ansi256_lamp_is_all_indexed_and_still() {
         }
     }
 }
+
+/// What a cell shows: per part of a 2 × 6 grid (fine enough for quadrants
+/// and sextants alike) the colour there, or for any other glyph the glyph
+/// and its colours. A shade glyph shows its ink's share.
+#[derive(Debug, PartialEq)]
+enum Shown {
+    Parts([Color; 12]),
+    Shade(u8, Color, Color),
+    Glyph(String, Color, Color),
+}
+
+fn shown(cell: &Cell) -> Shown {
+    let ch = cell.symbol().chars().next().unwrap_or(' ');
+    match ch {
+        '░' => return Shown::Shade(1, cell.fg, cell.bg),
+        '▓' => return Shown::Shade(1, cell.bg, cell.fg),
+        _ => {}
+    }
+    let Some((mask, n)) = super::cell::block_mask(ch) else {
+        return Shown::Glyph(cell.symbol().to_string(), cell.fg, cell.bg);
+    };
+    let rows = n / 2;
+    let mut parts = [cell.bg; 12];
+    for (i, part) in parts.iter_mut().enumerate() {
+        let (col, row) = (i % 2, i / 2);
+        let bit = (row as u32 * rows / 6) * 2 + col as u32;
+        if mask >> bit & 1 == 1 {
+            *part = cell.fg;
+        }
+    }
+    Shown::Parts(parts)
+}
+
+/// Drawn for block glyphs that stop short of the cell's top (macOS
+/// Terminal), every style looks the same at every depth, and no cell keeps
+/// ink along its top edge where the colours could swap.
+#[test]
+fn background_cells_look_the_same_with_no_ink_along_the_top() {
+    let area = Rect::new(0, 0, 40, 16);
+    for (depth, depth_name) in DEPTHS {
+        let theme = theme(depth);
+        for entry in styles::ALL {
+            let mut buf = draw_synthetic(entry, &theme, area);
+            if let Some(dithering) = theme.dithering() {
+                dither256::resolve(&dithering, area, &mut buf, false);
+            }
+            let before = buf.clone();
+            fill_from_background(&mut buf, area);
+            for (a, b) in before.content.iter().zip(&buf.content) {
+                let name = entry.name();
+                assert_eq!(shown(a), shown(b), "{name} {depth_name}: {a:?} → {b:?}");
+                let ch = b.symbol().chars().next().unwrap_or(' ');
+                if b.fg == Color::Reset || b.bg == Color::Reset {
+                    continue;
+                }
+                if let Some((mask, _)) = super::cell::block_mask(ch) {
+                    assert_ne!(mask & 3, 3, "{name} {depth_name}: {b:?}");
+                }
+                assert_ne!(ch, '▓', "{name} {depth_name}");
+            }
+        }
+    }
+}
