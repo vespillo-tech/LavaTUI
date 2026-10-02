@@ -29,6 +29,7 @@ impl Model {
             Overlay::Picker(picker) => self.picker_action(picker, action),
             Overlay::Help { scroll } => self.help_action(scroll, action),
             Overlay::Library(view) => self.library_action(view, action),
+            Overlay::Settings(view) => self.settings_action(view, action),
             Overlay::None if self.music.keys => self.player_action(action, now),
             Overlay::None => false,
         };
@@ -79,6 +80,7 @@ impl Model {
                 }
             }
             Action::Close => self.overlay = Overlay::None,
+            Action::Settings => self.open_settings(),
             _ => return false,
         }
         true
@@ -105,6 +107,7 @@ impl Model {
         match action {
             Action::Quit => self.quit = true,
             Action::Help => self.overlay = Overlay::Help { scroll: 0 },
+            Action::Settings => self.open_settings(),
             // Overlay keys, with no overlay open.
             Action::Close
             | Action::Up
@@ -115,6 +118,8 @@ impl Model {
             | Action::Edge(_)
             | Action::Back
             | Action::PlayAll
+            | Action::Change(_)
+            | Action::SwitchPage(_)
             | Action::Find
             | Action::Type(_)
             | Action::Erase

@@ -57,6 +57,12 @@ pub fn draw(buf: &mut Buffer, area: Rect, scroll: u16, model: &Model) {
                 .border_type(BorderType::Rounded)
                 .border_style(Style::new().fg(model.theme.role(Role::Metal)))
                 .title(ratatui::text::Line::styled(" keys ", ink.accent))
+                // The sheet shows `S`, `C`, `A`: say what a capital means
+                // (the full-screen help spells out `Shift+S`).
+                .title(ratatui::text::Line::styled(
+                    " capital = hold Shift ",
+                    ink.dim,
+                ))
                 .title_bottom(ratatui::text::Line::styled(" Esc close ", ink.dim).right_aligned())
                 .title_bottom(
                     scroll_hint(scroll, max_scroll(area), usize::from(sheet.width / 2))

@@ -97,8 +97,9 @@ fn no_client_id_says_so() {
     m.library.connect_with(|| None);
     tick(&mut m, t0);
     key(&mut m, t0, P::Playlists);
-    assert_eq!(m.overlay, Overlay::None);
-    assert!(toast(&m).contains("Client ID"), "{}", toast(&m));
+    // The guided setup opens instead (lava-1xk.5).
+    let view = m.settings_view().expect("the settings screen");
+    assert_eq!(view.page, crate::app::Page::Spotify);
     assert_eq!(m.library.account(), Account::Unavailable);
 }
 

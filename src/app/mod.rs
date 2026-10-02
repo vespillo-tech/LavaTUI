@@ -31,8 +31,8 @@ use ratatui::layout::Rect;
 use std::path::Path;
 
 pub use model::{
-    Account, Fetch, ListKind, ListView, LocalTime, Model, Overlay, Picker, PickerKind, TOAST_FADE,
-    TOAST_TIME, Toast,
+    Account, Fetch, Item, Kind, ListKind, ListView, LocalTime, Model, Overlay, Page, Picker,
+    PickerKind, Row, SettingsView, TOAST_FADE, TOAST_TIME, Toast,
 };
 
 use crate::clock::ClockTime;
@@ -104,6 +104,11 @@ impl TerminalModes {
         if mouse {
             execute!(io::stdout(), event::EnableMouseCapture)?;
         }
+        // Pastes arrive whole (the settings screen's text field). Legacy
+        // Windows consoles can't: there a paste is typed key by key.
+        if output::ansi_output() {
+            execute!(io::stdout(), event::EnableBracketedPaste)?;
+        }
         Ok(guard)
     }
 }
@@ -131,7 +136,11 @@ fn restore_modes(mut writer: impl Write) -> io::Result<()> {
         event::DisableFocusChange
     )?;
     if output::ansi_output() {
-        queue!(writer, terminal::EndSynchronizedUpdate)?;
+        queue!(
+            writer,
+            event::DisableBracketedPaste,
+            terminal::EndSynchronizedUpdate
+        )?;
     }
     execute!(writer, ratatui::crossterm::cursor::Show)
 }
@@ -152,6 +161,7 @@ fn run_loop(
     let mut priority = crate::thread_qos::UiPriority::new();
     let mut replies = ReplyFilter::default();
     let mut last_drawn = None;
+    let mut mouse = model.settings.input.mouse;
     let mut last_started = None;
 
     loop {
@@ -184,6 +194,19 @@ fn run_loop(
         model.inline.write(terminal.backend_mut())?;
         if std::mem::take(&mut model.bell) {
             terminal.backend_mut().write_all(b"\x07")?;
+        }
+        if let Some(text) = model.copy.take() {
+            terminal.backend_mut().write_all(&osc52(&text))?;
+        }
+        // The settings screen turns the mouse on and off as you watch.
+        if model.settings.input.mouse != mouse {
+            mouse = model.settings.input.mouse;
+            let writer = terminal.backend_mut();
+            if mouse {
+                queue!(writer, event::EnableMouseCapture)?;
+            } else {
+                queue!(writer, event::DisableMouseCapture)?;
+            }
         }
 
         let output = terminal.backend_mut().writer_mut().finish_frame()?;
@@ -346,6 +369,10 @@ fn wait_for_input(
                 model.cell_aspect = cell.map_or(model.settings.display.cell_aspect, |c| c.aspect);
                 model.cell_px = cell.map(|c| c.px);
             }
+            if let Event::Paste(text) = &event {
+                model.paste(text, now);
+                handled = true;
+            }
             if let Some(action) = keymap::action_for(&event, model.input_mode()) {
                 model.update(action, now);
                 handled = true;
@@ -362,6 +389,14 @@ fn wait_for_input(
             return Ok(handled);
         }
     }
+}
+
+/// OSC 52: put `text` on the system clipboard, in terminals that allow it
+/// (most do; tmux needs `set-clipboard on`).
+fn osc52(text: &str) -> Vec<u8> {
+    use base64::Engine;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(text);
+    format!("\x1b]52;c;{encoded}\x07").into_bytes()
 }
 
 /// Whether the terminal (`TERM_PROGRAM`) selects text past mouse capture

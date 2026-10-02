@@ -1454,7 +1454,7 @@ mod music {
                 "cover quality · fine · medium",
                 "cover quality · medium",
                 "cover quality · coarse",
-                "cover quality · auto (best available) · medium",
+                "cover quality · auto · medium",
             ]
         );
         assert_eq!(m.settings.art.detail, Detail::Auto);

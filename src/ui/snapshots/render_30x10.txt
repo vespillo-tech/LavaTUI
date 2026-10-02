@@ -15,11 +15,11 @@
  app
  m       lamp only
  ?       this help
+ ,       settings
  q       quit
  w       welcome tips
  b       status bar
  d       performance info
- Ctrl+L  redraw
 ── style picker ──
 ~~~~~~~~~ ‹ solid › ~~~~~~~~~~
 ~~~Enter save · Esc cancel~~~~

@@ -1090,8 +1090,8 @@ fn hints_drop_in_spec_order() {
             .collect::<Vec<_>>()
             .join("")
     };
-    assert_eq!(keys(200), "scpmSpace?");
-    // m, Space, p, c, s go first; ? help last.
+    assert_eq!(keys(200), "scpmSpace,?");
+    // m, Space, p, c, s go first, then `, settings`; ? help last.
     let mut seen = Vec::new();
     for avail in (0..=200).rev() {
         let k = keys(avail);
@@ -1101,7 +1101,16 @@ fn hints_drop_in_spec_order() {
     }
     assert_eq!(
         seen,
-        ["scpmSpace?", "scpSpace?", "scp?", "sc?", "s?", "?", ""]
+        [
+            "scpmSpace,?",
+            "scpSpace,?",
+            "scp,?",
+            "sc,?",
+            "s,?",
+            ",?",
+            "?",
+            ""
+        ]
     );
 }
 

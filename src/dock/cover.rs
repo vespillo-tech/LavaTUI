@@ -95,7 +95,7 @@ impl Detail {
     /// The name the user reads (toasts, help): how fine the picture is.
     pub fn label(self) -> &'static str {
         match self {
-            Detail::Auto => "auto (best available)",
+            Detail::Auto => "auto",
             Detail::Pixels => "photo",
             Detail::Sextant => Drawn::Text(TextMode::Sextant).label(),
             Detail::Quadrant => Drawn::Text(TextMode::Quadrant).label(),

@@ -13,9 +13,9 @@
  app
  m       lamp only
  ?       this help
+ ,       settings
  q       quit
  b       status bar
- Ctrl+L  redraw
 ── style picker ──
 ~~~~ ‹ solid › ~~~~~
 Enter ok  Esc cancel

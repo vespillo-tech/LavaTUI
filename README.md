@@ -85,7 +85,8 @@ in minimal mode:
   and cached (`$XDG_CACHE_HOME/lavatui/art`) in the background. On Linux
   and Windows it shows any player (Spotify first); see
   [Platform support](#platform-support).
-- **Your Spotify library** (needs a Client ID, `docs/spotify.md`): log in
+- **Your Spotify library** (a one-time setup the app walks you through:
+  press `,`, then *music & lyrics* → *spotify*): log in
   once (`A` then `i`, in the browser), then browse your playlists (`b`),
   open the ones you own or share and play any track in them, add the
   playing track to a playlist (`a`), and like or unlike it (`s`; a `♥` in
@@ -225,6 +226,7 @@ unknown `--style` or `--palette` name exits with the list of valid ones.
 | `d` | performance info (fps, frame time, samples) |
 | `ctrl-l` | force a full redraw |
 | `?` | help |
+| `,` | settings |
 | `w` | show the welcome tips again |
 | `q` / `ctrl-c` | quit |
 
@@ -257,13 +259,19 @@ small window it waits, showing just `? help · q quit`, until there's room.
   of its name (for songs, the artist works too). The list shrinks to what
   matches as you type; `enter` picks, the arrow keys move, `backspace`
   deletes, and `esc` clears it.
-- **In help:** `j`/`k` or `↑`/`↓` scroll. `?`, `esc` or `q` close it.
+- **In help:** `j`/`k` or `↑`/`↓` scroll. `?`, `esc` or `q` close it;
+  `,` opens the settings.
+- **In the settings:** `↑`/`↓` move, `←`/`→` change the value, `enter`
+  opens a page or presses a button, `tab` jumps to the next page, `esc`
+  goes back and `q` or `,` closes. Click a row to pick it, again to
+  change it. To paste the Spotify Client ID, press `enter` on its row (or
+  just paste), then `enter` to save.
 - **In pickers:** `j`/`k` or `↑`/`↓` move (with live preview), `1`–`9`
   jump, `enter` or `space` save, and `esc` or `q` cancel (small pickers
   say `Enter save · Esc cancel` themselves). Pressing the
   opening key again keeps the choice and closes the picker. In the tiny
   inline picker, `h`/`l` and `←`/`→` move too.
-- **Mouse** (on by default, `input.mouse = false` turns it off): click the
+- **Mouse** (on by default; *controls* in the settings turns it off): click the
   music widget's buttons and progress bar, click the cover to play /
   pause, click or drag on the lamp to
   heat the wax there, scroll in help, and scroll or click in pickers and
@@ -299,6 +307,14 @@ MPRIS (the bar then counts from where it was first seen) and ignored
 shuffle and repeat. Anything a player leaves out falls back quietly.
 
 ## Configuration
+
+You don't need to edit anything by hand: press `,` for the settings
+screen. Its pages (look, clock & timer, widgets, music & lyrics,
+controls, window) cover every everyday setting in plain words, show each
+change on the lamp as you make it, and save on their own. Each page can
+be put back to how it started.
+
+![The settings screen](docs/screenshots/settings.png)
 
 Settings are saved on their own, 1 s after a change and on quit, to:
 
