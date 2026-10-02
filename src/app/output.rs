@@ -165,6 +165,73 @@ mod backend_tests {
     use super::*;
     use ratatui::{TerminalOptions, Viewport, layout::Rect};
 
+    /// Batching must preserve every colour change over successive lamp
+    /// diffs, including the fg/bg swaps used for half-block curves.
+    #[test]
+    fn synchronized_lamp_diffs_match_unbuffered_ansi() {
+        use crate::render::{LampOptions, LampState, LampView, StyleId};
+        use crate::sim::{Field, World};
+        use crate::theme::{ColorDepth, Palette, Theme};
+        use ratatui::backend::Backend;
+        use ratatui::buffer::Buffer;
+        use ratatui::widgets::StatefulWidget;
+
+        if !ansi_output() {
+            return;
+        }
+        for (w, h) in [(160, 45), (200, 60)] {
+            let mut world = World::new(2, f64::from(w) / (2.0 * f64::from(h)));
+            world.prewarm(600, 1.0 / 120.0);
+            let theme = Theme::new(&Palette::all()[0], ColorDepth::TrueColor);
+            for name in ["solid", "braille", "outline", "synthwave", "chrome"] {
+                let area = Rect::new(7, 3, w, h);
+                let outer = Rect::new(0, 0, w + 20, h + 8);
+                let (mut prev, mut next) = (Buffer::empty(outer), Buffer::empty(outer));
+                let mut plain = CrosstermBackend::new(Vec::new());
+                let mut out = Output::new(Vec::new(), false);
+                out.batch = true;
+                let mut batched = CrosstermBackend::new(out);
+                let mut field = Field::default();
+                let mut state = LampState::default();
+                for frame in 0..12 {
+                    world.step(1.0 / 120.0);
+                    world.step(1.0 / 120.0);
+                    field.prepare(&world, 1.0);
+                    next.reset();
+                    LampView {
+                        field: &field,
+                        style: StyleId::by_name(name).unwrap().style(),
+                        theme: &theme,
+                        time: f64::from(frame) / 60.0,
+                        options: LampOptions::default(),
+                    }
+                    .render(area, &mut next, &mut state);
+                    plain.writer_mut().clear();
+                    batched.writer_mut().writer.clear();
+                    plain.draw(prev.diff_iter(&next)).unwrap();
+                    Backend::flush(&mut plain).unwrap();
+                    if std::env::var_os("NO_COLOR").is_none() {
+                        assert!(plain.writer().windows(5).any(|b| b == b"38;2;"));
+                        assert!(plain.writer().windows(5).any(|b| b == b"48;2;"));
+                    }
+                    batched.writer_mut().begin_frame().unwrap();
+                    batched.draw(prev.diff_iter(&next)).unwrap();
+                    Backend::flush(&mut batched).unwrap();
+                    batched.writer_mut().finish_frame().unwrap();
+                    let bytes = &batched.writer().writer;
+                    assert!(bytes.starts_with(b"\x1b[?2026h"));
+                    assert!(bytes.ends_with(b"\x1b[?2026l"));
+                    assert_eq!(
+                        &bytes[8..bytes.len() - 8],
+                        plain.writer(),
+                        "{name} {w}x{h} frame {frame}",
+                    );
+                    std::mem::swap(&mut prev, &mut next);
+                }
+            }
+        }
+    }
+
     #[test]
     fn ratatui_clear_diff_and_flush_share_the_frame_batch() {
         // Encoding assertions require VT; legacy WinAPI ordering is covered

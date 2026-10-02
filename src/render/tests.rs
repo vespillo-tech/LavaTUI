@@ -293,6 +293,51 @@ fn lamp_view_handles_empty_and_clipped_areas() {
     }
 }
 
+/// A lamp inside a wider frame must use the frame's stride without
+/// shifting either the sampled wax or the lamp-anchored dither pattern.
+#[test]
+fn lamp_view_matches_origin_in_offset_wider_buffers() {
+    for (w, h) in [(160, 45), (200, 60)] {
+        let mut world = World::new(2, f64::from(w) / (2.0 * f64::from(h)));
+        world.prewarm(600, 1.0 / 120.0);
+        let mut field = Field::default();
+        field.prepare(&world, 0.5);
+        for (depth, _) in DEPTHS {
+            let theme = theme(depth);
+            for id in StyleId::all() {
+                for reduced in [false, true] {
+                    let origin = Rect::new(0, 0, w, h);
+                    let offset = Rect::new(7, 3, w, h);
+                    let mut a = Buffer::empty(origin);
+                    // Give the buffer itself an origin too, to catch code
+                    // indexing content with absolute screen coordinates.
+                    let mut b = Buffer::empty(Rect::new(2, 1, w + 20, h + 8));
+                    for (area, buf) in [(origin, &mut a), (offset, &mut b)] {
+                        LampView {
+                            field: &field,
+                            style: id.style(),
+                            theme: &theme,
+                            time: 7.25,
+                            options: LampOptions { reduced },
+                        }
+                        .render(area, buf, &mut LampState::default());
+                    }
+                    for y in 0..h {
+                        for x in 0..w {
+                            assert_eq!(
+                                a[(x, y)],
+                                b[(x + offset.x, y + offset.y)],
+                                "{} {depth:?} {w}x{h} reduced={reduced} at {x},{y}",
+                                id.style().name(),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Over the sample budget the field is sampled coarser and upsampled.
 #[test]
 fn over_budget_upsamples() {
