@@ -228,6 +228,17 @@ fn scenarios() -> Vec<(&'static str, Setup)> {
             m.update(Action::Down, t);
             m.toast = None;
         }),
+        ("library: filtering", |m, t| {
+            spotify(m, t, true);
+            m.update(Action::PlayerKeys, t);
+            m.update(Action::Player(PlayerKey::Playlists), t);
+            m.update(Action::Find, t);
+            for c in "LA".chars() {
+                m.update(Action::Type(c), t);
+            }
+            m.update(Action::Down, t);
+            m.toast = None;
+        }),
         ("library: add to playlist", |m, t| {
             spotify(m, t, true);
             m.update(Action::PlayerKeys, t);

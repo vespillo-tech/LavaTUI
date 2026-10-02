@@ -70,6 +70,14 @@ pub enum Action {
     Back,
     /// Play the whole playlist under the cursor (or the open one).
     PlayAll,
+    /// `/` in the library: open the filter row (lava-75z.17).
+    Find,
+    /// A character typed into the filter.
+    Type(char),
+    /// Backspace in the filter (empty: closes it).
+    Erase,
+    /// esc in the filter: clear it, all rows back.
+    ClearFind,
     // Not keys.
     /// The terminal was resized: relayout and redraw now.
     Resize,
@@ -353,9 +361,11 @@ pub enum InputMode {
     /// The player keys (`A`); `esc`, `q` and `A` leave them.
     Player,
     /// The playlist browser / add-to-playlist picker; `inline` adds
-    /// h/l ←/→ as move (else they go back / open).
+    /// h/l ←/→ as move (else they go back / open). `typing`: the filter
+    /// row is open and letters go into it.
     Library {
         inline: bool,
+        typing: bool,
     },
 }
 
@@ -426,8 +436,33 @@ fn key_action(event: &KeyEvent, mode: InputMode) -> Option<Action> {
             (KeyCode::Down, _) | (_, Some(K('j'))) => Some(Action::Down),
             _ => None,
         },
-        InputMode::Library { inline } => match (code, key) {
+        InputMode::Library {
+            typing: true,
+            inline,
+        } => match code {
+            KeyCode::Esc => Some(Action::ClearFind),
+            KeyCode::Enter => Some(Action::Keep),
+            KeyCode::Backspace => Some(Action::Erase),
+            KeyCode::Up => Some(Action::Up),
+            KeyCode::Down => Some(Action::Down),
+            KeyCode::Left if inline => Some(Action::Up),
+            KeyCode::Right if inline => Some(Action::Down),
+            KeyCode::PageUp => Some(Action::Page(false)),
+            KeyCode::PageDown => Some(Action::Page(true)),
+            KeyCode::Home => Some(Action::Edge(false)),
+            KeyCode::End => Some(Action::Edge(true)),
+            KeyCode::Char(c)
+                if !event
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                Some(Action::Type(c))
+            }
+            _ => None,
+        },
+        InputMode::Library { inline, .. } => match (code, key) {
             (KeyCode::Esc, _) => Some(Action::Back),
+            (_, Some(K('/'))) => Some(Action::Find),
             (_, Some(K('q'))) => Some(Action::Close),
             (KeyCode::Enter, _) | (_, Some(Key::Space)) => Some(Action::Keep),
             (KeyCode::Up, _) | (_, Some(K('k'))) => Some(Action::Up),
@@ -700,7 +735,10 @@ mod tests {
 
     #[test]
     fn library_keys() {
-        let lib = InputMode::Library { inline: false };
+        let lib = InputMode::Library {
+            inline: false,
+            typing: false,
+        };
         let esc = press(KeyCode::Esc, KeyModifiers::NONE);
         assert_eq!(action_for(&esc, lib), Some(Action::Back));
         assert_eq!(action_for(&ch('q'), lib), Some(Action::Close));
@@ -717,8 +755,44 @@ mod tests {
             Some(Action::Page(true))
         );
         assert_eq!(action_for(&ch('s'), lib), None, "globals are off");
-        let inline = InputMode::Library { inline: true };
+        let inline = InputMode::Library {
+            inline: true,
+            typing: false,
+        };
         assert_eq!(action_for(&ch('l'), inline), Some(Action::Down));
+        assert_eq!(action_for(&ch('/'), lib), Some(Action::Find));
+    }
+
+    #[test]
+    fn the_library_filter_takes_every_letter() {
+        let typing = InputMode::Library {
+            inline: false,
+            typing: true,
+        };
+        for c in ['q', 'j', 'k', 'p', 'G', '/', ' ', 'é'] {
+            assert_eq!(action_for(&ch(c), typing), Some(Action::Type(c)), "{c}");
+        }
+        let key = |code| press(code, KeyModifiers::NONE);
+        assert_eq!(
+            action_for(&key(KeyCode::Esc), typing),
+            Some(Action::ClearFind)
+        );
+        assert_eq!(
+            action_for(&key(KeyCode::Backspace), typing),
+            Some(Action::Erase)
+        );
+        assert_eq!(action_for(&key(KeyCode::Enter), typing), Some(Action::Keep));
+        assert_eq!(action_for(&key(KeyCode::Down), typing), Some(Action::Down));
+        assert_eq!(
+            action_for(&key(KeyCode::End), typing),
+            Some(Action::Edge(true))
+        );
+        let shifted = press(KeyCode::Char('A'), KeyModifiers::SHIFT);
+        assert_eq!(action_for(&shifted, typing), Some(Action::Type('A')));
+        let ctrl_c = press(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert_eq!(action_for(&ctrl_c, typing), Some(Action::Quit));
+        let ctrl_x = press(KeyCode::Char('x'), KeyModifiers::CONTROL);
+        assert_eq!(action_for(&ctrl_x, typing), None);
     }
 
     #[test]
@@ -735,7 +809,10 @@ mod tests {
         let press = Some(Action::Press { col: 3, row: 4 });
         assert_eq!(action_for(&down, InputMode::Normal), press);
         assert_eq!(action_for(&down, InputMode::Player), press);
-        let lib = InputMode::Library { inline: false };
+        let lib = InputMode::Library {
+            inline: false,
+            typing: false,
+        };
         assert_eq!(
             action_for(&down, lib),
             Some(Action::Click { col: 3, row: 4 })

@@ -115,7 +115,7 @@ impl FakeSource {
             Command::Previous if inner.snapshot.position_at(now) < RESTART_AFTER => {
                 inner.skip(-1, now);
             }
-            Command::PlayUri(uri) => {
+            Command::PlayUri(uri) | Command::PlayInContext { track: uri, .. } => {
                 let found = inner.playlist.iter().position(|t| &t.id == uri);
                 let index = found.unwrap_or_else(|| {
                     inner.playlist.push(Arc::new(Track {
