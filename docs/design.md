@@ -1048,11 +1048,11 @@ to here, e.g. `cover · auto · quadrant`):
 
 | detail | looks | needs |
 |---|---|---|
-| `pixels` | the real picture, at the terminal's resolution | kitty graphics with Unicode placeholders: kitty, Ghostty (any colour depth but none) |
+| `pixels` | the real picture, at the terminal's resolution | a pixel protocol: kitty graphics with Unicode placeholders (kitty, Ghostty), iTerm2 inline images (iTerm2, WezTerm, mintty, Rio) or sixel (foot, mlterm, Konsole ≥ 22.04, Contour); any colour depth but none |
 | `sextant` | 2 × 3 pixels a cell, two colours each (U+1FB00..1FB3B) | 256 colours+, a terminal that draws Unicode 13 sextants |
 | `quadrant` | 2 × 2 pixels a cell (`▘▝▀▖▌▞▛▗▚▐▜▄▙▟█`) | 256 colours+ |
 | `halfblock` | 1 × 2 pixels a cell (`▀`, exact colours) | 256 colours+ |
-| `auto` (default) | pixels in kitty / Ghostty; else sextants in WezTerm, foot, Windows Terminal; else quadrants | |
+| `auto` (default) | pixels where the terminal has a protocol (kitty first, then iTerm2, then sixel); else sextants in WezTerm, foot, Windows Terminal; else quadrants | |
 
 Quadrants and sextants try every split of the cell's pixels into two
 groups (8 / 32) and keep the one whose two means lose least: one the
@@ -1066,8 +1066,27 @@ track, size, detail and depth and kept. Without a way to show a picture
 (`TERM` `xterm-kitty` / `xterm-ghostty`, `TERM_PROGRAM` `ghostty` /
 `kitty`, `KITTY_WINDOW_ID`, `GHOSTTY_RESOURCES_DIR`; never inside tmux or
 screen, and not WezTerm or Konsole, which lack Unicode placeholders), so
-there's no terminal query and no reply to read. `art.detail = "pixels"`
-forces it anywhere. The cover is sent as a PNG (`a=T,U=1,f=100,q=2`) with
+there's no blocking terminal query. `art.detail = "pixels"` where none
+was found (or confirmed) is the best text cells, never a guess.
+
+**Verified before use** (lava-1xk.18). The environment can lie:
+Ghostex's built-in terminal sets `TERM_PROGRAM=ghostty` but runs sessions
+through its zmx multiplexer and has no kitty graphics, so placeholders
+showed as `?` boxes. So zmx (`ZMX_SESSION`, `GHOSTEX_SESSION_ID`) and
+zellij count as multiplexers like tmux and screen, and whatever the
+environment promises is then checked with the terminal itself
+(`graphics/probe.rs`; not on Windows, whose console input doesn't pass
+replies on, and not when `LAVATUI_GRAPHICS` names it). At start the app
+writes one query and never waits for it: kitty gets a graphics query
+(`a=q`, a 1×1 image never stored); iTerm2 / sixel get XTVERSION (crossterm
+swallows DA1, whose `4` would mean sixel). Each is followed by an OSC 10
+fence, which nearly every terminal answers, in order. Replies arrive as
+input; `app::replies` takes them out of the key stream and hands the
+strings over. Kitty: `OK` → pixels; an error, the fence first, or nothing
+within 1.5 s → no. iTerm2 / sixel: a name not known to speak the
+protocol → no; no name → the environment is believed. Until then the
+cover is drawn in text cells; a no, while a cover is shown in `auto` /
+`pixels`, toasts `no pixels in this terminal · cover in sextant`. The cover is sent as a PNG (`a=T,U=1,f=100,q=2`) with
 a *virtual* placement of exactly the cover's cells (`c`, `r`), in 4096-byte
 base64 chunks, at most 96 KB a frame, after the frame's cells and inside
 its synchronized update; meanwhile the best text cells show. From the
@@ -1080,9 +1099,35 @@ track or size is sent under the other of two ids (from the process id),
 the cells switch, and the old image is deleted (`a=d,d=I`) the frame
 after; turning the cover off deletes it, and every way out (exit, error,
 panic) deletes both. Help leaves placeholder cells unfaded (fading their
-colour would change the id). Not done: sixel and iTerm2 images (they're
-placed by cursor position, which a 60 fps redraw around them would
-smear).
+colour would change the id).
+
+**Pixels** (iTerm2 inline images, sixel; lava-75z.19). Detected from the
+environment too, after kitty: iTerm2's protocol for `TERM_PROGRAM`
+`iTerm.app` / `WezTerm` / `mintty` / `rio` or `LC_TERMINAL=iTerm2`; sixel
+for `TERM` `foot*` / `mlterm*`, `MLTERM`, `KONSOLE_VERSION` ≥ 220400,
+`TERMINAL_NAME=contour`; never inside tmux or screen.
+`LAVATUI_GRAPHICS=kitty|iterm|sixel|none` overrides it (xterm with sixel
+can't be told apart otherwise). No DA1 query. These pictures are painted
+over cells at the cursor, and text written into those cells paints over
+them, so: the cover draws sentinel cells where it goes; after the whole
+frame is drawn the app checks they all survived (no overlay over them),
+and if so the frame it's placed writes them as blanks in the cover's
+mean colour, followed (same synchronized update, cursor saved / moved /
+restored) by the picture; every later frame they are
+`CellDiffOption::Skip`, so the lamp's redraws never touch it. When it
+moves, goes, or an overlay takes its spot, its old cells are
+`CellDiffOption::AlwaysUpdate`: whatever is there now is written over it.
+A resize or ctrl-l (screen cleared) places it again; leaving the
+alternate screen removes it on exit. Never placed on the last row (a
+picture reaching the bottom could scroll the screen). iTerm2 gets the
+≤ 400 px PNG as is (`width`/`height` in cells, `preserveAspectRatio=1`,
+`doNotMoveCursor=1`), ~380 KB in the placing frame. Sixel is drawn at its
+own pixel size, so it needs the cell size from the terminal's reported
+window pixels (else text cells): decoded, scaled to fit, centred on the
+mean colour, height rounded down to whole 6-pixel bands, median-cut to
+256 colours and encoded on a worker thread (text cells meanwhile), ~100
+KB for a 24-column cover. Byte-checked in a pty by `tools/inline_check.py`
+(no such terminal was at hand to look at them).
 
 **Mouse:** a click on the cover is play / pause (chosen over opening the
 playlist browser: one obvious action, works without a Spotify login).

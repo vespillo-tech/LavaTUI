@@ -40,6 +40,15 @@ pub enum TextMode {
 }
 
 impl TextMode {
+    /// Its `art.detail` name.
+    pub fn name(self) -> &'static str {
+        match self {
+            TextMode::HalfBlock => "halfblock",
+            TextMode::Quadrant => "quadrant",
+            TextMode::Sextant => "sextant",
+        }
+    }
+
     /// Pixels a cell, across and down.
     fn grid(self) -> (usize, usize) {
         match self {

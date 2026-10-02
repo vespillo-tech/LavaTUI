@@ -1,5 +1,8 @@
-//! Pictures in real pixels: the kitty graphics protocol (kitty, Ghostty),
-//! placed with Unicode placeholders.
+//! Pictures in real pixels. Three protocols, the best the terminal has
+//! ([`detect`]): the kitty graphics protocol with Unicode placeholders
+//! (kitty, Ghostty; this module), else the iTerm2 inline image protocol
+//! (iTerm2, WezTerm, mintty, Rio) or sixel (foot, mlterm, Konsole,
+//! Contour), both placed at the cursor ([`inline`]).
 //!
 //! An image is transmitted once (`a=T`, PNG, chunked base64) with a
 //! *virtual* placement (`U=1`) of `cols × rows` cells, and then shown by
@@ -23,6 +26,10 @@
 //!
 //! Pure apart from [`detect`] (environment variables): bytes go to
 //! whatever writer the app hands over, so tests read them back.
+
+pub mod inline;
+pub mod probe;
+mod sixel;
 
 use std::collections::VecDeque;
 use std::io::{self, Write};
@@ -72,22 +79,90 @@ pub fn is_placeholder(symbol: &str) -> bool {
     symbol.starts_with(PLACEHOLDER)
 }
 
-/// Whether the terminal speaks the kitty graphics protocol *with* Unicode
-/// placeholders, from its environment (`var` reads one variable): kitty
-/// and Ghostty. Not inside tmux or screen (they'd need passthrough), and
-/// not WezTerm or Konsole (graphics, but no placeholders).
-pub fn detect(var: impl Fn(&str) -> Option<String>) -> bool {
-    if var("TMUX").is_some() || var("STY").is_some() {
-        return false;
+/// A way to show real pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Protocol {
+    /// Kitty graphics with Unicode placeholders ([`Kitty`]).
+    Kitty,
+    /// iTerm2's inline images (`OSC 1337 ; File=`), [`inline`].
+    Iterm,
+    /// DEC sixel, [`inline`].
+    Sixel,
+}
+
+/// The pixel protocol this terminal speaks, from its environment (`var`
+/// reads one variable; no query, so nothing can block), best first:
+///
+/// * `LAVATUI_GRAPHICS` = `kitty` / `iterm` / `sixel` / `none` says so
+///   outright (for terminals that can't be told apart, e.g. xterm built
+///   with sixel).
+/// * None inside a multiplexer: tmux, screen, zellij, or zmx (which
+///   Ghostex's built-in terminal runs every session through, under
+///   `TERM_PROGRAM=ghostty` but without kitty graphics).
+///
+/// What the environment says is then checked with the terminal itself
+/// ([`probe`]), unless `LAVATUI_GRAPHICS` said it ([`forced`]).
+/// * Kitty: kitty and Ghostty (`TERM`, `TERM_PROGRAM`, their own
+///   variables). Not WezTerm or Konsole: kitty graphics, but no
+///   placeholders.
+/// * iTerm2: iTerm2 (`TERM_PROGRAM=iTerm.app`, or `LC_TERMINAL=iTerm2`,
+///   which survives ssh), WezTerm, mintty, Rio.
+/// * Sixel: foot (`TERM=foot*`), mlterm (`TERM=mlterm*` or `MLTERM`),
+///   Konsole 22.04 or later (`KONSOLE_VERSION`), Contour
+///   (`TERMINAL_NAME=contour`).
+pub fn detect(var: impl Fn(&str) -> Option<String>) -> Option<Protocol> {
+    if let Some(choice) = override_from(&var) {
+        return choice;
+    }
+    let multiplexer = ["TMUX", "STY", "ZELLIJ", "ZMX_SESSION", "GHOSTEX_SESSION_ID"];
+    if multiplexer.iter().any(|k| var(k).is_some()) {
+        return None;
     }
     let term = var("TERM").unwrap_or_default();
     let program = var("TERM_PROGRAM").unwrap_or_default().to_lowercase();
-    term == "xterm-kitty"
+    let kitty = term == "xterm-kitty"
         || term == "xterm-ghostty"
         || program == "ghostty"
         || program == "kitty"
         || var("KITTY_WINDOW_ID").is_some()
-        || var("GHOSTTY_RESOURCES_DIR").is_some()
+        || var("GHOSTTY_RESOURCES_DIR").is_some();
+    let iterm = matches!(program.as_str(), "iterm.app" | "wezterm" | "mintty" | "rio")
+        || var("LC_TERMINAL").is_some_and(|t| t == "iTerm2");
+    let konsole = var("KONSOLE_VERSION")
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .is_some_and(|v| v >= 220_400);
+    let sixel = term.starts_with("foot")
+        || term.starts_with("mlterm")
+        || var("MLTERM").is_some()
+        || konsole
+        || var("TERMINAL_NAME").is_some_and(|t| t == "contour");
+    if kitty {
+        Some(Protocol::Kitty)
+    } else if iterm {
+        Some(Protocol::Iterm)
+    } else if sixel {
+        Some(Protocol::Sixel)
+    } else {
+        None
+    }
+}
+
+/// Whether `LAVATUI_GRAPHICS` names the protocol outright (then it isn't
+/// probed).
+pub fn forced(var: impl Fn(&str) -> Option<String>) -> bool {
+    override_from(&var).is_some()
+}
+
+/// `LAVATUI_GRAPHICS`, if it holds a value we know.
+fn override_from(var: &impl Fn(&str) -> Option<String>) -> Option<Option<Protocol>> {
+    let value = var("LAVATUI_GRAPHICS")?.trim().to_lowercase();
+    match value.as_str() {
+        "kitty" => Some(Some(Protocol::Kitty)),
+        "iterm" | "iterm2" => Some(Some(Protocol::Iterm)),
+        "sixel" => Some(Some(Protocol::Sixel)),
+        "none" | "off" | "text" => Some(None),
+        _ => None,
+    }
 }
 
 /// A picture as transmitted: the source and the cells it fills. Another
@@ -303,24 +378,116 @@ mod tests {
         cmd.split(';').next().unwrap()
     }
 
+    fn env(pairs: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
+        move |k: &str| {
+            pairs
+                .iter()
+                .find(|(n, _)| *n == k)
+                .map(|(_, v)| (*v).to_owned())
+        }
+    }
+
     #[test]
     fn detects_kitty_and_ghostty_but_not_through_tmux() {
-        let env = |pairs: &'static [(&'static str, &'static str)]| {
-            move |k: &str| {
-                pairs
-                    .iter()
-                    .find(|(n, _)| *n == k)
-                    .map(|(_, v)| (*v).to_owned())
-            }
-        };
-        assert!(detect(env(&[("TERM_PROGRAM", "ghostty")])));
-        assert!(detect(env(&[("TERM", "xterm-ghostty")])));
-        assert!(detect(env(&[("TERM", "xterm-kitty")])));
-        assert!(detect(env(&[("KITTY_WINDOW_ID", "1")])));
-        assert!(!detect(env(&[("TERM_PROGRAM", "WezTerm")])));
-        assert!(!detect(env(&[("TERM_PROGRAM", "Apple_Terminal")])));
-        assert!(!detect(env(&[])));
-        assert!(!detect(env(&[("TERM", "xterm-kitty"), ("TMUX", "/tmp/x")])));
+        let kitty = |pairs| detect(env(pairs)) == Some(Protocol::Kitty);
+        assert!(kitty(&[("TERM_PROGRAM", "ghostty")]));
+        assert!(kitty(&[("TERM", "xterm-ghostty")]));
+        assert!(kitty(&[("TERM", "xterm-kitty")]));
+        assert!(kitty(&[("KITTY_WINDOW_ID", "1")]));
+        assert!(!kitty(&[("TERM_PROGRAM", "WezTerm")]));
+        assert_eq!(detect(env(&[("TERM_PROGRAM", "Apple_Terminal")])), None);
+        assert_eq!(detect(env(&[])), None);
+        assert_eq!(
+            detect(env(&[("TERM", "xterm-kitty"), ("TMUX", "/tmp/x")])),
+            None
+        );
+    }
+
+    #[test]
+    fn detects_iterm2_and_sixel_terminals() {
+        use Protocol::*;
+        let d = |pairs| detect(env(pairs));
+        assert_eq!(d(&[("TERM_PROGRAM", "iTerm.app")]), Some(Iterm));
+        assert_eq!(
+            d(&[("LC_TERMINAL", "iTerm2"), ("TERM", "xterm-256color")]),
+            Some(Iterm)
+        );
+        assert_eq!(d(&[("TERM_PROGRAM", "WezTerm")]), Some(Iterm));
+        assert_eq!(d(&[("TERM_PROGRAM", "mintty")]), Some(Iterm));
+        assert_eq!(d(&[("TERM", "foot")]), Some(Sixel));
+        assert_eq!(d(&[("TERM", "foot-extra")]), Some(Sixel));
+        assert_eq!(d(&[("TERM", "mlterm-256color")]), Some(Sixel));
+        assert_eq!(d(&[("MLTERM", "3.9.3")]), Some(Sixel));
+        assert_eq!(d(&[("KONSOLE_VERSION", "230804")]), Some(Sixel));
+        assert_eq!(d(&[("KONSOLE_VERSION", "211200")]), None, "too old");
+        assert_eq!(d(&[("TERMINAL_NAME", "contour")]), Some(Sixel));
+        // Kitty beats the rest (Ghostty under an iTerm2 ssh login).
+        assert_eq!(
+            d(&[("TERM", "xterm-ghostty"), ("LC_TERMINAL", "iTerm2")]),
+            Some(Kitty)
+        );
+        assert_eq!(d(&[("TERM_PROGRAM", "WezTerm"), ("TMUX", "x")]), None);
+        assert_eq!(d(&[("TERM", "foot"), ("STY", "x")]), None);
+        assert_eq!(d(&[("TERM_PROGRAM", "WezTerm"), ("ZELLIJ", "0")]), None);
+        assert_eq!(
+            d(&[("TERM", "xterm-256color")]),
+            None,
+            "plain xterm: unknown"
+        );
+        assert_eq!(d(&[("TERM_PROGRAM", "vscode")]), None);
+    }
+
+    #[test]
+    fn ghostex_and_zmx_are_multiplexers() {
+        // Ghostex's built-in terminal: Ghostty's name, no kitty graphics.
+        let ghostex = env(&[
+            ("TERM_PROGRAM", "ghostty"),
+            ("TERM", "xterm-256color"),
+            ("ZMX_SESSION", "s1"),
+            ("GHOSTEX_SESSION_ID", "G4blh"),
+        ]);
+        assert_eq!(detect(ghostex), None);
+        assert_eq!(
+            detect(env(&[("TERM_PROGRAM", "ghostty"), ("ZMX_SESSION", "s1")])),
+            None
+        );
+        assert_eq!(
+            detect(env(&[
+                ("TERM", "xterm-ghostty"),
+                ("GHOSTEX_SESSION_ID", "x")
+            ])),
+            None
+        );
+        // Unless told outright.
+        let told = env(&[("ZMX_SESSION", "s1"), ("LAVATUI_GRAPHICS", "kitty")]);
+        assert_eq!(detect(&told), Some(Protocol::Kitty));
+        assert!(forced(&told));
+        assert!(!forced(env(&[("TERM_PROGRAM", "ghostty")])));
+        assert!(!forced(env(&[("LAVATUI_GRAPHICS", "bogus")])));
+    }
+
+    #[test]
+    fn the_environment_can_say_outright() {
+        use Protocol::*;
+        let d = |pairs| detect(env(pairs));
+        assert_eq!(
+            d(&[("LAVATUI_GRAPHICS", "sixel"), ("TERM", "xterm")]),
+            Some(Sixel)
+        );
+        assert_eq!(d(&[("LAVATUI_GRAPHICS", "iTerm2")]), Some(Iterm));
+        assert_eq!(
+            d(&[("LAVATUI_GRAPHICS", "kitty"), ("TMUX", "x")]),
+            Some(Kitty)
+        );
+        assert_eq!(
+            d(&[("LAVATUI_GRAPHICS", "none"), ("TERM", "xterm-kitty")]),
+            None
+        );
+        assert_eq!(
+            d(&[("LAVATUI_GRAPHICS", "bogus"), ("TERM", "foot")]),
+            Some(Sixel),
+            "unknown values are ignored"
+        );
     }
 
     #[test]
