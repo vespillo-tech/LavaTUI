@@ -7,7 +7,7 @@
 //! (`https` only, size-capped), stores the raw bytes, then decodes it,
 //! crops it square and shrinks it to [`ART_PX`]² ([`Art`]): small enough to
 //! scale to any cell size every frame for free. When pixels are wanted
-//! ([`ArtLoader::set_hires`], the kitty graphics protocol) it also keeps a
+//! ([`ArtLoader::set_hires`]: kitty, iTerm2 or sixel images) it also keeps a
 //! sharper copy, up to [`HIRES_PX`]² and ready to send: PNG, base64.
 //!
 //! Cache: `$XDG_CACHE_HOME/lavatui/art`, else the platform cache dir; one
@@ -44,7 +44,8 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Art {
     pixels: Vec<Rgb>,
-    /// Up to [`HIRES_PX`]² as PNG, base64: what the kitty protocol sends.
+    /// Up to [`HIRES_PX`]² as PNG, base64: what the kitty and iTerm2
+    /// protocols send (and what a sixel picture is made from).
     pub hires: Option<Arc<String>>,
 }
 

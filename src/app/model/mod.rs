@@ -26,6 +26,7 @@ use crate::config::{self, CellsChoice, ColorChoice, Overridden, Session, Setting
 use crate::dock::cover::Caps;
 use crate::dock::{Place, WIDGETS};
 use crate::graphics::Kitty;
+use crate::graphics::inline::Inline;
 use crate::render::StyleId;
 use crate::sim::{Field, HEAT_LEVELS, SimSpeed, World};
 use crate::theme::{ColorDepth, Palette, Theme};
@@ -148,6 +149,9 @@ pub struct Model {
     /// The cover as a real picture: what the terminal holds and what's on
     /// its way (bytes the loop writes after each frame).
     pub kitty: Kitty,
+    /// The cover as an iTerm2 / sixel picture: placed over its cells
+    /// (`settle` after each frame is drawn, `write` after its cells).
+    pub inline: Inline,
     /// The Spotify library (Web API): login, playlists, likes.
     pub library: Library,
     /// The lyrics widget's lookups and sync.
@@ -163,6 +167,9 @@ pub struct Model {
     pub layout: Layout,
     /// Cell height ÷ width: reported by the terminal, else from config.
     pub cell_aspect: f64,
+    /// A cell's width and height in pixels, when the terminal reports
+    /// them (sixel pictures are drawn at that size).
+    pub cell_px: Option<(u16, u16)>,
     pub stats: FrameStats,
     /// Adaptive quality (§7): reduced grid, then fps, while over budget.
     pub quality: Quality,
@@ -206,6 +213,7 @@ impl Model {
             face: clock::face_by_name(&settings.clock.face).unwrap_or_else(clock::default_face),
             pomodoro: Pomodoro::new(pomodoro_config(&settings)),
             cell_aspect: cell_aspect.unwrap_or(settings.display.cell_aspect),
+            cell_px: None,
             file: loaded.settings,
             overridden,
             store: Some(store),
@@ -227,6 +235,7 @@ impl Model {
             caps: Caps::detect(),
             ghostty_translucent: crate::cells::detect(),
             kitty: Kitty::default(),
+            inline: Inline::default(),
             library: Library::new(settings.spotify_client_id()),
             lyrics: LyricsState::default(),
             lava_focus: None,
@@ -355,7 +364,7 @@ impl Model {
             // The next line (or the end of a fade).
             wake = wake.min(at);
         }
-        if self.kitty.busy() {
+        if self.kitty.busy() || self.inline.busy() {
             // A cover on its way to the terminal, a slice a frame.
             wake = wake.min(self.now + Duration::from_millis(16));
         }

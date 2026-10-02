@@ -52,15 +52,17 @@ pub fn run(
 ) -> io::Result<Vec<String>> {
     let store = Store::new(session.config_path.clone());
     let size = terminal.size()?;
+    let cell = reported_cell();
     let mut model = Model::new(
         session,
         store,
         Rect::new(0, 0, size.width, size.height),
-        reported_cell_aspect(),
+        cell.map(|c| c.aspect),
         local_time(),
         session.seed.unwrap_or_else(time_seed),
         Instant::now(),
     );
+    model.cell_px = cell.map(|c| c.px);
     model.background_saves()?;
     let modes = TerminalModes::enable(model.settings.input.mouse)?;
     let mut trace = trace::Trace::new(trace_path)?;
@@ -161,10 +163,12 @@ fn run_loop(
         terminal.backend_mut().writer_mut().begin_frame()?;
         if std::mem::take(&mut model.clear) {
             full_repaint(terminal)?;
+            model.inline.invalidate();
         }
         let timings = draw_frame(terminal, model, &mut lamp, started, local_time())?;
         // Pictures after the cells, in the same synchronized update.
         model.kitty.write(terminal.backend_mut())?;
+        model.inline.write(terminal.backend_mut())?;
         if std::mem::take(&mut model.bell) {
             terminal.backend_mut().write_all(b"\x07")?;
         }
@@ -231,6 +235,9 @@ fn draw_frame<B: Backend>(
         model.tick(now, frame.area(), local);
         let draw = Instant::now();
         ui::draw(frame, model, lamp);
+        // An iTerm2 / sixel picture's cells: skipped while it's up,
+        // rewritten where it was.
+        model.inline.settle(frame.buffer_mut());
         timings = (
             (draw - tick).as_micros() as u64,
             draw.elapsed().as_micros() as u64,
@@ -318,8 +325,9 @@ fn wait_for_input(
         replies.filter(&mut burst, now);
         for event in burst.drain(..) {
             if let Event::Resize(..) = event {
-                model.cell_aspect =
-                    reported_cell_aspect().unwrap_or(model.settings.display.cell_aspect);
+                let cell = reported_cell();
+                model.cell_aspect = cell.map_or(model.settings.display.cell_aspect, |c| c.aspect);
+                model.cell_px = cell.map(|c| c.px);
             }
             if let Some(action) = keymap::action_for(&event, model.input_mode()) {
                 model.update(action, now);
@@ -335,16 +343,28 @@ fn wait_for_input(
     }
 }
 
-/// Cell height ÷ width from the terminal's pixel size, when it reports one
-/// (§2.3), clamped to a sane range.
-fn reported_cell_aspect() -> Option<f64> {
+/// A cell's shape, from the terminal's pixel size.
+#[derive(Debug, Clone, Copy)]
+struct CellSize {
+    /// Height ÷ width (§2.3), clamped to a sane range.
+    aspect: f64,
+    /// Whole pixels, width and height (rounded down: a sixel picture
+    /// sized by them never spills past its cells).
+    px: (u16, u16),
+}
+
+/// The cell's shape, when the terminal reports its size in pixels.
+fn reported_cell() -> Option<CellSize> {
     let size = terminal::window_size().ok()?;
     if size.width == 0 || size.height == 0 || size.columns == 0 || size.rows == 0 {
         return None;
     }
     let cell_w = f64::from(size.width) / f64::from(size.columns);
     let cell_h = f64::from(size.height) / f64::from(size.rows);
-    Some((cell_h / cell_w).clamp(1.6, 2.6))
+    Some(CellSize {
+        aspect: (cell_h / cell_w).clamp(1.6, 2.6),
+        px: (size.width / size.columns, size.height / size.rows),
+    })
 }
 
 /// Local wall-clock time and date for the clock face.

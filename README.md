@@ -95,7 +95,9 @@ in minimal mode:
   default), small / medium / large / as big as fits (`art.size`). In
   **kitty and Ghostty it's the real picture** (the kitty graphics
   protocol, sent once per track and size, then just cells that never
-  flicker); elsewhere it's drawn in text cells: sextants (2 × 3 pixels a
+  flicker), and in iTerm2, WezTerm, foot, mlterm and Konsole too (their
+  own picture formats: iTerm2 images or sixel); elsewhere it's drawn in
+  text cells: sextants (2 × 3 pixels a
   cell), quadrants (2 × 2) or half blocks (1 × 2). `O` cycles the detail
   (`auto` picks the best your terminal has). Clicking it plays / pauses.
   With the cover widget on, the music card leaves its own small cover
@@ -443,7 +445,11 @@ unchanged, since the cover's cells never change between frames (its text
 cells are worked out once per track and size). In pixels mode the
 picture (a ≤ 400 px PNG, ~370 KB as base64) is sent once per track and
 size, at most 96 KB a frame (a few frames), inside the frame's
-synchronized update; `tools/kitty_check.py` shows exactly what goes out.
+synchronized update; `tools/kitty_check.py` shows exactly what goes out
+(`tools/inline_check.py` does the same for iTerm2 images and sixel, which
+are sent whole, once, when the cover appears, moves or changes size). If
+your terminal can show pictures but isn't recognised, set
+`LAVATUI_GRAPHICS` to `kitty`, `iterm` or `sixel` (or `none`).
 
 Here is the render time per frame at 200×60 in truecolor: the field
 sampling plus the style draw (`bench_lamp`: a full-area lamp, two sim

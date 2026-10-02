@@ -1,7 +1,7 @@
 //! The music widget's state: the media source and the cover loader, both
 //! alive only while a widget that needs them is placed (music, lyrics,
-//! cover), the player keys (`A`), and which cover the kitty protocol
-//! should hold.
+//! cover), the player keys (`A`), and which cover the terminal's pixel
+//! protocol should hold.
 //!
 //! Nothing here waits on the player: [`Music::sync`] reads the source's
 //! latest snapshot once a frame (a short lock) and commands are queued.
@@ -12,9 +12,11 @@ use super::Model;
 use super::library::ListKind;
 use crate::dock::cover::{self, Drawn};
 use crate::dock::{self, DockWidget, Place};
-use crate::graphics;
+use crate::graphics::inline::Wish;
+use crate::graphics::{self, Protocol};
 use crate::media::art::{ArtLoader, ArtState};
 use crate::media::{self, Capabilities, Command, MediaSource, Snapshot};
+use crate::theme::Rgb;
 use crate::ui::keymap::PlayerKey;
 
 /// `←` / `→` in the player keys.
@@ -181,8 +183,11 @@ impl Model {
         let pictures = self.pictures();
         let images = (self.music_on() && self.inline_cover()) || self.cover_on();
         let images = images && pictures != Drawn::None;
-        self.music
-            .sync(self.media_on(), images, pictures == Drawn::Pixels);
+        self.music.sync(
+            self.media_on(),
+            images,
+            matches!(pictures, Drawn::Pixels(_)),
+        );
         self.patch_modes();
         self.sync_lyrics();
     }
@@ -191,9 +196,9 @@ impl Model {
     /// at the size it's laid out at, in pixels mode), or none.
     pub(super) fn sync_pictures(&mut self) {
         let want = (|| {
-            if self.pictures() != Drawn::Pixels {
+            let Drawn::Pixels(protocol) = self.pictures() else {
                 return None;
-            }
+            };
             let ArtState::Ready(art) = self.music.art() else {
                 return None;
             };
@@ -205,10 +210,23 @@ impl Model {
                 cols: r.width,
                 rows: r.height,
             };
-            Some((key, png))
+            let Rgb(red, green, blue) = art.mean();
+            Some(Wish {
+                protocol,
+                key,
+                at: r,
+                png,
+                cell: self.cell_px,
+                bg: [red, green, blue],
+            })
         })();
+        let (kitty, inline) = match want {
+            Some(w) if w.protocol == Protocol::Kitty => (Some(w), None),
+            w => (None, w),
+        };
         self.kitty
-            .want(want.as_ref().map(|(key, png)| (key.clone(), png)));
+            .want(kitty.as_ref().map(|w| (w.key.clone(), &w.png)));
+        self.inline.want(inline, self.layout.area);
     }
 
     /// The player key a mouse press at (`col`, `row`) stands for: a
@@ -248,7 +266,7 @@ impl Model {
         self.changed(now);
         self.sync_music();
         let drawn = match self.pictures() {
-            Drawn::Pixels => "pixels",
+            Drawn::Pixels(_) => "pixels",
             Drawn::Text(cover_mode) => match cover_mode {
                 dock::picture::TextMode::Sextant => "sextant",
                 dock::picture::TextMode::Quadrant => "quadrant",
