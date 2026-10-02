@@ -14,7 +14,7 @@ wax.
 ![LavaTUI in action: changing styles and colours, the clock and timer on the lamp, the music card, lyrics and album cover, the settings, and lamp-only mode](docs/screenshots/demo.gif)
 
 It runs in the terminal window you already use, on macOS, Linux and
-Windows. It's one small program. You don't need special fonts.
+Windows. It's one small program.
 
 **Contents:**
 [Pictures](#pictures) ·
