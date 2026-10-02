@@ -176,14 +176,37 @@ Requests: `Me`, `MyPlaylists`, `PlaylistTracks { playlist_id, offset }`,
 `SetRepeat(Repeat)`, `Play { context_uri, offset_uri }`. They run one at a time, in order, on one worker
 thread (blocking `ureq`, no async runtime).
 
-Tests: `cargo test` covers it all with a scripted HTTP layer. Against the
-real thing: `cargo test -- --ignored live_keyring` (OS keyring round trip)
-and `LAVATUI_SPOTIFY_CLIENT_ID=… cargo test -- --ignored --nocapture
-live_account`. The second one logs in through the browser, reads your
-profile, playlists and one playlist you own, and likes then unlikes the
-track playing in Spotify (putting back its liked state). It also adds that
-track to a private "lavatui test" playlist, which it creates and leaves
-behind. It changes nothing else.
+Tests: `cargo test` covers it all with a scripted HTTP layer and a fake
+account; nothing there touches a real one. The opt-in live tests
+(`src/spotify_web/live_tests.rs`, all ignored by default) run against your
+own account on any OS, and take everything from the environment:
+
+| Variable | What for |
+|---|---|
+| `LAVATUI_SPOTIFY_CLIENT_ID` | your app's Client ID (required) |
+| `LAVATUI_SPOTIFY_TOKEN_FILE` | where the login is kept (never the keyring); default a temp file per Client ID. Use one file per account. |
+| `LAVATUI_LIVE_CHANGES=1` | consent to the tests that change something; without it they stop before the first change |
+| `LAVATUI_TEST_PLAYLIST` | id of a playlist of yours they may add to and play (else your "lavatui test") |
+| `LAVATUI_TEST_TRACK` | the `spotify:track:…` to like, unlike and add (else what your account is playing) |
+
+- `live_token_endpoint` (network only, no account) and `live_peek`
+  (read only) change nothing.
+- `live_account` logs in through the browser (once per token file), reads
+  your profile, playlists and one playlist you own, likes then unlikes the
+  test track (putting back its liked state) and adds it to the test
+  playlist, creating a private "lavatui test" if there's none. It changes
+  nothing else.
+- `live_library` does what the library screen does: the same like and add,
+  then flips shuffle and repeat on your active device for a moment and
+  puts them back (Premium).
+- `live_play_in_context` and `live_player_in_a_playlist` also drive the
+  macOS desktop app (AppleScript), so they are macOS only.
+- `live_keyring` round-trips the OS keyring.
+
+```sh
+LAVATUI_SPOTIFY_CLIENT_ID=… LAVATUI_LIVE_CHANGES=1 \
+  cargo test -- --ignored --nocapture live_account
+```
 
 Notes:
 
