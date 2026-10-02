@@ -3,10 +3,37 @@
 Reviewed 2026-10-01 at `d8185d7` (main's first-run UX changes included), on
 `ghostex/ensure-universal-spotify-support`. Review bead: **lava-1xk.22**.
 Source, tests, tools, README, Spotify guide and design contract were audited.
-No source edits or live Spotify account mutations were made. The findings below
-are filed under the release epic and remain open.
+No source edits or live Spotify account mutations were made. The original findings
+below were filed under the release epic; their fixes were subsequently merged.
+Line references in the original findings describe the original review revision.
 
-## Ranked findings
+## Follow-up after merging generalizability fixes
+
+Main `391bc09` was merged locally as `35a3089`. Beads **lava-1xk.24–.28**
+are now closed. Code inspection confirms separate backend/Spotify identities,
+URI/context capabilities, Web-mode matching, developer eligibility guidance,
+and isolated platform-appropriate live-test fixtures. Main also includes the
+shared safe/rich glyph sets (**lava-1xk.29**).
+
+On the merged revision, release build, formatting and Clippy passed;
+`cargo test` passed **584**, ignored **18**, with inherited `NO_COLOR=1`.
+The eight isolated HOME/XDG, no-config PTY cases were repeated successfully;
+the updated guide was visually inspected. Fresh evidence is in system-temp
+`lavatui-generalizability-wkfi6_m2`. Native-device and live-account validation
+remain outside this audit.
+
+Two focused **P2** follow-ups remain open:
+
+1. **lava-1xk.35:** Windows' no-URI fallback matches only the Spotify player
+   name and song title (`src/app/model/library.rs:679`). Same-titled songs by
+   different artists, or a local file versus a remote catalog counterpart, can
+   acquire the wrong URI and Web modes. Keep more Web metadata and reject
+   ambiguous matches; test these collisions.
+2. **lava-1xk.34:** README's eligibility section and in-app `ELIGIBILITY` say
+   owner plus five other people. Spotify's linked quota documentation specifies
+   five authenticated users total. Correct both texts.
+
+## Original ranked findings (resolved in main)
 
 1. **P1 — lava-1xk.24: Linux/Windows cannot like or add the playing Spotify track.**
    `src/media/mpris.rs:149` uses a D-Bus object path or text identity;
