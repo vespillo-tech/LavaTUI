@@ -156,8 +156,8 @@ fn clicks_land_on_what_is_drawn() {
                 Some(Hit::Row(i))
             );
         }
-        // Click the third row: the cursor goes there; again: it changes.
-        let y = r.y + 2;
+        // Click the focus length row: the cursor goes there; again: it changes.
+        let y = r.y + 3;
         m.update(
             Action::Click {
                 col: r.x + 2,
@@ -165,7 +165,7 @@ fn clicks_land_on_what_is_drawn() {
             },
             t0,
         );
-        assert_eq!(m.settings_view().unwrap().cursor, 2);
+        assert_eq!(m.settings_view().unwrap().cursor, 3);
         let before = m.settings.pomodoro.focus_min;
         m.update(
             Action::Click {

@@ -80,6 +80,9 @@ pub struct ThemeSettings {
 pub struct Clock {
     pub face: String,
     pub hour24: bool,
+    /// Seconds on the bigger clock forms (side panel, L/XL). Off: `14:32`
+    /// at every size, no second hand.
+    pub seconds: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -238,6 +241,7 @@ impl Default for Clock {
         Self {
             face: "blocks".into(),
             hour24: true,
+            seconds: true,
         }
     }
 }
@@ -652,8 +656,10 @@ mod tests {
         s.ui.mode = UiMode::Minimal;
         s.minimal.clock = MinimalClock::Corner;
         s.pomodoro.focus_min = 50;
+        s.clock.seconds = false;
         let text = toml::to_string(&s).unwrap();
         assert!(text.contains("color = \"256\""), "{text}");
+        assert!(text.contains("seconds = false"), "{text}");
         assert_eq!(toml::from_str::<Settings>(&text).unwrap(), s);
     }
 

@@ -48,12 +48,12 @@
 
   ▸ clock face              ‹ blocks ›
     time format                24-hour
+    seconds                         on
     focus length                25 min
     short break                  5 min
     long break                  15 min
     long break after        4 sessions
     sound at the end                on
-    reset this page              reset
 
  How the clock shows the time.
 

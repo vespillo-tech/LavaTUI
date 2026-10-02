@@ -82,15 +82,15 @@
 ~~~~~~~~│                                                              │
 ~~~~~~~~│    look             ▸ clock face                 ‹ blocks ›  │
 ~~~~~~~~│  ▸ clock & timer      time format                   24-hour  │
-~~~~~~~~│    widgets            focus length                   25 min  │
-~~~~~~~~│    music & lyrics     short break                     5 min  │
-~~~~~~~~│    controls           long break                     15 min  │
-~~~~~~~~│    window             long break after           4 sessions  │
+~~~~~~~~│    widgets            seconds                            on  │
+~~~~~~~~│    music & lyrics     focus length                   25 min  │
+~~~~~~~~│    controls           short break                     5 min  │
+~~~~~~~~│    window             long break                     15 min  │
+~~~~~~~~│                       long break after           4 sessions  │
 ~~~~~~~~│                       sound at the end                   on  │
 ~~~~~~~~│                       reset this page                 reset  │
 ~~~~~~~~│                                                              │
 ~~~~~~~~│ How the clock shows the time.                                │
-~~~~~~~~│                                                              │
 ~~~~~~~~│                                                              │
 ~~~~~~~~│                                                              │
 ~~~~~~~~│                                                              │

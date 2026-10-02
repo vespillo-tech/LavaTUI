@@ -432,3 +432,20 @@ fn saved_lyrics_and_covers_show_their_size_and_clear_on_a_second_enter() {
         Some("saved lyrics and covers cleared")
     );
 }
+
+#[test]
+fn the_seconds_row_turns_seconds_off_and_saves() {
+    let path = temp_config("seconds");
+    let (mut m, t0) = model_at(path.clone());
+    assert!(m.settings.clock.seconds, "on by default: today's look");
+    open(&mut m, t0, 1);
+    to(&mut m, t0, Item::Seconds);
+    assert_eq!(row(&m, Item::Seconds).value, "on");
+    m.update(Action::Change(true), t0);
+    assert!(!m.settings.clock.seconds);
+    assert!(!m.clock_options().seconds);
+    assert_eq!(row(&m, Item::Seconds).value, "off");
+    m.save();
+    let (again, _) = model_at(path);
+    assert!(!again.settings.clock.seconds);
+}

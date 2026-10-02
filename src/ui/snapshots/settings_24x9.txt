@@ -33,9 +33,9 @@
 
   ▸ clock face  blocks
     time format
+    seconds         on
     focus length
     short break  5 min
-    long break  15 min
 
 
 ── widgets, clock on the lamp ──

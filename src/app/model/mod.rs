@@ -474,10 +474,11 @@ impl Model {
         self.settings.minimal()
     }
 
-    pub fn face_options(&self, seconds: bool) -> clock::FaceOptions {
+    /// The dock clock's options: seconds as `clock.seconds` allows.
+    pub fn clock_options(&self) -> clock::FaceOptions {
         clock::FaceOptions {
             hour24: self.settings.clock.hour24,
-            seconds,
+            seconds: self.settings.clock.seconds,
         }
     }
 

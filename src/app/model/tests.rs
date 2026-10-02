@@ -408,6 +408,25 @@ fn focus_lowers_the_frame_rate() {
     assert_eq!(m.target_fps(), 60);
 }
 
+/// lava-c81: a big clock with seconds wakes a frozen lamp each second;
+/// with `clock.seconds = false` it sleeps until the minute changes.
+#[test]
+fn frozen_big_clock_without_seconds_sleeps_a_minute() {
+    let (mut m, t0) = model_with(Session::default(), temp_config("seconds"), 300, 90);
+    m.update(Action::Freeze, t0);
+    let t1 = t0 + TOAST_TIME;
+    tick(&mut m, t1);
+    let wake = m.idle_until().expect("idle");
+    assert!(
+        wake - t1 <= Duration::from_secs(1) + WAKE_SLACK,
+        "seconds shown"
+    );
+    m.settings.clock.seconds = false;
+    tick(&mut m, t1);
+    let wake = m.idle_until().expect("idle");
+    assert_eq!(wake - t1, Duration::from_secs(53) + WAKE_SLACK);
+}
+
 /// lava-ebq.3: frozen redraws only when what's shown changes (§7).
 #[test]
 fn frozen_sleeps_until_the_clock_changes() {
