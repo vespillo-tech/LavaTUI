@@ -124,14 +124,28 @@ impl Music {
 
     /// The desktop app plays `uri`, or why it can't.
     pub fn play_uri(&mut self, uri: &str, now: Instant) -> Result<(), String> {
+        self.play(Command::play_uri(uri), now)
+    }
+
+    /// The desktop app plays `track` inside `context` (its playlist), so
+    /// it carries on through the rest of it; or why it can't.
+    pub fn play_in_context(
+        &mut self,
+        track: &str,
+        context: &str,
+        now: Instant,
+    ) -> Result<(), String> {
+        self.play(Command::play_in_context(track, context), now)
+    }
+
+    fn play(&mut self, command: Option<Command>, now: Instant) -> Result<(), String> {
         let snap = self.current().ok_or("music is off · a to show it")?;
         if !snap.status.is_available() {
             return Err(snap
                 .unavailable_message()
                 .unwrap_or_else(|| "connecting…".into()));
         }
-        let command = Command::play_uri(uri).ok_or("can't play that")?;
-        self.send(command, now);
+        self.send(command.ok_or("can't play that")?, now);
         Ok(())
     }
 

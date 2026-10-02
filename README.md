@@ -235,10 +235,15 @@ open, `q` closes it instead of quitting.
   out). They take the keyboard like an overlay, so they can reuse `space`,
   `n` and `p`; the status bar shows them while they're on.
 - **In the playlist browser:** `j`/`k` move, `enter` (or `l`) opens a
-  playlist you own or share (others: plays it) or plays a track in it,
-  `p` plays the whole playlist, `g`/`G` and page up/down jump, `esc` (or
-  `h`) goes back, `q` closes. The add-to-playlist picker lists only
-  playlists you can add to; `enter` adds.
+  playlist you own or share (others: plays it) or plays a track in it
+  (then the rest of the playlist follows, Premium or not), `p` plays the
+  whole playlist, `g`/`G` and page up/down jump, `esc` (or `h`) goes
+  back, `q` closes. The add-to-playlist picker lists only playlists you
+  can add to; `enter` adds.
+- **Finding a playlist or song:** press `/` in the browser and type part
+  of its name (for songs, the artist works too). The list shrinks to what
+  matches as you type; `enter` picks, the arrow keys move, `backspace`
+  deletes, and `esc` clears it.
 - **In help:** `j`/`k` or `↑`/`↓` scroll. `?`, `esc` or `q` close it.
 - **In pickers:** `j`/`k` or `↑`/`↓` move (with live preview), `1`–`9`
   jump, `enter` or `space` keep, and `esc` or `q` revert. Pressing the
@@ -271,7 +276,7 @@ playing differs:
 | Play/pause, next/previous, seek | ✓ | ✓ | ✓ |
 | Volume | ✓ | ✓ if the player has it | – (SMTC has no volume: no readout, the keys say so) |
 | Shuffle / repeat | – (no-ops in Spotify 1.2) | ✓ if the player honours them | ✓ if the app honours them |
-| Cover art | ✓ | ✓ (`https` art URLs, so Spotify) | – (SMTC gives a stream, not a URL) |
+| Cover art | ✓ | ✓ (`https` art URLs, so Spotify) | ✓ (the session's thumbnail; untested on real Windows) |
 | Launches the player? | never | never | never |
 | Permission | macOS asks once (Automation) | none | none |
 

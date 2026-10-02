@@ -9,8 +9,10 @@
 //! ([`status`]), the timeline ([`position`]) and the track ([`track`]).
 //!
 //! What SMTC can't do: volume (no such control: `Capabilities::volume` is
-//! off), cover art as a URL (it hands out a thumbnail stream, so there's
-//! no art yet), playing a URI (that would mean launching the player).
+//! off), playing a URI (that would mean launching the player). Cover art
+//! comes as a thumbnail stream, not a URL: the worker reads it once per
+//! track ([`Cover`]) and hands the bytes to the art loader
+//! ([`art::stash`](super::art::stash), lava-75z.16).
 //!
 //! Untested on real Windows: it is built and its mapping is unit tested,
 //! nothing more.
@@ -106,6 +108,37 @@ pub fn track(title: &str, artist: &str, album: &str, duration: Duration) -> Opti
     })
 }
 
+/// Reads of a track's thumbnail while it has none (players often set it a
+/// moment after the title).
+const COVER_TRIES: u8 = 3;
+
+/// The playing track's cover: its thumbnail read once per track (a few
+/// times while there's none yet) and stashed for the art loader.
+#[derive(Debug, Default)]
+pub struct Cover {
+    track: String,
+    url: String,
+    tries: u8,
+}
+
+impl Cover {
+    /// The cover URL (`lavatui-thumb:…`, or empty) for `track_id`, asking
+    /// `read` for the thumbnail's bytes when it's due.
+    pub fn url(&mut self, track_id: &str, read: impl FnOnce() -> Option<Vec<u8>>) -> String {
+        if self.track != track_id {
+            *self = Self {
+                track: track_id.to_owned(),
+                ..Self::default()
+            };
+        }
+        if self.url.is_empty() && self.tries < COVER_TRIES {
+            self.tries += 1;
+            self.url = read().and_then(super::art::stash).unwrap_or_default();
+        }
+        self.url.clone()
+    }
+}
+
 /// A `TimeSpan` for a seek target.
 pub fn to_ticks(at: Duration) -> i64 {
     i64::try_from(at.as_millis())
@@ -124,11 +157,15 @@ mod backend {
     use windows::Media::Control::{
         GlobalSystemMediaTransportControlsSession as Session,
         GlobalSystemMediaTransportControlsSessionManager as Manager,
+        GlobalSystemMediaTransportControlsSessionMediaProperties as Properties,
     };
     use windows::Media::MediaPlaybackAutoRepeatMode;
+    use windows::Storage::Streams::DataReader;
     use windows::Win32::System::WinRT::{RO_INIT_MULTITHREADED, RoInitialize};
 
-    use super::{UNIX_EPOCH_TICKS, app_name, choose, duration, position, status, to_ticks, track};
+    use super::{
+        Cover, UNIX_EPOCH_TICKS, app_name, choose, duration, position, status, to_ticks, track,
+    };
     use crate::media::worker::Backend;
     use crate::media::{Capabilities, Command, Snapshot, Status, Unavailable};
 
@@ -138,6 +175,7 @@ mod backend {
     pub struct Smtc {
         initialised: bool,
         manager: Option<Manager>,
+        cover: Cover,
     }
 
     impl Smtc {
@@ -189,12 +227,15 @@ mod backend {
                 status == Status::Playing,
             );
             let props = session.TryGetMediaPropertiesAsync()?.join()?;
-            let track = track(
+            let mut track = track(
                 &props.Title()?.to_string(),
                 &props.Artist()?.to_string(),
                 &props.AlbumTitle()?.to_string(),
                 duration(start, end),
             );
+            if let Some(t) = &mut track {
+                t.artwork_url = self.cover.url(&t.id, || thumbnail(&props).ok());
+            }
             let shuffle = info
                 .IsShuffleActive()
                 .and_then(|v| v.Value())
@@ -243,6 +284,19 @@ mod backend {
         }
     }
 
+    /// The thumbnail's encoded bytes (JPEG / PNG), up to the art loader's
+    /// cap; an error when there's none.
+    fn thumbnail(props: &Properties) -> windows::core::Result<Vec<u8>> {
+        const MAX: u64 = 8 * 1024 * 1024;
+        let stream = props.Thumbnail()?.OpenReadAsync()?.join()?;
+        let size = stream.Size()?.min(MAX) as u32;
+        let reader = DataReader::CreateDataReader(&stream.GetInputStreamAt(0)?)?;
+        let loaded = reader.LoadAsync(size)?.join()?;
+        let mut bytes = vec![0; loaded as usize];
+        reader.ReadBytes(&mut bytes)?;
+        Ok(bytes)
+    }
+
     /// Spotify's session, else the current one, else none.
     fn session(manager: &Manager) -> windows::core::Result<Option<Session>> {
         let sessions = manager.GetSessions()?;
@@ -274,7 +328,9 @@ mod backend {
                 })?
                 .join(),
             // No such controls.
-            Command::SetVolume(_) | Command::PlayUri(_) => Ok(false),
+            Command::SetVolume(_) | Command::PlayUri(_) | Command::PlayInContext { .. } => {
+                Ok(false)
+            }
         }
     }
 }
@@ -352,6 +408,53 @@ mod tests {
         assert_eq!(t.id, "Life\u{1f}Dreamcatcher\u{1f}Dreamcatcher");
         assert_eq!(t.artwork_url, "");
         assert_eq!(track("", "x", "y", Duration::ZERO), None);
+    }
+
+    #[test]
+    fn the_cover_is_read_once_per_track_and_retried_while_missing() {
+        let png = {
+            let img = image::RgbImage::from_pixel(4, 4, image::Rgb([9, 90, 200]));
+            let mut out = std::io::Cursor::new(Vec::new());
+            img.write_to(&mut out, image::ImageFormat::Png).unwrap();
+            out.into_inner()
+        };
+        let mut cover = Cover::default();
+        let reads = std::cell::Cell::new(0);
+        let read = |bytes: Option<Vec<u8>>| {
+            reads.set(reads.get() + 1);
+            bytes
+        };
+        // No thumbnail yet: asked again on the next polls, then given up.
+        for _ in 0..5 {
+            assert_eq!(cover.url("a", || read(None)), "");
+        }
+        assert_eq!(reads.get(), COVER_TRIES);
+        // A new track: read once, then the same URL without reading.
+        let url = cover.url("b", || read(Some(png.clone())));
+        assert!(url.starts_with(crate::media::art::THUMB_SCHEME), "{url}");
+        assert_eq!(cover.url("b", || read(Some(Vec::new()))), url);
+        assert_eq!(reads.get(), COVER_TRIES + 1);
+
+        // The URL loads as the cover: the bytes went through the stash.
+        let mut loader = crate::media::art::ArtLoader::spawn(NoFetch, None);
+        loader.want(&url);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let art = loop {
+            match loader.get() {
+                crate::media::art::ArtState::Ready(art) => break art,
+                _ if std::time::Instant::now() > deadline => panic!("no cover"),
+                _ => std::thread::sleep(Duration::from_millis(2)),
+            }
+        };
+        assert_eq!(art.mean(), crate::theme::Rgb(9, 90, 200));
+    }
+
+    struct NoFetch;
+
+    impl crate::media::art::Fetch for NoFetch {
+        fn get(&mut self, url: &str) -> Result<Vec<u8>, String> {
+            panic!("fetched {url}")
+        }
     }
 
     #[test]

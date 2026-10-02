@@ -533,6 +533,7 @@ fn player_state_reads_shuffle_repeat_and_nothing_playing() {
             200,
             r#"{"shuffle_state":true,"repeat_state":"context","is_playing":true,
                 "device":{"name":"Mac","type":"Computer"},"item":{"uri":"spotify:track:x"},
+                "context":{"uri":"spotify:playlist:p","type":"playlist"},
                 "actions":{"disallows":{"toggling_shuffle":true,"resuming":true}}}"#,
         )
         .reply(204, "");
@@ -541,6 +542,7 @@ fn player_state_reads_shuffle_repeat_and_nothing_playing() {
     assert_eq!(state.repeat, Repeat::Context);
     assert_eq!(state.device.as_deref(), Some("Mac"));
     assert_eq!(state.item_uri.as_deref(), Some("spotify:track:x"));
+    assert_eq!(state.context_uri.as_deref(), Some("spotify:playlist:p"));
     assert!(state.shuffle_blocked && !state.repeat_blocked);
     assert_eq!(r.client.player().unwrap(), None, "204: nothing playing");
     assert_eq!(r.mock.sent()[0].url, "https://api.spotify.com/v1/me/player");
@@ -1237,4 +1239,120 @@ fn live_peek() {
         uris: vec![playing.clone()],
     });
     eprintln!("{playing} liked: {liked:?}");
+}
+
+/// lava-75z.18 against the real desktop app: the AppleScript backend plays
+/// the second track of one of your own playlists in that playlist (read
+/// back through the Web API: the item and the context), then puts back
+/// what was playing (its track in its context, the position, paused if it
+/// was). Reads playlists only; never changes one.
+/// `LAVATUI_SPOTIFY_CLIENT_ID=… cargo test -- --ignored --nocapture live_play_in_context`
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "needs a Spotify account and the desktop app playing"]
+fn live_play_in_context() {
+    use super::store::FileStore;
+    use crate::media::runner::Osascript;
+    use crate::media::spotify::{Spotify, script};
+    use crate::media::worker::Backend;
+    use crate::media::{Command, Status};
+
+    let client_id = client_id_from_env().expect("set LAVATUI_SPOTIFY_CLIENT_ID");
+    let file = std::env::temp_dir().join("lavatui-live-spotify-tokens.json");
+    let id = client_id.clone();
+    let mut web = SpotifyWeb::spawn(client_id, move || {
+        Client::new(super::http::Ureq::new(), id, Box::new(FileStore(file)))
+    });
+    let mut ask = |req: Request| -> Reply {
+        let want = web.request(req.clone());
+        loop {
+            match web.poll_timeout(Duration::from_secs(60)) {
+                Some(Event::Reply { id, result }) if id == want => {
+                    return result.unwrap_or_else(|e| panic!("{req:?}: {e}"));
+                }
+                Some(_) => {}
+                None => panic!("{req:?}: no reply"),
+            }
+        }
+    };
+    let read = |ask: &mut dyn FnMut(Request) -> Reply| match ask(Request::Player) {
+        Reply::Player(Some(p)) => p,
+        other => panic!("player: {other:?}"),
+    };
+    let mut app = Spotify::new(Osascript::new(script()));
+    let before = app.exchange(&[]);
+    let original = read(&mut ask);
+    let was = before
+        .track
+        .clone()
+        .expect("Spotify must have a track loaded");
+    eprintln!(
+        "before: {} in {:?} at {:?}, {:?}",
+        was.id, original.context_uri, before.position, before.status
+    );
+
+    let Reply::User(me) = ask(Request::Me) else {
+        panic!()
+    };
+    let Reply::Playlists(lists) = ask(Request::MyPlaylists) else {
+        panic!()
+    };
+    let (playlist, track) = lists
+        .iter()
+        .filter(|p| p.editable_by(&me) && p.total >= 3)
+        .filter(|p| original.context_uri.as_deref() != Some(p.uri.as_str()))
+        .find_map(|p| {
+            let Reply::Tracks(page) = ask(Request::PlaylistTracks {
+                playlist_id: p.id.clone(),
+                offset: 0,
+            }) else {
+                return None;
+            };
+            let t = page.items.get(1).filter(|t| !t.is_local)?;
+            Some((p.clone(), t.clone()))
+        })
+        .expect("an own playlist with 3+ tracks");
+    eprintln!("play {} ({}) in {}", track.name, track.uri, playlist.name);
+
+    let command = Command::play_in_context(&track.uri, &playlist.uri).unwrap();
+    let during = app.exchange(&[command]);
+    std::thread::sleep(Duration::from_millis(2000));
+    let p = read(&mut ask);
+    eprintln!(
+        "playing: {:?} in {:?} (desktop app: {:?})",
+        p.item_uri,
+        p.context_uri,
+        during.track.as_ref().map(|t| &t.id)
+    );
+
+    // Put it back.
+    let back = match &original.context_uri {
+        Some(context) => Command::play_in_context(&was.id, context),
+        None => Command::play_uri(&was.id),
+    };
+    app.exchange(&[back.expect("the old track's uri")]);
+    std::thread::sleep(Duration::from_millis(800));
+    let mut restore = vec![Command::Seek(before.position)];
+    if before.status != Status::Playing {
+        restore.push(Command::PlayPause);
+    }
+    app.exchange(&restore);
+    std::thread::sleep(Duration::from_millis(800));
+    let after = app.exchange(&[]);
+    let restored = read(&mut ask);
+    eprintln!(
+        "after: {:?} in {:?} at {:?}, {:?}",
+        after.track.as_ref().map(|t| &t.id),
+        restored.context_uri,
+        after.position,
+        after.status
+    );
+
+    assert_eq!(p.item_uri.as_deref(), Some(track.uri.as_str()));
+    assert_eq!(p.context_uri.as_deref(), Some(playlist.uri.as_str()));
+    assert_eq!(after.track.map(|t| t.id.clone()), Some(was.id.clone()));
+    assert_eq!(
+        after.status == Status::Playing,
+        before.status == Status::Playing
+    );
 }
