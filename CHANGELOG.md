@@ -2,7 +2,7 @@
 
 What changed in each version of LavaTUI, in plain words.
 
-## 1.2.0 — first public release
+## 1.2.0 — 2026-10-02 — first public release
 
 **Easier to get started**
 
