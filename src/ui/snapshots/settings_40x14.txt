@@ -22,7 +22,7 @@
     speed                           ×1
     background                 painted
     colour range              millions
-    see-through window fix   automatic
+    stripe fix               automatic
     reset this page              reset
 
  How the wax is drawn.
@@ -37,7 +37,7 @@
     speed                           ×1
     background                 painted
     colour range              millions
-    see-through window fix   automatic
+    stripe fix               automatic
     reset this page              reset
 
  The colours of the wax, the liquid and

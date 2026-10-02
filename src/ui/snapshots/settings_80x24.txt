@@ -11,7 +11,7 @@
 ~~~~~~~~│    music & lyrics     speed                              ×1  │
 ~~~~~~~~│    controls           background                    painted  │
 ~~~~~~~~│    window             colour range                 millions  │
-~~~~~~~~│                       see-through window fix      automatic  │
+~~~~~~~~│                       stripe fix                  automatic  │
 ~~~~~~~~│                       reset this page                 reset  │
 ~~~~~~~~│                                                              │
 ~~~~~~~~│ How the lamp looks: its style, colours, heat and speed.      │
@@ -36,7 +36,7 @@
 ~~~~~~~~│    music & lyrics     speed                              ×1  │
 ~~~~~~~~│    controls           background                    painted  │
 ~~~~~~~~│    window             colour range                 millions  │
-~~~~~~~~│                       see-through window fix      automatic  │
+~~~~~~~~│                       stripe fix                  automatic  │
 ~~~~~~~~│                       reset this page                 reset  │
 ~~~~~~~~│                                                              │
 ~~~~~~~~│ How the wax is drawn.                                        │
@@ -61,7 +61,7 @@
 ~~~~~~~~│    music & lyrics     speed                              ×1  │
 ~~~~~~~~│    controls           background                    painted  │
 ~~~~~~~~│    window             colour range                 millions  │
-~~~~~~~~│                       see-through window fix      automatic  │
+~~~~~~~~│                       stripe fix                  automatic  │
 ~~~~~~~~│                       reset this page                 reset  │
 ~~~~~~~~│                                                              │
 ~~~~~~~~│ The colours of the wax, the liquid and the text.             │

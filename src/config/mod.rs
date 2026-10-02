@@ -148,10 +148,13 @@ pub enum ColorChoice {
     None,
 }
 
-/// `display.cells`: whether the terminal blends cell backgrounds over the
-/// window while glyphs stay opaque (Ghostty's `background-opacity-cells`).
-/// `auto` reads Ghostty's config; `translucent` keeps half blocks from
-/// splitting wax across a glyph and its background (no half-row seams).
+/// `display.cells`: how the terminal draws cells (`cells::Cells`).
+/// `translucent`: it blends cell backgrounds over the window while glyphs
+/// stay opaque (Ghostty's `background-opacity-cells`), so half blocks never
+/// split wax across a glyph and its background (no half-row seams).
+/// `background`: its block glyphs don't fill the cell (macOS Terminal), so
+/// wax is drawn as background wherever it can be (no lines between rows).
+/// `auto` picks by terminal (and reads Ghostty's config).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum CellsChoice {
@@ -159,6 +162,7 @@ pub enum CellsChoice {
     Auto,
     Opaque,
     Translucent,
+    Background,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

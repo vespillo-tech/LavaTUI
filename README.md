@@ -173,6 +173,18 @@ it off. Album covers in text cells follow the same rule (one colour a
 cell when translucent); kitty graphics (pixels) are unaffected. See
 [Ghostty's opacity settings](https://ghostty.org/docs/config/reference#background-opacity-cells).
 
+**macOS Terminal:** Terminal.app draws block glyphs (`█ ▀ ▄`) a little
+short of the top of each cell, so wax drawn with them shows a dark line
+between every row. There (`display.cells = "auto"` checks
+`TERM_PROGRAM=Apple_Terminal`) wax is drawn as cell background wherever
+it can be, and half blocks are turned so the top half is the background;
+the lamp, covers and widgets look the same as anywhere else, without the
+lines. The Ghostex app's terminal gets the same (it draws block glyphs
+a hair short now and then: small dark ticks in moving wax). Set
+`display.cells = "background"` for another terminal that
+does this (or Terminal.app inside tmux). In the settings screen (`,`)
+it's *stripe fix*.
+
 ## Usage
 
 ```
@@ -344,7 +356,7 @@ defaults:
 fps = 60                 # 1..=240
 color = "auto"           # auto | truecolor | 256 | 16 | none
 cell_aspect = 2.0        # cell height / width; used only when the terminal doesn't report pixels
-cells = "auto"           # auto | opaque | translucent: are cell backgrounds see-through?
+cells = "auto"           # auto | opaque | translucent | background: see-through cells, or blocks short of the cell (macOS Terminal)
 
 [lamp]
 style = "solid"          # see Render styles

@@ -1160,6 +1160,37 @@ fn floating_text_has_no_block_glyphs_around_it() {
     assert!(gaps > 0, "no gaps between letters were checked");
 }
 
+/// In macOS Terminal (block glyphs short of the cell's top; picked by
+/// `display.cells = "auto"`) no cell of the frame, lamp, widgets or cover,
+/// shows ink along its top edge; set to opaque, the lamp draws its usual
+/// `█`s (lava-1xk.33).
+#[test]
+fn short_block_terminals_get_no_ink_along_cell_tops() {
+    use crate::cells::Cells;
+    use ratatui::style::Color;
+
+    let inked_top = |buf: &Buffer| {
+        buf.content.iter().any(|c| {
+            c.fg != Color::Reset
+                && c.bg != Color::Reset
+                && ["█", "▀", "▛", "▜"].contains(&c.symbol())
+        })
+    };
+    for seed in [3, 7, 11] {
+        let (mut m, t0) = model(100, 30, seed);
+        spotify(&mut m, t0, true);
+        m.update(Action::Place("music"), t0);
+        m.update(Action::Resize, t0);
+        assert!(
+            inked_top(&draw(&m, 100, 30)),
+            "seed {seed}: no wax to check"
+        );
+        m.detected_cells = Cells::Background;
+        assert_eq!(m.cells(), Cells::Background);
+        assert!(!inked_top(&draw(&m, 100, 30)), "seed {seed}");
+    }
+}
+
 /// Under a host embedding Ghostty's terminal (Ghostex), which draws none
 /// of these, no frame shows them: music, lyrics, cover, pomodoro, chips,
 /// toasts, lists and the status bar all take the safe set (lava-1xk.29).

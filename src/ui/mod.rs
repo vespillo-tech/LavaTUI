@@ -33,7 +33,8 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 
 use crate::app::{Model, Overlay};
-use crate::render::{LampOptions, LampState, LampView};
+use crate::cells::Cells;
+use crate::render::{LampOptions, LampState, LampView, fill_from_background};
 use crate::theme::{Ink, Role, Theme};
 use crate::ui::layout::{Layout, halo};
 
@@ -115,6 +116,9 @@ pub fn draw(frame: &mut Frame, model: &Model, lamp: &mut LampState) {
         }
         Overlay::Library(v) => library::draw(buf, area, layout, &v, model),
         Overlay::Settings(v) => settings::draw(buf, area, &v, model),
+    }
+    if model.cells() == Cells::Background {
+        fill_from_background(buf, area);
     }
 }
 
