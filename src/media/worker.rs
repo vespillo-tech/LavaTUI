@@ -31,7 +31,9 @@ pub trait Backend: Send + 'static {
     /// an `Unavailable` status, never a panic.
     fn exchange(&mut self, commands: &[Command]) -> Snapshot;
 
-    /// Which optional controls work (fixed for the backend's life).
+    /// Which optional controls work. Read after every exchange: a backend
+    /// may learn that its player ignores one (Spotify over MPRIS ignores
+    /// shuffle / repeat).
     fn capabilities(&self) -> Capabilities {
         Capabilities::ALL
     }
@@ -88,6 +90,8 @@ struct State {
     snapshot: Snapshot,
     /// Commands sent to the worker so far.
     sent: u64,
+    /// The backend's, as of its last exchange.
+    capabilities: Capabilities,
 }
 
 /// The handle the UI keeps. Dropping it stops the worker (after any
@@ -95,7 +99,6 @@ struct State {
 pub struct Polled {
     state: Arc<Mutex<State>>,
     commands: Option<Sender<Command>>,
-    capabilities: Capabilities,
 }
 
 impl Polled {
@@ -104,9 +107,9 @@ impl Polled {
         let state = Arc::new(Mutex::new(State {
             snapshot: Snapshot::new(Status::Connecting, Instant::now()),
             sent: 0,
+            capabilities: backend.capabilities(),
         }));
         let (tx, rx) = mpsc::channel();
-        let capabilities = backend.capabilities();
         let worker = Worker {
             backend,
             state: Arc::clone(&state),
@@ -124,7 +127,6 @@ impl Polled {
             Ok(_) => Self {
                 state,
                 commands: Some(tx),
-                capabilities,
             },
             Err(err) => Self::unavailable(Unavailable::Error(err.to_string())),
         }
@@ -136,9 +138,9 @@ impl Polled {
             state: Arc::new(Mutex::new(State {
                 snapshot: Snapshot::new(Status::Unavailable(reason), Instant::now()),
                 sent: 0,
+                capabilities: Capabilities::NONE,
             })),
             commands: None,
-            capabilities: Capabilities::NONE,
         }
     }
 }
@@ -149,7 +151,7 @@ impl MediaSource for Polled {
     }
 
     fn capabilities(&self) -> Capabilities {
-        self.capabilities
+        lock(&self.state).capabilities
     }
 
     fn send(&self, command: Command) {
@@ -211,7 +213,9 @@ impl<B: Backend> Worker<B> {
         }
         // Stale until the player catches up (see the module docs).
         let settling = !batch.is_empty() && fresh.status.is_available();
+        let capabilities = self.backend.capabilities();
         let mut state = lock(&self.state);
+        state.capabilities = capabilities;
         if state.sent == self.handled && !settling {
             let previous = mem::replace(&mut state.snapshot, fresh);
             smooth(&mut state.snapshot, &previous);
@@ -309,11 +313,11 @@ mod tests {
         let state = Arc::new(Mutex::new(State {
             snapshot: Snapshot::new(Status::Connecting, Instant::now()),
             sent: 0,
+            capabilities: Capabilities::ALL,
         }));
         let handle = Polled {
             state: Arc::clone(&state),
             commands: Some(tx),
-            capabilities: Capabilities::ALL,
         };
         let worker = Worker {
             backend: Scripted(answer, Arc::clone(&log)),

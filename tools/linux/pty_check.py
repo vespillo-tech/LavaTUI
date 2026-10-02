@@ -8,7 +8,8 @@ Starts tools/linux/fake_mpris.py, runs lavatui (120x36, music widget
 beside the lamp, scratch config) in a pty emulated by pyte, and steps
 through: the card shows the fake track; then, in the music-keys mode (A),
 Space / n / Right / Up / x / r each reach the player (its call log) and
-show on the card. Every step's screen is saved as text, and the first and
+show on the card. As Spotify (--spotify), x is taken and ignored, which
+the app notices and says; r then isn't sent. Every step's screen is saved as text, and the first and
 last as PNG (docs/screenshots/capture.py's renderer). Exits non-zero on
 the first check that fails. `tools/linux/run.sh pty` runs it in Docker.
 """
@@ -164,10 +165,11 @@ def main():
         if png and render:
             render(app.screen, base + ".png")
 
-    def check(name, ok, calls_want=None, png=False):
+    def check(name, ok, calls_want=None, png=False, calls_not=None):
         shown = app.wait_for(name, ok)
         calls = fake.drain()
         reached = calls_want is None or any(c.startswith(calls_want) for c in calls)
+        reached = reached and not (calls_not and any(c.startswith(calls_not) for c in calls))
         save(name, png)
         status = "ok" if shown and reached else "FAIL"
         print(f"{status:4} {name}: calls={calls}")
@@ -187,9 +189,20 @@ def main():
         app.send(b"\x1b[A")  # Up: volume
         check("volume", lambda t: True, "set Volume")
         app.send(b"x")
-        check("shuffle", lambda t: True, "set Shuffle")
-        app.send(b"r")
-        check("repeat", lambda t: True, "set LoopStatus")
+        if args.spotify:
+            # Spotify takes it and changes nothing: once the reads show
+            # that, the toast says so and the keys stop sending.
+            check("shuffle", lambda t: "Spotify ignored that" in t, "set Shuffle", png=True)
+            app.send(b"r")
+            check(
+                "repeat",
+                lambda t: "Spotify can't shuffle or repeat" in t,
+                calls_not="set LoopStatus",
+            )
+        else:
+            check("shuffle", lambda t: True, "set Shuffle")
+            app.send(b"r")
+            check("repeat", lambda t: True, "set LoopStatus")
         app.send(b"p")
         check("previous", lambda t: "Slow Bloom" in t, "call Previous", png=True)
         code = app.quit()

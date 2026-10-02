@@ -92,6 +92,10 @@ pub struct WebPlayer {
     /// The desktop player's track (its own id) when the state was last
     /// asked for.
     asked_for: Option<String>,
+    /// The desktop player's track when the request `state` answers was
+    /// sent: a state asked for before a track change says nothing about
+    /// the new one.
+    state_for: Option<String>,
     in_flight: bool,
 }
 
@@ -499,6 +503,7 @@ impl Library {
                             p.allowed.get_or_insert(true);
                         }
                         p.state = state;
+                        p.state_for.clone_from(&p.asked_for);
                     }
                     Err(Error::Forbidden(why)) => {
                         p.allowed = Some(false);
@@ -542,14 +547,52 @@ impl Library {
     }
 }
 
-/// Two names for the same track: the same words, case aside.
+/// Two names for the same thing: the same words, case and punctuation
+/// aside.
 fn same_name(a: &str, b: &str) -> bool {
-    let words = |s: &str| {
-        s.split_whitespace()
-            .map(str::to_lowercase)
-            .collect::<Vec<_>>()
-    };
-    !a.trim().is_empty() && words(a) == words(b)
+    let a = words(a);
+    !a.is_empty() && a == words(b)
+}
+
+/// Lowercase letters and digits, split at anything else.
+fn words(s: &str) -> Vec<String> {
+    s.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_lowercase)
+        .collect()
+}
+
+/// How far apart two reports of one track's length may be (the desktop
+/// app rounds to whole seconds; Spotify says milliseconds).
+const SAME_LENGTH: Duration = Duration::from_secs(2);
+
+/// Whether `track`, from a player that names no Spotify URI (Windows'
+/// media controls), is the Web API's `item` (lava-1xk.35). Titles alone
+/// say little ("Intro", covers, remasters): the artists must agree too,
+/// then the length (within [`SAME_LENGTH`]) and the album wherever both
+/// say, and at least one of them must be said. Local files and anything
+/// that isn't a catalog track never match; in doubt, it's not the same.
+fn same_track(track: &crate::media::Track, item: &Track) -> bool {
+    if item.is_local || !item.uri.starts_with("spotify:track:") {
+        return false;
+    }
+    if !same_name(&track.name, &item.name) {
+        return false;
+    }
+    // The desktop lists every artist ("A, B") or just the first.
+    let artists = words(&track.artist);
+    let all: Vec<String> = item.artists.iter().flat_map(|a| words(a)).collect();
+    let first = item.artists.first().map(|a| words(a)).unwrap_or_default();
+    if artists.is_empty() || (artists != all && artists != first) {
+        return false;
+    }
+    // Then whatever else both say must agree, and something must.
+    let length = Duration::from_millis(u64::from(item.duration_ms));
+    let lengths = (!track.duration.is_zero() && !length.is_zero())
+        .then(|| track.duration.abs_diff(length) <= SAME_LENGTH);
+    let albums = (!words(&track.album).is_empty() && !words(&item.album).is_empty())
+        .then(|| same_name(&track.album, &item.album));
+    lengths != Some(false) && albums != Some(false) && (lengths.is_some() || albums.is_some())
 }
 
 /// A 403 about the account (no Premium, a login without the playback
@@ -674,24 +717,26 @@ impl Model {
     /// The Web API's player state when it is about what the music widget
     /// shows (lava-1xk.24, lava-1xk.27): the same Spotify track by URI,
     /// or, for a player that names no URI (Windows' media controls), the
-    /// Spotify app playing a track of the same name. Another player, or
-    /// Spotify playing something else on another device, is not it.
+    /// Spotify app playing the same track by its title, artists and length
+    /// ([`same_track`]), in a state asked for since that track began.
+    /// Another player, or Spotify playing something else (or something
+    /// it can't be sure is this) on another device, is not it: in doubt,
+    /// no match.
     fn web_player(&self) -> Option<&PlayerState> {
         if !self.library.logged_in() {
             return None;
         }
-        let state = self.library.player.state.as_ref()?;
+        let player = &self.library.player;
+        let state = player.state.as_ref()?;
         let snap = self.music.snapshot.as_ref()?;
         let track = snap.track.as_ref()?;
-        let item = state.item_uri.as_deref()?;
+        let item = state.item.as_ref()?;
         let same = match &track.uri {
-            Some(uri) => uri == item,
+            Some(uri) => *uri == item.uri,
             None => {
                 snap.is_spotify()
-                    && state
-                        .item_name
-                        .as_deref()
-                        .is_some_and(|name| same_name(name, &track.name))
+                    && player.state_for.as_deref() == Some(track.id.as_str())
+                    && same_track(track, item)
             }
         };
         same.then_some(state)
@@ -713,7 +758,7 @@ impl Model {
         if let Some(uri) = &track.uri {
             return Some(uri.clone());
         }
-        let item = self.web_player()?.item_uri.as_deref()?;
+        let item = self.web_player()?.item_uri()?;
         item.starts_with("spotify:track:").then(|| item.to_owned())
     }
 

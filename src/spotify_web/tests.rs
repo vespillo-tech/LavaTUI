@@ -532,7 +532,9 @@ fn player_state_reads_shuffle_repeat_and_nothing_playing() {
         .reply(
             200,
             r#"{"shuffle_state":true,"repeat_state":"context","is_playing":true,
-                "device":{"name":"Mac","type":"Computer"},"item":{"uri":"spotify:track:x","name":"Slow Rise"},
+                "device":{"name":"Mac","type":"Computer"},"item":{"uri":"spotify:track:x","name":"Slow Rise","type":"track",
+                    "artists":[{"name":"The Paraffins"},{"name":"Mara Vell"}],"album":{"name":"Heat Rises","images":[]},
+                    "duration_ms":200500,"is_local":false},
                 "context":{"uri":"spotify:playlist:p","type":"playlist"},
                 "actions":{"disallows":{"toggling_shuffle":true,"resuming":true}}}"#,
         )
@@ -541,8 +543,13 @@ fn player_state_reads_shuffle_repeat_and_nothing_playing() {
     assert!(state.shuffle && state.is_playing);
     assert_eq!(state.repeat, Repeat::Context);
     assert_eq!(state.device.as_deref(), Some("Mac"));
-    assert_eq!(state.item_uri.as_deref(), Some("spotify:track:x"));
-    assert_eq!(state.item_name.as_deref(), Some("Slow Rise"));
+    assert_eq!(state.item_uri(), Some("spotify:track:x"));
+    let item = state.item.as_ref().unwrap();
+    assert_eq!(item.name, "Slow Rise");
+    assert_eq!(item.artists, ["The Paraffins", "Mara Vell"]);
+    assert_eq!(item.album, "Heat Rises");
+    assert_eq!(item.duration_ms, 200_500);
+    assert!(!item.is_local);
     assert_eq!(state.context_uri.as_deref(), Some("spotify:playlist:p"));
     assert!(state.shuffle_blocked && !state.repeat_blocked);
     assert_eq!(r.client.player().unwrap(), None, "204: nothing playing");
