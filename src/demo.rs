@@ -1,10 +1,12 @@
 //! `--demo` (hidden): a made-up player for screenshots and the README
 //! demo, so no real song, cover or lyric ever lands in a committed image.
 //!
-//! Three invented tracks by invented artists, sharing one original cover
+//! Five invented tracks by invented artists, sharing one original cover
 //! embedded here (handed to the art worker through [`art::stash`], so nothing
-//! is downloaded) and invented synced lyrics served by a canned LRCLIB
-//! ([`Canned`]: nothing goes to lrclib.net and nothing is cached). The
+//! is downloaded) and, for three of them, invented synced lyrics served by
+//! a canned LRCLIB ([`Canned`]: nothing goes to lrclib.net and nothing is
+//! cached). The last two show the lyrics widget's fallbacks: LRCLIB marks
+//! one instrumental and has nothing for the other. The
 //! player is a [`FakeSource`]: it plays in real time and every player key
 //! works. The Spotify library stays off (no Client ID, no keyring).
 
@@ -15,6 +17,17 @@ use crate::lyrics::LyricsService;
 use crate::lyrics::client::{Http, Lrclib, Reply};
 use crate::media::{FakeSource, Snapshot, Status, Track, art};
 
+/// What the canned LRCLIB knows about a song.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    /// Synced lyrics (`Song::words`).
+    Sung,
+    /// A record flagged instrumental.
+    Instrumental,
+    /// No record at all.
+    Missing,
+}
+
 /// Title (letters and spaces only: it's matched in the lookup URL),
 /// artist, album, length in seconds, the cover's encoded bytes, the lyrics.
 struct Song {
@@ -23,6 +36,7 @@ struct Song {
     album: &'static str,
     secs: u64,
     cover: &'static [u8],
+    kind: Kind,
     words: &'static [&'static str],
 }
 
@@ -33,6 +47,7 @@ const SONGS: &[Song] = &[
         album: "Heat Rises",
         secs: 214,
         cover: include_bytes!("../assets/demo/suspended-melt.jpg"),
+        kind: Kind::Sung,
         words: &[
             "Down at the bottom where the warm light grows",
             "A little wax is waking, and it slowly goes",
@@ -56,6 +71,7 @@ const SONGS: &[Song] = &[
         album: "Heat Rises",
         secs: 187,
         cover: include_bytes!("../assets/demo/suspended-melt.jpg"),
+        kind: Kind::Sung,
         words: &[
             "Two slow shapes in the purple glow",
             "Drifting closer, moving slow",
@@ -74,6 +90,7 @@ const SONGS: &[Song] = &[
         album: "Lamplight",
         secs: 402,
         cover: include_bytes!("../assets/demo/suspended-melt.jpg"),
+        kind: Kind::Sung,
         words: &[
             "Late at night the room is blue",
             "And the lamp is humming through",
@@ -85,6 +102,24 @@ const SONGS: &[Song] = &[
             "Warm light falling, warm light rising",
             "Watch it with your sleepy eyes",
         ],
+    },
+    Song {
+        title: "Long Cooldown",
+        artist: "The Paraffins",
+        album: "Heat Rises",
+        secs: 251,
+        cover: include_bytes!("../assets/demo/suspended-melt.jpg"),
+        kind: Kind::Instrumental,
+        words: &[],
+    },
+    Song {
+        title: "Bare Wax",
+        artist: "Wax and Wane",
+        album: "Lamplight",
+        secs: 196,
+        cover: include_bytes!("../assets/demo/suspended-melt.jpg"),
+        kind: Kind::Missing,
+        words: &[],
     },
 ];
 
@@ -124,6 +159,7 @@ impl Http for Canned {
     fn get(&self, url: &str) -> Result<Reply, String> {
         let song = SONGS
             .iter()
+            .filter(|s| s.kind != Kind::Missing)
             .find(|s| url.contains(&format!("track_name={}", s.title.replace(' ', "%20"))));
         let Some(song) = song else {
             let (status, body) = if url.contains("/api/search") {
@@ -141,8 +177,8 @@ impl Http for Canned {
             "artistName": song.artist,
             "albumName": song.album,
             "duration": song.secs,
-            "instrumental": false,
-            "syncedLyrics": lrc(song),
+            "instrumental": song.kind == Kind::Instrumental,
+            "syncedLyrics": (song.kind == Kind::Sung).then(|| lrc(song)),
         });
         let body = if url.contains("/api/search") {
             serde_json::Value::Array(vec![body])
@@ -178,7 +214,7 @@ mod tests {
     use crate::lyrics::{Lyrics, Track as LyricsTrack};
 
     #[test]
-    fn every_song_has_a_cover_and_synced_lyrics() {
+    fn every_song_has_a_cover_and_its_kind_of_lyrics() {
         let client = Lrclib::with_http(Canned, "demo:");
         for song in SONGS {
             assert!(
@@ -194,9 +230,13 @@ mod tests {
                 album: song.album.into(),
                 duration: Some(Duration::from_secs(song.secs)),
             };
-            let raw = client.fetch(&track).expect("fetch").expect("found");
-            let lyrics = Lyrics::from_parts(raw.instrumental, raw.synced.as_deref(), None);
-            assert!(matches!(lyrics, Some(Lyrics::Synced(_))), "{}", song.title);
+            let raw = client.fetch(&track).expect("fetch");
+            let lyrics = raw.and_then(|r| r.lyrics());
+            match song.kind {
+                Kind::Sung => assert!(matches!(lyrics, Some(Lyrics::Synced(_))), "{}", song.title),
+                Kind::Instrumental => assert_eq!(lyrics, Some(Lyrics::Instrumental)),
+                Kind::Missing => assert_eq!(lyrics, None, "{}", song.title),
+            }
         }
         let other = LyricsTrack {
             title: "Something Else".into(),

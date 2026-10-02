@@ -1363,8 +1363,10 @@ they don't scroll (a terminal can't move text by less than a row). A
 dots `•  •  •` that light up one by one as it passes.
 
 **States**, each one calm dim sentence like music's: `♪ looking for
-lyrics…`, `♪ no lyrics for this track`, `♪ instrumental`, `♪ lyrics
-offline`, and the player's own (`♪ Open Spotify to show lyrics`, `♪ nothing
+lyrics…`, `♪ no lyrics on lrclib.net for this song` (where that doesn't
+fit, the shorter `♪ not on lrclib.net`), `♪ instrumental` (LRCLIB's
+`instrumental` flag, or lyrics that are only an "Instrumental" note), `♪
+lyrics offline`, and the player's own (`♪ Open Spotify to show lyrics`, `♪ nothing
 playing`, `♪ …`). **Plain lyrics** (LRCLIB has no timing) scroll with the
 track's progress, the middle line `text`, the rest `dim`, never bold (it
 isn't a claim about what's being sung).

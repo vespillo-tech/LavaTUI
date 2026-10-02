@@ -67,13 +67,15 @@ pub enum Lyrics {
     Synced(Synced),
     /// Untimed lines (blank lines kept as stanza breaks).
     Plain(Vec<String>),
-    /// LRCLIB marks the track as having no vocals.
+    /// No vocals: LRCLIB marks the track so, or its only "lyrics" are a
+    /// note saying it is (`[Instrumental]`, `♪ Instrumental ♪`).
     Instrumental,
 }
 
 impl Lyrics {
     /// Builds lyrics from LRCLIB's fields: synced if it parses to at least
-    /// one timed line, else plain, else nothing.
+    /// one timed line, else plain, else nothing. Text that only says
+    /// "instrumental" counts as [`Lyrics::Instrumental`].
     pub fn from_parts(
         instrumental: bool,
         synced: Option<&str>,
@@ -83,13 +85,37 @@ impl Lyrics {
             return Some(Self::Instrumental);
         }
         if let Some(synced) = synced.map(Synced::parse).filter(|s| !s.lines.is_empty()) {
-            return Some(Self::Synced(synced));
+            let marker = only_marker(synced.lines.iter().map(|l| l.text.as_str()));
+            return Some(if marker {
+                Self::Instrumental
+            } else {
+                Self::Synced(synced)
+            });
         }
-        plain
+        let lines = plain
             .map(lrc::plain_lines)
-            .filter(|lines| lines.iter().any(|l| !l.is_empty()))
-            .map(Self::Plain)
+            .filter(|lines| lines.iter().any(|l| !l.is_empty()))?;
+        Some(if only_marker(lines.iter().map(String::as_str)) {
+            Self::Instrumental
+        } else {
+            Self::Plain(lines)
+        })
     }
+}
+
+/// Whether the non-empty `lines` are all just the word "instrumental", with
+/// any brackets, notes or dashes around it. Some uploaders put that where
+/// the words would be instead of setting LRCLIB's flag.
+fn only_marker<'a>(lines: impl Iterator<Item = &'a str>) -> bool {
+    let mut seen = false;
+    for line in lines.filter(|l| !l.trim().is_empty()) {
+        let word: String = line.chars().filter(|c| c.is_alphanumeric()).collect();
+        if !word.eq_ignore_ascii_case("instrumental") {
+            return false;
+        }
+        seen = true;
+    }
+    seen
 }
 
 /// LRCLIB's answer for a track, unparsed: what the cache stores, so a
@@ -153,5 +179,35 @@ mod tests {
         );
         assert_eq!(Lyrics::from_parts(false, None, Some("  \n ")), None);
         assert_eq!(Lyrics::from_parts(false, None, None), None);
+    }
+
+    #[test]
+    fn a_note_that_says_instrumental_is_instrumental() {
+        for synced in [
+            "[00:00.00]♪ Instrumental ♪",
+            "[00:00.00][Instrumental]\n[01:30.00]\n[02:00.00](instrumental)",
+        ] {
+            assert_eq!(
+                Lyrics::from_parts(false, Some(synced), None),
+                Some(Lyrics::Instrumental),
+                "{synced}"
+            );
+        }
+        for plain in ["[Instrumental]", "\n♪ INSTRUMENTAL ♪\n\n- instrumental -\n"] {
+            assert_eq!(
+                Lyrics::from_parts(false, None, Some(plain)),
+                Some(Lyrics::Instrumental),
+                "{plain}"
+            );
+        }
+        // Words that merely mention it are lyrics.
+        assert!(matches!(
+            Lyrics::from_parts(false, None, Some("[Instrumental]\nla la la")),
+            Some(Lyrics::Plain(_))
+        ));
+        assert!(matches!(
+            Lyrics::from_parts(false, Some("[00:01.00]instrumental break"), None),
+            Some(Lyrics::Synced(_))
+        ));
     }
 }

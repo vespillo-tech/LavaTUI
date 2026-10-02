@@ -1738,7 +1738,7 @@ mod lyrics {
         settle(&mut m, t0 + S * 4);
         assert_eq!(m.lyrics.found, Some(Fetch::NotFound));
         let forms = Lyrics.forms(&m, Place::Overlay);
-        assert_eq!(forms.len(), 1, "one calm message");
+        assert_eq!(forms.len(), 2, "one calm message, long and short");
         assert_eq!(Lyrics.rank(&m), 0);
         assert!(Lyrics.chip(&m).is_none());
     }
@@ -1822,6 +1822,97 @@ mod lyrics {
         // Found: no more asking.
         tick(&mut m, at + ASK_AGAIN * 3);
         assert_eq!(mock.urls().len(), 2);
+    }
+
+    /// The lyrics widget's text in `form`, rows joined by `/`.
+    fn shown(m: &Model, form: crate::dock::WidgetForm) -> String {
+        let area = Rect::new(0, 0, form.size.width, form.size.height);
+        let mut buf = ratatui::buffer::Buffer::empty(area);
+        let look = crate::dock::Look {
+            backdrop: crate::dock::Backdrop::Panel,
+            align: ratatui::layout::Alignment::Left,
+        };
+        Lyrics.draw(m, form, area, look, &mut buf);
+        (0..area.height)
+            .map(|y| {
+                (0..area.width)
+                    .map(|x| buf[(x, y)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("/")
+    }
+
+    #[test]
+    fn no_lyrics_says_lrclib_lacks_them_and_instrumental_says_so() {
+        let (mut m, t0, source, mock) = placed("lyrics-fallbacks", 120, 36);
+        m.update(Action::Place("lyrics"), t0);
+        settle(&mut m, t0);
+        let empty = r#"{"trackName":"x","artistName":"y","duration":214.0,"instrumental":false,
+            "plainLyrics":null,"syncedLyrics":""}"#;
+        let flagged = r#"{"trackName":"x","artistName":"y","duration":214.0,"instrumental":true}"#;
+        let marker = r#"{"trackName":"x","artistName":"y","duration":214.0,"instrumental":false,
+            "plainLyrics":"[Instrumental]","syncedLyrics":"[00:00.00]♪ Instrumental ♪"}"#;
+        let not_found = [
+            "♪ no lyrics on lrclib.net for this song",
+            "♪ not on lrclib.net",
+        ];
+        // Both wordings, longest first: wide (the lava) and narrow (the panel).
+        let cases = [
+            (
+                "nothing at all",
+                vec![status(404), ok("[]")],
+                Fetch::NotFound,
+                not_found,
+            ),
+            (
+                "a record with no words",
+                vec![ok(empty), ok("[]")],
+                Fetch::NotFound,
+                not_found,
+            ),
+            (
+                "flagged instrumental",
+                vec![ok(flagged)],
+                Fetch::Lyrics(Words::Instrumental),
+                ["♪ instrumental"; 2],
+            ),
+            (
+                "only a note saying so",
+                vec![ok(marker)],
+                Fetch::Lyrics(Words::Instrumental),
+                ["♪ instrumental"; 2],
+            ),
+            (
+                "offline",
+                vec![status(400)],
+                Fetch::Offline,
+                ["♪ lyrics offline"; 2],
+            ),
+        ];
+        for (n, (name, replies, want, texts)) in cases.into_iter().enumerate() {
+            mock.replies.lock().unwrap().extend(replies);
+            let at = t0 + S * (n as u32 + 1);
+            source.set(playing(
+                track(&format!("t:{n}y"), &format!("song {n}")),
+                S,
+                at,
+            ));
+            settle(&mut m, at);
+            assert_eq!(m.lyrics.found, Some(want), "{name}");
+            for (place, width) in [(Place::Overlay, 30), (Place::Side, 20)] {
+                let forms = Lyrics.forms(&m, place);
+                let first = shown(&m, forms[0]);
+                let last = shown(&m, *forms.last().unwrap());
+                assert_eq!(first.replace('/', " "), texts[0], "{name} {place:?}");
+                assert_eq!(last, texts[1], "{name} {place:?}");
+                assert!(forms.iter().all(|f| f.size.width <= width), "{name}");
+            }
+            assert_eq!(Lyrics.rank(&m), 0, "{name}");
+            assert!(Lyrics.chip(&m).is_none(), "{name}");
+        }
     }
 
     #[test]

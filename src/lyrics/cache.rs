@@ -316,6 +316,51 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn instrumental_and_not_found_stay_apart() {
+        let tmp = TempDir::new("lyrics-kinds");
+        let cache = Cache::new(tmp.0.clone());
+        let (none, inst) = (track("Nothing", 100), track("Hum", 100));
+        let flagged = RawLyrics {
+            instrumental: true,
+            ..RawLyrics::default()
+        };
+        cache.put(&none, None, at(0)).unwrap();
+        cache.put(&inst, Some(&flagged), at(0)).unwrap();
+        assert_eq!(cache.get(&none, at(1)).unwrap().value, None);
+        let hit = cache.get(&inst, at(1)).unwrap().value;
+        assert_eq!(hit, Some(flagged));
+        assert_eq!(
+            hit.unwrap().lyrics(),
+            Some(crate::lyrics::Lyrics::Instrumental)
+        );
+    }
+
+    #[test]
+    fn entries_written_by_older_versions_still_load() {
+        let tmp = TempDir::new("lyrics-old");
+        let cache = Cache::new(tmp.0.clone());
+        let write = |t: &Track, value: &str| {
+            let json = format!(
+                r#"{{"version":1,"key":{},"stored":1700000000,"value":{value}}}"#,
+                serde_json::to_string(&key(t)).unwrap()
+            );
+            fs::write(cache.path(&key(t)), json).unwrap();
+        };
+        // Not found: a null. Instrumental: the flag alone, no other fields.
+        // Plain only: fields a newer version might add are ignored.
+        let (none, inst, plain) = (track("A", 1), track("B", 1), track("C", 1));
+        write(&none, "null");
+        write(&inst, r#"{"instrumental":true}"#);
+        write(&plain, r#"{"plain":"la","extra":1}"#);
+        assert_eq!(cache.get(&none, at(1)).unwrap().value, None);
+        let inst = cache.get(&inst, at(1)).unwrap().value.unwrap();
+        assert!(inst.instrumental);
+        let plain = cache.get(&plain, at(1)).unwrap().value.unwrap();
+        assert_eq!(plain.plain.as_deref(), Some("la"));
+        assert!(!plain.instrumental);
+    }
+
+    #[test]
     fn overwrite_and_corrupt_files() {
         let tmp = TempDir::new("lyrics-corrupt");
         let cache = Cache::new(tmp.0.clone());

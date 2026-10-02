@@ -32,6 +32,11 @@ What changed in each version of LavaTUI, in plain words.
 - Lyrics beside the lamp never cut off the line being sung: long lines
   wrap onto more rows, nearby lines are shortened after a whole word, and
   on big screens the panel widens to fit them.
+- When a song has no lyrics, the lyrics widget now says whose shelf is
+  bare: "no lyrics on lrclib.net for this song" (just "not on
+  lrclib.net" where space is tight). Songs that are instrumental say
+  "instrumental", including ones where lrclib.net only has a note saying
+  so.
 
 ## 1.2.0 — 2026-10-02 — first public release
 

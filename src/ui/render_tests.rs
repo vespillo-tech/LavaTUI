@@ -346,6 +346,26 @@ pub(super) fn lyrics(m: &mut Model, t: Instant, presses: usize, secs: u64) {
 
 /// [`lyrics`] with the song's LRC given (lines `\\n` apart: it's JSON).
 fn lyrics_lrc(m: &mut Model, t: Instant, presses: usize, secs: u64, lrc: &str) {
+    let body = format!(
+        r#"{{"trackName":"Slow Rise","artistName":"The Paraffins","duration":214.0,"instrumental":false,"syncedLyrics":"{lrc}"}}"#
+    );
+    lyrics_answered(m, t, presses, secs, &[&body]);
+    let area = m.layout.area;
+    for _ in 0..1000 {
+        m.tick(t, area, local());
+        if m.lyrics.cursor.is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert!(m.lyrics.cursor.is_some(), "lyrics never arrived");
+    m.toast = None;
+}
+
+/// The lyrics widget placed by `presses` of `y` on a fake player, LRCLIB
+/// answering with the `bodies` in order (`200`s), until it has answered.
+fn lyrics_answered(m: &mut Model, t: Instant, presses: usize, secs: u64, bodies: &[&str]) {
+    use crate::app::Fetch;
     use crate::lyrics::LyricsService;
     use crate::lyrics::client::Lrclib;
     use crate::lyrics::client::tests::{Mock, ok};
@@ -371,11 +391,9 @@ fn lyrics_lrc(m: &mut Model, t: Instant, presses: usize, secs: u64, lrc: &str) {
         move || Box::new(fake.clone()),
         || ArtLoader::preloaded(COVER, Art::solid(Rgb(200, 120, 40))),
     );
-    let body = format!(
-        r#"{{"trackName":"Slow Rise","artistName":"The Paraffins","duration":214.0,"instrumental":false,"syncedLyrics":"{lrc}"}}"#
-    );
+    let bodies: Vec<String> = bodies.iter().map(|b| b.to_string()).collect();
     m.lyrics.start_with(move || {
-        let mock = Mock::new([ok(&body)]);
+        let mock = Mock::new(bodies.iter().map(|b| ok(b)));
         LyricsService::spawn(Lrclib::with_http(mock, "http://test"), None, Vec::new()).ok()
     });
     for _ in 0..presses {
@@ -384,12 +402,11 @@ fn lyrics_lrc(m: &mut Model, t: Instant, presses: usize, secs: u64, lrc: &str) {
     let area = m.layout.area;
     for _ in 0..1000 {
         m.tick(t, area, local());
-        if m.lyrics.cursor.is_some() {
+        if !matches!(m.lyrics.found, None | Some(Fetch::Looking)) {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(2));
     }
-    assert!(m.lyrics.cursor.is_some(), "lyrics never arrived");
     m.toast = None;
 }
 
@@ -498,6 +515,66 @@ fn lyrics_are_never_clipped() {
             }
         }
         assert!(checked > 1000, "only {checked} layouts had the lyrics");
+    }
+}
+
+/// lava-75z.23: the "no lyrics" and "instrumental" sentences are shown
+/// whole too, wherever they land: the long wording, or the short one (or
+/// nothing at all) when the room is small; never half a sentence.
+#[test]
+fn lyrics_messages_are_never_clipped() {
+    let lyrics_at = WIDGETS.iter().position(|w| w.name() == "lyrics").unwrap();
+    let note = crate::glyphs::RICH.note;
+    let none = r#"{"trackName":"x","artistName":"y","duration":214.0,"instrumental":false}"#;
+    let flagged = r#"{"trackName":"x","artistName":"y","duration":214.0,"instrumental":true}"#;
+    let cases = [
+        (
+            "none",
+            vec![none, "[]"],
+            vec!["no lyrics on lrclib.net for this song", "not on lrclib.net"],
+        ),
+        ("instrumental", vec![flagged], vec!["instrumental"]),
+    ];
+    for (name, bodies, wordings) in cases {
+        for presses in [1, 2] {
+            let (mut m, t0) = model(120, 36, 1);
+            m.update(Action::PomodoroToggle, t0);
+            if presses == 1 {
+                music(&mut m, t0, Status::Playing, 1);
+            }
+            lyrics_answered(&mut m, t0, presses, 5, &bodies);
+            let mut checked = 0;
+            for cols in (20..=260).step_by(7) {
+                for rows in (8..=80).step_by(4) {
+                    let area = Rect::new(0, 0, cols, rows);
+                    m.tick(t0, area, local());
+                    let Some(placed) = m.layout.placed(lyrics_at).copied() else {
+                        continue;
+                    };
+                    let ctx = format!("{name} {cols}x{rows} presses {presses}");
+                    let mut buf = Buffer::empty(area);
+                    let look = Look {
+                        backdrop: Backdrop::Panel,
+                        align: ratatui::layout::Alignment::Left,
+                    };
+                    WIDGETS[lyrics_at].draw(&m, placed.form, placed.rect, look, &mut buf);
+                    let r = placed.rect;
+                    let shown: Vec<String> = (r.y..r.bottom())
+                        .map(|y| (r.x..r.right()).map(|x| buf[(x, y)].symbol()).collect())
+                        .collect();
+                    let text = shown.iter().map(|l| l.trim()).collect::<Vec<_>>().join(" ");
+                    assert!(
+                        wordings.iter().any(|w| text.trim() == format!("{note}{w}")),
+                        "{ctx}: {shown:#?}"
+                    );
+                    checked += 1;
+                }
+            }
+            assert!(
+                checked > 100,
+                "{name} presses {presses}: only {checked} layouts"
+            );
+        }
     }
 }
 
