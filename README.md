@@ -14,7 +14,14 @@ wax.
 ![LavaTUI in action: changing styles and colours, the clock and timer on the lamp, the music card, lyrics and album cover, the settings, and lamp-only mode](docs/screenshots/demo.gif)
 
 It runs in the terminal window you already use, on macOS, Linux and
-Windows. It's one small program.
+Windows. It's one small program. For the best look, we recommend a
+terminal that supports shaders, like [Ghostty](https://ghostty.org).
+Shaders add effects such as glow, which make the wax look even better.
+
+We've tested LavaTUI in a handful of terminals, but not all of them. If
+something looks wrong in yours, please
+[open an issue](https://github.com/vespillo-tech/LavaTUI/issues) and tell
+us which terminal you use. We'd love to hear how it works for you.
 
 **Contents:**
 [Pictures](#pictures) ·
