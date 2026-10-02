@@ -155,7 +155,8 @@ see-through but its glyph opaque, so a half-block cell split across two
 colours shows its lower or upper half darker. The lamp is drawn for this:
 halves that look alike become one colour, and the liquid is always the
 (see-through) background. In such a Ghostty (`display.cells = "auto"`
-reads its config at start) wax cells are never split at all, so wax and
+reads its config at start; apps that embed Ghostty's terminal, like
+Ghostex, don't count: they don't read that config) wax cells are never split at all, so wax and
 pool show no half-row streaks; it costs a little colour detail inside the
 wax, which is why opaque terminals don't get it. Set
 `display.cells = "translucent"` for another terminal that blends this

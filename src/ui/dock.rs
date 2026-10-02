@@ -55,7 +55,13 @@ pub fn draw_on_lava(buf: &mut Buffer, stack: &Stack, model: &Model, lamp: &Theme
         WIDGETS[p.widget].draw(model, p.form, p.rect, look, &mut scratch);
     }
     match model.settings.dock.backing {
-        Backing::None => float(buf, &scratch, model.theme.role(Role::Dim), lamp),
+        Backing::None => float(
+            buf,
+            &scratch,
+            model.theme.role(Role::Dim),
+            lamp,
+            model.translucent_cells(),
+        ),
         Backing::Soft => soft(buf, &scratch, lamp),
     }
 }
@@ -127,8 +133,9 @@ enum Put {
 /// everything behind it, else takes whichever of the palette's light and
 /// dark inks reads better against its worst cell: dark over bright wax,
 /// light over the liquid. With [`STICKY`] hysteresis.
-/// `dim` is the ink of secondary lines, drawn without bold.
-fn float(buf: &mut Buffer, scratch: &Buffer, dim: Color, lamp: &Theme) {
+/// `dim` is the ink of secondary lines, drawn without bold. `translucent`:
+/// the terminal shows cell backgrounds see-through ([`paint`]).
+fn float(buf: &mut Buffer, scratch: &Buffer, dim: Color, lamp: &Theme, translucent: bool) {
     let area = scratch.area.intersection(buf.area);
     let (w, h) = (usize::from(area.width), usize::from(area.height));
     let at = |i: usize| Position::new(area.x + (i % w) as u16, area.y + (i / w) as u16);
@@ -304,7 +311,7 @@ fn float(buf: &mut Buffer, scratch: &Buffer, dim: Color, lamp: &Theme) {
                     }
                 }
             }
-            paint(to, from.symbol(), fg, from.fg != dim, lamp);
+            paint(to, from.symbol(), fg, from.fg != dim, lamp, translucent);
         }
     }
     INKS.with_borrow_mut(|m| *m = inks);
@@ -330,7 +337,13 @@ fn seen_under(cell: &Cell, lamp: &Theme) -> Color {
 }
 
 /// Put a widget's `symbol` in `ink` into lamp cell `to`.
-fn paint(to: &mut Cell, symbol: &str, ink: Color, bold: bool, lamp: &Theme) {
+///
+/// With `translucent` (see-through cell backgrounds, opaque glyphs) a
+/// block glyph's other half is never the lamp's foreground pixel (wax),
+/// which would show darker than the wax around it: it's the lamp cell's
+/// background, what's behind the wax, as in [`crate::render::cell::half_block`].
+/// The wax gives up half a cell beside the stroke; the stroke stays whole.
+fn paint(to: &mut Cell, symbol: &str, ink: Color, bold: bool, lamp: &Theme, translucent: bool) {
     let mut style = Style::new();
     if bold {
         style = style.add_modifier(Modifier::BOLD);
@@ -341,7 +354,10 @@ fn paint(to: &mut Cell, symbol: &str, ink: Color, bold: bool, lamp: &Theme) {
         // ink is always the glyph's foreground (it may be the terminal's
         // default, or `bg`, which a transparent theme never paints).
         Some((top, bottom)) if lamp.has_color() => {
-            let (lt, lb) = lamp_pixels.unwrap_or((to.bg, to.bg));
+            let (lt, lb) = match lamp_pixels {
+                Some(pixels) if !translucent => pixels,
+                _ => (to.bg, to.bg),
+            };
             let (ch, bg) = match (top, bottom) {
                 (true, true) => ('█', lb),
                 (true, false) => ('▀', lb),
@@ -469,6 +485,18 @@ mod tests {
 
     /// A one-row lamp of `cells` (`(symbol, fg, bg)`) and `text` on it.
     fn float_row(lamp: &Theme, cells: &[(&str, Color, Color)], text: &str, ink: Color) -> Buffer {
+        float_row_on(lamp, cells, text, ink, false)
+    }
+
+    /// As [`float_row`], on a terminal with see-through cell backgrounds
+    /// when `translucent`.
+    fn float_row_on(
+        lamp: &Theme,
+        cells: &[(&str, Color, Color)],
+        text: &str,
+        ink: Color,
+        translucent: bool,
+    ) -> Buffer {
         let area = Rect::new(0, 0, cells.len() as u16, 1);
         let mut buf = Buffer::empty(area);
         for (x, &(symbol, fg, bg)) in cells.iter().enumerate() {
@@ -476,7 +504,7 @@ mod tests {
         }
         let mut scratch = Buffer::empty(area);
         scratch.set_string(0, 0, text, Style::new().fg(ink));
-        float(&mut buf, &scratch, lamp.role(Role::Dim), lamp);
+        float(&mut buf, &scratch, lamp.role(Role::Dim), lamp, translucent);
         buf
     }
 
@@ -577,6 +605,32 @@ mod tests {
         let ansi = theme("ansi");
         let d = TERMINAL_DEFAULT;
         let buf = float_row(&ansi, &[(" ", d, d)], "█", d);
+        assert_eq!(buf[(0, 0)].symbol(), "█");
+    }
+
+    /// lava-98n: on see-through cell backgrounds a block glyph never puts
+    /// the lamp's wax in the background (it would show darker than the
+    /// wax around it): the other half is what's behind the wax.
+    #[test]
+    fn translucent_cells_keep_wax_out_of_block_glyph_backgrounds() {
+        let t = theme("lava");
+        let (liquid, wax, text) = (
+            t.role(Role::Liquid),
+            t.role(Role::WaxMid),
+            t.role(Role::Text),
+        );
+        let lamp = [("▄", wax, liquid), ("▀", wax, liquid), ("█", wax, liquid)];
+        let buf = float_row_on(&t, &lamp, "▀▄▀", text, true);
+        for x in 0..3 {
+            let c = &buf[(x, 0)];
+            assert_eq!(c.bg, liquid, "{x}: {c:?}");
+            assert!(c.fg != liquid && c.fg != wax, "{x}: the stroke is ink");
+        }
+        assert_eq!(buf[(0, 0)].symbol(), "▀");
+        assert_eq!(buf[(1, 0)].symbol(), "▄");
+        assert_eq!(buf[(2, 0)].symbol(), "▀");
+        // A whole-cell stroke covers the lamp either way.
+        let buf = float_row_on(&t, &[("█", wax, liquid)], "█", text, true);
         assert_eq!(buf[(0, 0)].symbol(), "█");
     }
 }

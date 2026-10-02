@@ -21,17 +21,17 @@
  app
  m       minimal
  ?       this help
- q       quit · ctrl-c
- b d     status bar · debug hud
+ q       quit
+ b       status bar
+ d       debug info
  ctrl-l  redraw
- ⇧ drag  select text
 
  lamp
- s    next style
- S    style picker
- p    next palette
- P    palette picker
- [ ]  heat − +
+ s  next style
+ S  style picker
+ p  next palette
+ P  palette picker
+ [  less heat
 ── style picker ──
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -7,8 +7,8 @@ use ratatui::layout::Rect;
 use crate::ui::keymap::{KEYMAP, Section};
 use crate::ui::layout::{HELP_SHEET, SizeTier, reaches};
 
-/// The sheet's outer size cap (§4.3).
-const SHEET: (u16, u16) = (66, 22);
+/// The sheet's outer size cap (§4.3): 24 rows show every key at 80x24.
+const SHEET: (u16, u16) = (66, 24);
 /// Columns needed inside the sheet for two columns.
 const TWO_COLUMNS: u16 = 56;
 
@@ -21,18 +21,33 @@ pub enum Line {
         key_w: usize,
     },
     Blank,
+    /// A dim line of its own: the narrow help's note that keys whose
+    /// labels don't fit were left out.
+    Note(&'static str),
 }
+
+/// The narrow help's last line when it left keys out.
+pub const WIDEN: &str = "widen for all keys";
 
 /// Blank columns between the two columns of the sheet.
 pub const GUTTER: u16 = 2;
 
-fn section(s: Section) -> Vec<Line> {
+/// A section's header and rows: as the keymap has them, or `split` one
+/// action a line ([`crate::ui::keymap::Row::split`]).
+fn section(s: Section, split: bool) -> Vec<Line> {
     let mut lines = vec![Line::Header(s)];
-    lines.extend(KEYMAP.iter().filter(|r| r.section == s).map(|r| Line::Key {
-        keys: r.keys,
-        label: r.label,
-        key_w: 0,
-    }));
+    for r in KEYMAP.iter().filter(|r| r.section == s) {
+        let rows = if split {
+            r.split()
+        } else {
+            vec![(r.keys, r.label)]
+        };
+        lines.extend(rows.into_iter().map(|(keys, label)| Line::Key {
+            keys,
+            label,
+            key_w: 0,
+        }));
+    }
     lines
 }
 
@@ -54,10 +69,14 @@ fn align(mut lines: Vec<Line>) -> Vec<Line> {
     lines
 }
 
-/// Two columns (lamp + clock & pomodoro | widgets + music + app), labels
-/// lined up per column; or one, app first so `m ? q` are on screen at the
-/// smallest sizes, labels lined up per section (room is short there).
-fn columns(two: bool) -> Vec<Vec<Line>> {
+/// Two columns (lamp + clock & pomodoro + mouse | widgets + music + app:
+/// at most 22 rows, so 80x24 shows them whole), labels lined up per
+/// column; or one `width` wide, app first so `m ? q` are on screen at the
+/// smallest sizes, one action a line, labels lined up per section (room
+/// is short there). A label there shows whole or not at all (cut short,
+/// it could say something else): rows without room are left out and the
+/// last line says to widen the window.
+fn columns(two: bool, width: u16) -> Vec<Vec<Line>> {
     if two {
         let column = |sections: &[Section]| {
             let mut col = Vec::new();
@@ -65,24 +84,33 @@ fn columns(two: bool) -> Vec<Vec<Line>> {
                 if i > 0 {
                     col.push(Line::Blank);
                 }
-                col.extend(section(s));
+                col.extend(section(s, false));
             }
             align(col)
         };
         return vec![
-            column(&[Section::Lamp, Section::Clock]),
+            column(&[Section::Lamp, Section::Clock, Section::Mouse]),
             column(&[Section::Widgets, Section::Music, Section::App]),
         ];
     }
-    let mut one = align(section(Section::App));
+    let mut one = align(section(Section::App, true));
     for s in [
         Section::Lamp,
         Section::Clock,
         Section::Widgets,
         Section::Music,
+        Section::Mouse,
     ] {
         one.push(Line::Blank);
-        one.extend(align(section(s)));
+        one.extend(align(section(s, true)));
+    }
+    let fits = |l: &Line| match *l {
+        Line::Key { label, key_w, .. } => key_w + 2 + label.chars().count() <= usize::from(width),
+        _ => true,
+    };
+    if !one.iter().all(fits) {
+        one.retain(fits);
+        one.extend([Line::Blank, Line::Note(WIDEN)]);
     }
     vec![one]
 }
@@ -94,6 +122,7 @@ fn natural_width(lines: &[Line]) -> u16 {
         .map(|l| match *l {
             Line::Header(s) => s.title().chars().count(),
             Line::Key { label, key_w, .. } => key_w + 2 + label.chars().count(),
+            Line::Note(s) => s.chars().count(),
             Line::Blank => 0,
         })
         .max()
@@ -128,7 +157,7 @@ pub fn mode(area: Rect) -> Mode {
     if SizeTier::of(area) == SizeTier::Micro {
         Mode::Line
     } else if reaches(area.width, area.height, HELP_SHEET) {
-        let (w, h) = (SHEET.0.min(area.width - 4), SHEET.1.min(area.height - 2));
+        let (w, h) = (SHEET.0.min(area.width - 4), SHEET.1.min(area.height));
         Mode::Sheet(Rect::new(
             area.x + (area.width - w) / 2,
             area.y + (area.height - h) / 2,
@@ -151,11 +180,11 @@ pub fn body(area: Rect) -> Option<(Vec<Vec<Line>>, Rect)> {
                 area.width.saturating_sub(2),
                 area.height.saturating_sub(2),
             );
-            Some((columns(false), inner))
+            Some((columns(false, inner.width), inner))
         }
         Mode::Sheet(sheet) => {
             let inner = Rect::new(sheet.x + 3, sheet.y + 1, sheet.width - 6, sheet.height - 2);
-            Some((columns(inner.width >= TWO_COLUMNS), inner))
+            Some((columns(inner.width >= TWO_COLUMNS, inner.width), inner))
         }
     }
 }

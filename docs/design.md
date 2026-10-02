@@ -457,8 +457,9 @@ darker: half-row dashes. So (`render::cell::half_block`, always):
   see-through as the rest of the window, and a split cell puts the
   liquid's half (else the darker half) behind.
 
-With `display.cells = "translucent"` (or `"auto"` in a Ghostty configured
-as above) two wax halves never split: they become their mean, giving up
+With `display.cells = "translucent"` (or `"auto"` in a native Ghostty
+configured as above; not in hosts that embed its terminal, such as
+Ghostex, which ignore its config) two wax halves never split: they become their mean, giving up
 colour detail *inside* the wax (never the silhouette) for no seams; the
 256-colour dither then works a cell at a time.
 
@@ -604,16 +605,23 @@ Inset by the side margin (§1.3) on each side.
 
 The form depends on the terminal size (`ui/help/sheet.rs`):
 
-* **≥ 68 × 20: a centred sheet**, `min(66, cols−4)` × `min(22, rows−2)`,
+* **≥ 68 × 20: a centred sheet**, `min(66, cols−4)` × `min(24, rows)`,
   with a **rounded border in `metal`**. Overlays are the only place
   borders appear. The title `keys` sits in the top border in `accent`,
   and `esc close` in the bottom-right border in `dim`. The sheet always
-  has two columns: *lamp* then *clock & pomodoro* | *widgets*, *music · after A*
-  (the player keys, §6.2) then *app*, with section
-  headers in `dim`, keys in `accent` and labels in `text`. Labels line up
-  per column at its widest key + 2; the left column takes its natural
-  width (at least half) and a 2-col gutter separates them. The rows come
-  straight from the keymap table (§6), so help can't drift from dispatch.
+  has two columns: *lamp*, *clock & pomodoro* then *mouse* | *widgets*,
+  *music · after A* (the player keys, §6.2) then *app*, with section
+  headers in `dim`, keys in `accent` and labels in `text`. A key and its
+  shifted picker share a row (`s S  style · picker`), so the 22 rows
+  inside fit every key at 80×24 (the sheet then takes the full height).
+  Labels line up per column at its widest key + 2; the left column takes
+  its natural width (at least half) and a 2-col gutter separates them.
+  The rows come straight from the keymap table (§6), so help can't drift
+  from dispatch.
+* The *mouse* section (§6.3): drag warms the wax, click picks (double
+  keeps), the wheel scrolls lists and help, and text selection is
+  `⇧ drag`, or `⌥ drag` where the terminal says it's macOS Terminal or
+  iTerm2 (`TERM_PROGRAM`).
 * The lamp keeps animating behind it, dimmed to 35 % (truecolor: lerp
   toward `bg`; 256/16: the sheet's rect is cleared to `bg`, the rest
   isn't dimmed).
@@ -621,8 +629,12 @@ The form depends on the terminal size (`ui/help/sheet.rs`):
   with `j/k/↑/↓`, no border: `keys` (accent) top-left and `esc close`
   (dim) top-right on the first row, the body from the third row. The
   *app* section comes first (`m ? q` lead it), then lamp, clock, widgets,
-  music;
-  labels line up per section. When keys are cut off, a dim scroll hint
+  music, mouse; labels line up per section. Here it's **one action a
+  line** with short labels (`s  next style`, `S  style picker`;
+  `Row::narrow` in the keymap), and a label shows whole or not at all:
+  a combined row cut to fit could name one action for two keys. Rows
+  with no room are left out and the last line says `widen for all keys`.
+  When keys are cut off, a dim scroll hint
   sits after `keys`: `↓ j/k more` (`↑` at the end, `↕` between),
   shortened to `↓ more` or `↓` to fit.
 * **Micro:** the single line `? close · too small for keys` in the top row
@@ -631,34 +643,35 @@ The form depends on the terminal size (`ui/help/sheet.rs`):
 * `?`, `esc` or `q` closes it. While help is open, `q` closes help and
   does *not* quit.
 
-80×24, captured from the app (`--color none`; the panel stays hidden while
-the sheet would touch it, §8.2). Everything fits without scrolling from
-80×24 up:
+80×24, captured from the app (`--color none`; the panel and status bar
+stay hidden while the sheet would touch them, §8.2). Everything fits
+without scrolling from 80×24 up:
 
 ```
        ╭ keys ──────────────────────────────────────────────────────────╮
        │  lamp                          widgets                         │
-       │  s    next style               t       clock side/lava/off     │
-       │  S    style picker             f       pomodoro side/lava/off  │
-       │  p    next palette             a       music side/lava/off     │
-       │  P    palette picker           A       music keys              │
-       │  [ ]  heat − +                 l       move lava widgets       │
-       │  - +  speed                                                    │
-       │  z    freeze                   music · after A                 │
-       │  0    reset heat & speed       ␣       play / pause            │
-       │  R    reseed wax               n p     next · previous         │
-       │                                ←→ ↑↓   seek · volume           │
-       │  clock & pomodoro              x r     shuffle · repeat        │
-       │  c    next face                                                │
-       │  C    face picker              app                             │
-       │  T    12h / 24h                m       minimal                 │
-       │  ␣    start / pause            ?       this help               │
-       │  n    skip phase               q       quit · ctrl-c           │
-       │  r r  reset pomodoro           b       status bar              │
-       │                                d       debug hud               │
+       │  s S     style · picker        t       clock side/lava/off     │
+       │  p P     palette · picker      f       pomodoro side/lava/off  │
+       │  [ ]     heat − +              a       music side/lava/off     │
+       │  - +     speed                 A       music keys              │
+       │  z       freeze                y       lyrics · lrclib.net     │
+       │  0       reset heat & speed    o O     cover · detail          │
+       │  R       reseed wax            l L     move, pick lava widget  │
+       │                                                                │
+       │  clock & pomodoro              music · after A                 │
+       │  c C     face · picker         ␣ n p   play · next · previous  │
+       │  T       12h / 24h             ←→ ↑↓   seek · volume           │
+       │  ␣       start / pause         x r     shuffle · repeat        │
+       │  n       skip phase            s a     like · add to playlist  │
+       │  r r     reset pomodoro        b i     playlists · log in/out  │
+       │                                                                │
+       │  mouse                         app                             │
+       │  drag    warm the wax          m       minimal                 │
+       │  click   pick · double keeps   ?       this help               │
+       │  wheel   scroll lists & help   q       quit · ctrl-c           │
+       │  ⇧ drag  select text           b d     status bar · debug hud  │
        │                                ctrl-l  redraw                  │
        ╰───────────────────────────────────────────────────── esc close ╯
-  ● braille · lava      s style  c clock  p palette  m minimal  ␣ pomo  ? help
 ```
 
 ### 4.4 Pickers (`S` style, `C` face, `P` palette)
@@ -1386,7 +1399,7 @@ double-click to keep / open. Every click has a key.
 | Render rate | default **60 fps** (`--fps 1..=240`, `display.fps`). Lava is slow, but 60 fps keeps input feeling instant and makes the slow motion buttery |
 | Wax tempo (×1, heat 3) | a blob takes **~20–40 s** to cross the lamp: slow, hypnotic, never jittery |
 | Startup → first frame | **< 100 ms**. The sim starts *pre-warmed*: ~600 headless steps at launch, so frame 1 already looks alive (no 2-hour warm-up) |
-| Input latency | key → visible change **≤ 1 frame** (≤ 17 ms at 60 fps). The loop blocks on `event::poll(time_to_next_frame)`; any input that changes UI state triggers an immediate redraw, without waiting for the tick |
+| Input latency | key → visible change **≤ 1 frame** (≤ 17 ms at 60 fps). The loop blocks on `event::poll(time_to_next_frame)`; any input that changes UI state triggers an immediate redraw, without waiting for the tick, unless a frame started under one period ago: then it draws when that period is up (input never draws above the target fps) |
 | Frame CPU (release, 2020-era laptop) | ≤ **2 ms** at 80×24; ≤ **8 ms** at 200×60 with braille (≤ 50 % of a 60 fps budget) |
 | CPU usage | ≤ **5 %** of a core at 80×24, ≤ **15 %** at 200×60 @ 60 fps |
 | Output bandwidth | rely on ratatui's cell diff; ≤ ~200 KB/s at 80×24 (SSH-friendly) |

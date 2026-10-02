@@ -14,8 +14,8 @@
  m       minimal
  ?       this help
  q       quit
- b d     status bar
- ctrl-l  redraw
+ b       status bar
+ d       debug info
 ── style picker ──
 ~~~~ ‹ solid › ~~~~~
 ~~~~~~~~~~~~~~~~~~~~

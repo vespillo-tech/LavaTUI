@@ -24,30 +24,30 @@
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   ● solid · lava        s style  c clock  p palette  m minimal  ␣ pomo  ? help
 ── help ──
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ~~~~~~~╭ keys ──────────────────────────────────────────────────────────╮
 ~~~~~~~│  lamp                          widgets                         │
-~~~~~~~│  s    next style               t       clock side/lava/off     │
-~~~~~~~│  S    style picker             f       pomodoro side/lava/off  │
-~~~~~~~│  p    next palette             a       music side/lava/off     │
-~~~~~~~│  P    palette picker           A       music keys              │
-~~~~~~~│  [ ]  heat − +                 y       lyrics · lrclib.net     │
-~~~~~~~│  - +  speed                    o O     cover · detail          │
-~~~~~~~│  z    freeze                   l L     move, pick lava widget  │
-~~~~~~~│  0    reset heat & speed                                       │
-~~~~~~~│  R    reseed wax               music · after A                 │
-~~~~~~~│                                ␣ n p   play · next · previous  │
-~~~~~~~│  clock & pomodoro              ←→ ↑↓   seek · volume           │
-~~~~~~~│  c    next face                x r     shuffle · repeat        │
-~~~~~~~│  C    face picker              s a     like · add to playlist  │
-~~~~~~~│  T    12h / 24h                b i     playlists · log in/out  │
-~~~~~~~│  ␣    start / pause                                            │
-~~~~~~~│  n    skip phase               app                             │
-~~~~~~~│  r r  reset pomodoro           m       minimal                 │
-~~~~~~~│                                ?       this help               │
-~~~~~~~│                                q       quit · ctrl-c           │
-~~~~~~~╰ ↓ j/k more ───────────────────────────────────────── esc close ╯
-  ● solid · lava        s style  c clock  p palette  m minimal  ␣ pomo  ? help
+~~~~~~~│  s S     style · picker        t       clock side/lava/off     │
+~~~~~~~│  p P     palette · picker      f       pomodoro side/lava/off  │
+~~~~~~~│  [ ]     heat − +              a       music side/lava/off     │
+~~~~~~~│  - +     speed                 A       music keys              │
+~~~~~~~│  z       freeze                y       lyrics · lrclib.net     │
+~~~~~~~│  0       reset heat & speed    o O     cover · detail          │
+~~~~~~~│  R       reseed wax            l L     move, pick lava widget  │
+~~~~~~~│                                                                │
+~~~~~~~│  clock & pomodoro              music · after A                 │
+~~~~~~~│  c C     face · picker         ␣ n p   play · next · previous  │
+~~~~~~~│  T       12h / 24h             ←→ ↑↓   seek · volume           │
+~~~~~~~│  ␣       start / pause         x r     shuffle · repeat        │
+~~~~~~~│  n       skip phase            s a     like · add to playlist  │
+~~~~~~~│  r r     reset pomodoro        b i     playlists · log in/out  │
+~~~~~~~│                                                                │
+~~~~~~~│  mouse                         app                             │
+~~~~~~~│  drag    warm the wax          m       minimal                 │
+~~~~~~~│  click   pick · double keeps   ?       this help               │
+~~~~~~~│  wheel   scroll lists & help   q       quit · ctrl-c           │
+~~~~~~~│  ⇧ drag  select text           b d     status bar · debug hud  │
+~~~~~~~│                                ctrl-l  redraw                  │
+       ╰───────────────────────────────────────────────────── esc close ╯
 ── style picker ──
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
