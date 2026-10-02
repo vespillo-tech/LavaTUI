@@ -34,7 +34,7 @@ use crate::theme::Role;
 pub use clock::clock_forms;
 pub use clock::{Clock, clock_parts};
 pub use cover::Cover;
-pub use lyrics::Lyrics;
+pub use lyrics::{Lyrics, Sizing as LyricsSizing};
 #[cfg(test)]
 pub use lyrics::{Show as LyricsShow, lyrics_forms};
 pub use music::{Music, fit, hit as music_hit, wrap};

@@ -1624,7 +1624,7 @@ mod lyrics {
             Some(Fetch::Lyrics(Words::Synced(_)))
         ));
         assert!(mock.urls()[0].contains("/api/get?track_name=Slow%20Rise"));
-        assert_eq!(m.lyrics.widest, 11);
+        assert_eq!(m.lyrics.sizing.widest, 11);
 
         // 3 s in: the intro (before the first line).
         tick(&mut m, t0);

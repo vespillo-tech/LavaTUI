@@ -3,22 +3,34 @@
 //! `app/model/lyrics.rs`). Off by default: placing it (`y`) is the opt-in
 //! to sending the track's title, artist, album and length to lrclib.net.
 //!
-//! Forms, most preferred first (W = the song's widest line, 20..=56 on
-//! the lava; the side panel's width beside the lamp):
+//! **The line being sung is always shown whole** (design §4.6, lava-uqi).
+//! Every form is sized by the song, once, when its lyrics arrive
+//! ([`Sizing`]): it keeps `R` rows for the current line, the most rows
+//! any of the song's lines wraps onto (between words) at the form's
+//! width. Sizes are fixed per song, so nothing jumps from line to line.
+//! Forms, most preferred first:
 //!
-//! | form | size | shows |
-//! |---|---|---|
-//! | five | W × 5 | two lines back, the current line, two ahead |
-//! | three | W × 3 | one back, the current line, one ahead |
-//! | narrower | 36 / 24 × 3 | the same, for a small lamp |
-//! | line | W / 36 / 24 × 1 | the current line alone |
+//! | form | on the lava | beside the lamp | shows |
+//! |---|---|---|---|
+//! | five | W × (4 + R) | fill × (4 + R) | two lines back, the current line, two ahead |
+//! | three | W, 36, 24 × (2 + R) | fill × (2 + R) | one back, the current line, one ahead |
+//! | line | W, 36, 24 × R | fill × R | the current line alone |
 //!
-//! Sizes are fixed per song, so nothing jumps from line to line. A current
-//! line wider than the form wraps onto the row below (in the 3- and 5-row
-//! forms; the next line makes way), others are cut with `…`. A new line
-//! brightens over [`FADE`](crate::app::model) while the old one dims; a
-//! seek cuts. Gaps (and the intro) show three dots filling as it passes.
-//! Plain (untimed) lyrics scroll with the track's progress, unhighlighted.
+//! On the lava W is the song's widest line (20..=56), and 36 / 24 are for
+//! small lamps. Beside the lamp a form fills the panel's width; each
+//! comes at the narrowest widths (≥ 20) that hold every line in one, two
+//! and three rows, and at 20 (in as many rows as that takes), so the
+//! panel picks the shortest form its width allows (and grows for it from
+//! 200 cols up, like for a big clock face).
+//!
+//! The current line starts on the row under the lines kept for those
+//! before it; when it takes fewer rows than its form keeps, the lines
+//! after it move up. A line around it shows whole when it fits in the
+//! rows left, else on one row cut after a word with `…` (never mid-word,
+//! but for a single word wider than the form). A new line brightens over
+//! [`FADE`](crate::app::model) while the old one dims; a seek cuts. Gaps
+//! (and the intro) show three dots filling as it passes. Plain (untimed)
+//! lyrics scroll with the track's progress, unhighlighted.
 //! Everything else is one calm dim sentence: `♪ instrumental`, `♪ no
 //! lyrics for this track`, `♪ lyrics offline`, the player's state.
 //!
@@ -42,27 +54,68 @@ pub struct Lyrics;
 const W: (u16, u16) = (20, 56);
 /// Narrower fallbacks for small lamps.
 const NARROW: [u16; 2] = [36, 24];
-/// The side panel's narrowest inside.
-const SIDE_MIN: u16 = 20;
+/// The side panel's narrowest and widest inside (`ui::layout`'s
+/// `PANEL_W.0 - 2` and `PANEL_W_WIDE - 2`).
+const SIDE_W: (u16, u16) = (20, 54);
+/// Beside the lamp, forms come at the narrowest width that holds the
+/// current line in up to this many rows (and at the narrowest panel).
+const SIDE_ROWS: u16 = 3;
 const CHIP_MAX: u16 = 32;
 /// Messages wrap at this width: panel, lava.
 const MESSAGE_W: (u16, u16) = (20, 30);
 
-/// `WidgetForm::variant`: the kind high, the row count low.
+/// `WidgetForm::variant`: the kind high; for lines, the rows kept for the
+/// lines before the current one low.
 const V_LINES: u16 = 0x100;
 const V_MESSAGE: u16 = 0x200;
 
+/// What a song's forms are sized by, worked out once when its lyrics
+/// arrive (`LyricsState::sizing`): its widest line, and how many rows its
+/// longest line wraps onto at each width a form can have.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Sizing {
+    /// The widest line, in columns.
+    pub widest: u16,
+    /// The most rows a line takes at each width from `W.0` to `W.1`.
+    rows: Vec<u16>,
+}
+
+impl Sizing {
+    pub fn of<'a>(lines: impl IntoIterator<Item = &'a str>) -> Self {
+        let lines: Vec<&str> = lines.into_iter().filter(|l| !l.trim().is_empty()).collect();
+        let widths: Vec<u16> = lines.iter().map(|l| width(l)).collect();
+        let widest = widths.iter().copied().max().unwrap_or(0);
+        // Once per song, on the frame that gets them: only lines wider
+        // than `w` are wrapped.
+        let rows = (W.0..=W.1)
+            .map(|w| {
+                let rows = |(l, &lw): (&&str, &u16)| if lw <= w { 1 } else { wrap(l, w).len() };
+                let most = lines.iter().zip(&widths).map(rows).max();
+                most.unwrap_or(1).min(usize::from(u16::MAX)) as u16
+            })
+            .collect();
+        Self { widest, rows }
+    }
+
+    /// The most rows any line takes, wrapped at `w` columns (`w` ≥ 20).
+    pub fn rows(&self, w: u16) -> u16 {
+        if w >= self.widest {
+            return 1;
+        }
+        let at = usize::from(w.clamp(W.0, W.1) - W.0);
+        self.rows.get(at).copied().unwrap_or(1).max(1)
+    }
+}
+
 /// What there is to show (pure input to [`lyrics_forms`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Show {
-    /// Lines (synced or plain); `widest` sizes the forms.
-    Lines {
-        widest: u16,
-    },
+pub enum Show<'a> {
+    /// Lines (synced or plain), sized by the song.
+    Lines(&'a Sizing),
     Message(String),
 }
 
-fn show(model: &Model) -> Show {
+fn show(model: &Model) -> Show<'_> {
     // With its `♪`, when the glyphs have one.
     let message = |text: &str| Show::Message(format!("{}{text}", model.glyphs().note));
     let Some(snap) = model.music.snapshot.as_ref() else {
@@ -81,9 +134,7 @@ fn show(model: &Model) -> Show {
         Some(Fetch::NotFound) => message("no lyrics for this track"),
         Some(Fetch::Offline) => message("lyrics offline"),
         Some(Fetch::Lyrics(Words::Instrumental)) => message("instrumental"),
-        Some(Fetch::Lyrics(_)) => Show::Lines {
-            widest: model.lyrics.widest,
-        },
+        Some(Fetch::Lyrics(_)) => Show::Lines(&model.lyrics.sizing),
     }
 }
 
@@ -99,28 +150,69 @@ pub fn lyrics_forms(show: &Show, place: Place) -> Vec<WidgetForm> {
             let w = lines.iter().map(|l| width(l)).max().unwrap_or(1).max(1);
             vec![WidgetForm::fixed(w, lines.len() as u16, V_MESSAGE)]
         }
-        &Show::Lines { widest } => {
-            if place != Place::Overlay {
-                return [5, 3, 1]
-                    .map(|rows| WidgetForm::fill(SIDE_MIN, rows, V_LINES | rows))
-                    .to_vec();
-            }
-            let full = widest.clamp(W.0, W.1);
-            let mut widths = vec![full];
-            widths.extend(NARROW.into_iter().filter(|&n| n < full));
-            let mut forms = vec![
-                WidgetForm::fixed(full, 5, V_LINES | 5),
-                WidgetForm::fixed(full, 3, V_LINES | 3),
-            ];
-            forms.extend(
-                widths[1..]
-                    .iter()
-                    .map(|&w| WidgetForm::fixed(w, 3, V_LINES | 3)),
-            );
-            forms.extend(widths.iter().map(|&w| WidgetForm::fixed(w, 1, V_LINES | 1)));
-            forms
+        Show::Lines(sizing) if place == Place::Overlay => lava_forms(sizing),
+        Show::Lines(sizing) => side_forms(sizing),
+    }
+}
+
+/// A form `w` wide with `back` lines before the current one, as many
+/// after, and `rows` for the current one.
+fn lines_form(w: u16, back: u16, rows: u16, fill: bool) -> WidgetForm {
+    let (h, variant) = (2 * back + rows, V_LINES | back);
+    if fill {
+        WidgetForm::fill(w, h, variant)
+    } else {
+        WidgetForm::fixed(w, h, variant)
+    }
+}
+
+/// On the lava: five at the song's width, then three and the line alone
+/// at it and the narrower widths.
+fn lava_forms(s: &Sizing) -> Vec<WidgetForm> {
+    let full = s.widest.clamp(W.0, W.1);
+    let mut widths = vec![full];
+    widths.extend(NARROW.into_iter().filter(|&n| n < full));
+    let mut forms = vec![lines_form(full, 2, s.rows(full), false)];
+    for back in [1, 0] {
+        forms.extend(
+            widths
+                .iter()
+                .map(|&w| lines_form(w, back, s.rows(w), false)),
+        );
+    }
+    forms
+}
+
+/// Beside the lamp: five, three and the line alone, each at the widths
+/// of [`side_widths`] (filling the panel).
+fn side_forms(s: &Sizing) -> Vec<WidgetForm> {
+    let widths = side_widths(s);
+    [2, 1, 0]
+        .into_iter()
+        .flat_map(|back| {
+            widths
+                .iter()
+                .map(move |&w| lines_form(w, back, s.rows(w), true))
+        })
+        .collect()
+}
+
+/// The narrowest panel insides that hold every line in one, two and
+/// three rows, widest first, then the narrowest panel's (in as many rows
+/// as that takes): wider than one of these only spares rows, which the
+/// lines after the current one use.
+fn side_widths(s: &Sizing) -> Vec<u16> {
+    let mut out: Vec<u16> = Vec::new();
+    for rows in 1..=SIDE_ROWS {
+        let narrowest = (SIDE_W.0..=SIDE_W.1).find(|&w| s.rows(w) <= rows);
+        if let Some(w) = narrowest.filter(|w| !out.contains(w)) {
+            out.push(w);
         }
     }
+    if !out.contains(&SIDE_W.0) {
+        out.push(SIDE_W.0);
+    }
+    out
 }
 
 impl DockWidget for Lyrics {
@@ -140,7 +232,7 @@ impl DockWidget for Lyrics {
 
     /// Lines while playing 2 (as music), paused 1, otherwise 0.
     fn rank(&self, model: &Model) -> u8 {
-        let lines = matches!(show(model), Show::Lines { .. });
+        let lines = matches!(show(model), Show::Lines(_));
         match model.music.snapshot.as_ref().map(|s| &s.status) {
             Some(Status::Playing) if lines => 2,
             Some(Status::Paused) if lines => 1,
@@ -159,6 +251,7 @@ impl DockWidget for Lyrics {
             area,
             align: look.align,
         };
+        let back = form.variant & 0xff;
         match (form.variant & 0xff00, show(model)) {
             (V_MESSAGE, Show::Message(text)) => {
                 let dim = model.theme.text(Role::Dim);
@@ -166,16 +259,17 @@ impl DockWidget for Lyrics {
                     pen.text(i as u16, line, dim);
                 }
             }
-            (V_LINES, Show::Lines { .. }) => match &model.lyrics.found {
-                Some(Fetch::Lyrics(Words::Synced(_))) => pen.synced(),
-                Some(Fetch::Lyrics(Words::Plain(lines))) => pen.plain(lines),
+            (V_LINES, Show::Lines(_)) => match &model.lyrics.found {
+                Some(Fetch::Lyrics(Words::Synced(_))) => pen.synced(back),
+                Some(Fetch::Lyrics(Words::Plain(lines))) => pen.plain(lines, back),
                 _ => {}
             },
             _ => {}
         }
     }
 
-    /// The current line while playing synced lyrics (`♪` in a gap).
+    /// The current line while playing synced lyrics (`♪` in a gap), cut
+    /// after a word if it's long.
     fn chip(&self, model: &Model) -> Option<ChipText> {
         let snap = model.music.snapshot.as_ref()?;
         if snap.status != Status::Playing {
@@ -191,10 +285,69 @@ impl DockWidget for Lyrics {
         let text = text.trim_end();
         // A gap with no note to show: no chip.
         (!text.is_empty()).then(|| ChipText {
-            text: fit(text, CHIP_MAX),
+            text: cut(text, CHIP_MAX),
             ink: Role::Text,
         })
     }
+}
+
+/// `text` on one row of `w`: whole if it fits, else cut after the last
+/// word that fits (and any `,;:` it ends with), then `…`. Only a first
+/// word wider than the row is cut inside.
+pub fn cut(text: &str, w: u16) -> String {
+    if width(text) <= w {
+        return text.to_owned();
+    }
+    let mut out = String::new();
+    for word in text.split_whitespace() {
+        let longer = if out.is_empty() {
+            word.to_owned()
+        } else {
+            format!("{out} {word}")
+        };
+        if width(&longer) + 1 > w {
+            break;
+        }
+        out = longer;
+    }
+    let kept = out.trim_end_matches([',', ';', ':']).len();
+    out.truncate(kept);
+    if out.is_empty() {
+        return fit(text, w);
+    }
+    out.push('…');
+    out
+}
+
+/// A line next to the current one, in at most `free` rows of `w`: whole
+/// when it fits, else one row cut after a word.
+fn neighbour(text: &str, w: u16, free: u16) -> Vec<String> {
+    let rows = wrap(text, w);
+    if rows.len() <= usize::from(free) {
+        rows
+    } else {
+        vec![cut(text, w)]
+    }
+}
+
+/// The line being sung in at most `most` rows of `w`: whole (its form
+/// keeps the rows for it), else (never, by the sizing) the last row cut
+/// after a word.
+fn whole(text: &str, w: u16, most: u16) -> Vec<String> {
+    let most = usize::from(most.max(1));
+    let mut rows = wrap(text, w);
+    if rows.len() > most {
+        let rest = rows[most - 1..].join(" ");
+        rows.truncate(most - 1);
+        rows.push(cut(&rest, w));
+    }
+    rows
+}
+
+/// The middle of [`Pen::around`]: the current line, or a gap's dots.
+enum Current<'t> {
+    Line(&'t str, Style),
+    Dots(f32),
 }
 
 struct Pen<'a, 'b> {
@@ -231,71 +384,85 @@ impl Pen<'_, '_> {
         Style::new().fg(fg)
     }
 
-    /// Lines around the current one, the current one bold and bright.
-    fn synced(&mut self) {
+    /// Synced lyrics: the current line bold and bright from row `back`,
+    /// the lines around it dim (the one just left fading down).
+    fn synced(&mut self, back: u16) {
         let model = self.model;
         let state = &model.lyrics;
         let (Some(synced), Some(cursor)) = (state.synced(), state.cursor) else {
             return;
         };
-        let rows = self.area.height;
-        let mid = rows / 2;
         let k = state.fade(model.now);
         let was = state.changed.and_then(|(_, before)| before);
         let at = cursor.index.map_or(-1, |i| i as i64);
-        let line = |i: i64| usize::try_from(i).ok().and_then(|i| synced.lines.get(i));
-
-        let cur_rows = match cursor.current(synced).filter(|l| !l.is_gap()) {
+        let line = |i: i64| {
+            let line = usize::try_from(i).ok().and_then(|i| synced.lines.get(i))?;
+            Some(line.text.as_str())
+        };
+        let current = match cursor.current(synced).filter(|l| !l.is_gap()) {
             Some(current) => {
-                let bright = self.tint(k).add_modifier(Modifier::BOLD);
-                let parts = self.current_rows(&current.text, rows >= 3);
+                Current::Line(&current.text, self.tint(k).add_modifier(Modifier::BOLD))
+            }
+            // A gap, or the intro.
+            None => Current::Dots(cursor.progress),
+        };
+        let (dim, fading) = (model.theme.text(Role::Dim), self.tint(1.0 - k));
+        let before = |n: u16| {
+            let i = at - i64::from(n);
+            let left = was.is_some_and(|w| w as i64 == i) && k < 1.0;
+            line(i).map(|text| (text, if left { fading } else { dim }))
+        };
+        let after = |n: u16| line(at + i64::from(n)).map(|text| (text, dim));
+        self.around(back, current, before, after);
+    }
+
+    /// The lines around the current one: those before it in the `back`
+    /// rows above it (nearest first, going up), the current one whole
+    /// from row `back`, those after it below. A neighbour shows whole when
+    /// it fits in the rows left, else on one row cut after a word.
+    fn around<'t>(
+        &mut self,
+        back: u16,
+        current: Current<'t>,
+        before: impl Fn(u16) -> Option<(&'t str, Style)>,
+        after: impl Fn(u16) -> Option<(&'t str, Style)>,
+    ) {
+        let (w, rows) = (self.area.width, self.area.height);
+        let back = back.min(rows.saturating_sub(1));
+        let used = match current {
+            Current::Line(text, style) => {
+                let parts = whole(text, w, rows - back);
                 for (i, part) in parts.iter().enumerate() {
-                    self.text(mid + i as u16, part, bright);
+                    self.text(back + i as u16, part, style);
                 }
                 parts.len() as u16
             }
-            // A gap, or the intro.
-            None => {
-                self.dots(mid, cursor.progress);
+            Current::Dots(progress) => {
+                self.dots(back, progress);
                 1
             }
         };
-        let dim = model.theme.text(Role::Dim);
-        // Before it, going up (the line just left fades down from bright)…
-        for dy in 1..=mid {
-            let i = at - i64::from(dy);
-            let Some(before) = line(i) else { break };
-            let style = if was.is_some_and(|w| w as i64 == i) && k < 1.0 {
-                self.tint(1.0 - k)
-            } else {
-                dim
-            };
-            self.text(mid - dy, &before.text, style);
-        }
-        // …and after it, going down.
-        for (n, y) in (mid + cur_rows..rows).enumerate() {
-            let Some(after) = line(at + 1 + n as i64) else {
+        let mut top = back;
+        for n in 1.. {
+            let Some((text, style)) = before(n).filter(|_| top > 0) else {
                 break;
             };
-            self.text(y, &after.text, dim);
+            let parts = neighbour(text, w, top);
+            top -= parts.len() as u16;
+            for (i, part) in parts.iter().enumerate() {
+                self.text(top + i as u16, part, style);
+            }
         }
-    }
-
-    /// The current line as one row, or two when it's too wide and `two`
-    /// rows are free (the second cut with `…` if still too wide).
-    fn current_rows(&self, text: &str, two: bool) -> Vec<String> {
-        let w = self.area.width;
-        if !two || width(text) <= w {
-            return vec![fit(text, w)];
-        }
-        let first = wrap(text, w).swap_remove(0);
-        let words: Vec<&str> = text.split_whitespace().collect();
-        let taken = first.split_whitespace().count().max(1);
-        let rest = words.get(taken..).unwrap_or_default().join(" ");
-        if rest.is_empty() {
-            vec![first]
-        } else {
-            vec![first, fit(&rest, w)]
+        let mut y = back + used;
+        for n in 1.. {
+            let Some((text, style)) = after(n).filter(|_| y < rows) else {
+                break;
+            };
+            let parts = neighbour(text, w, rows - y);
+            for (i, part) in parts.iter().enumerate() {
+                self.text(y + i as u16, part, style);
+            }
+            y += parts.len() as u16;
         }
     }
 
@@ -316,22 +483,27 @@ impl Pen<'_, '_> {
         }
     }
 
-    /// Plain lyrics: a window that moves with the track's progress.
-    fn plain(&mut self, lines: &[String]) {
+    /// Plain lyrics: the line as far through them as the track is, from
+    /// row `back`, `text` but not bold, the rest dim.
+    fn plain(&mut self, lines: &[String], back: u16) {
         let model = self.model;
         let Some(snap) = model.music.snapshot.as_ref() else {
             return;
         };
         let progress = snap.progress_at(model.now).unwrap_or(0.0);
-        let rows = usize::from(self.area.height);
         let centre = ((progress.clamp(0.0, 1.0) * lines.len() as f64) as usize)
             .min(lines.len().saturating_sub(1));
-        let first = centre.saturating_sub(rows / 2);
+        let Some(middle) = lines.get(centre) else {
+            return;
+        };
         let (text, dim) = (model.theme.text(Role::Text), model.theme.text(Role::Dim));
-        for (dy, i) in (first..lines.len()).take(rows).enumerate() {
-            let style = if i == centre { text } else { dim };
-            self.text(dy as u16, &lines[i], style);
-        }
+        let line = |i: Option<usize>| i.and_then(|i| lines.get(i)).map(|l| (l.as_str(), dim));
+        self.around(
+            back,
+            Current::Line(middle, text),
+            |n| line(centre.checked_sub(usize::from(n))),
+            |n| line(Some(centre + usize::from(n))),
+        );
     }
 }
 
@@ -340,40 +512,138 @@ mod tests {
     use super::*;
     use ratatui::layout::Size;
 
-    #[test]
-    fn forms_on_the_lava_shrink_to_one_line() {
-        let forms = lyrics_forms(&Show::Lines { widest: 44 }, Place::Overlay);
-        let sizes: Vec<(u16, u16)> = forms
+    /// A made-up song (the demo's first), widest line 47.
+    pub const SONG: &[&str] = &[
+        "Down at the bottom where the warm light grows",
+        "A little wax is waking, and it slowly goes",
+        "",
+        "Slow rise, slow rise",
+        "Cooling at the top and coming down to try again",
+        "And then it starts to rise again",
+    ];
+
+    fn sizes(forms: &[WidgetForm]) -> Vec<(u16, u16)> {
+        forms
             .iter()
             .map(|f| (f.size.width, f.size.height))
-            .collect();
-        assert_eq!(
-            sizes,
-            [
-                (44, 5),
-                (44, 3),
-                (36, 3),
-                (24, 3),
-                (44, 1),
-                (36, 1),
-                (24, 1)
-            ]
-        );
-        assert!(forms.iter().all(|f| !f.fill && !f.seconds));
-        // Short songs: never narrower than 20; long lines: never wider than 56.
-        let narrow = lyrics_forms(&Show::Lines { widest: 9 }, Place::Overlay);
-        assert_eq!(narrow[0].size, Size::new(20, 5));
-        assert_eq!(narrow.len(), 3, "{narrow:?}");
-        let wide = lyrics_forms(&Show::Lines { widest: 200 }, Place::Overlay);
-        assert_eq!(wide[0].size, Size::new(56, 5));
+            .collect()
     }
 
     #[test]
-    fn side_forms_fill_the_panel() {
-        let forms = lyrics_forms(&Show::Lines { widest: 44 }, Place::Side);
-        assert!(forms.iter().all(|f| f.fill && f.size.width == SIDE_MIN));
-        let rows: Vec<u16> = forms.iter().map(|f| f.size.height).collect();
-        assert_eq!(rows, [5, 3, 1]);
+    fn sizing_counts_the_rows_the_longest_line_wraps_onto() {
+        let s = Sizing::of(SONG.iter().copied());
+        assert_eq!(s.widest, 47);
+        for w in W.0..=W.1 {
+            let most = SONG.iter().map(|l| wrap(l, w).len() as u16).max().unwrap();
+            assert_eq!(s.rows(w), most, "at {w}");
+            // Wider never takes more rows.
+            assert!(s.rows(w + 1) <= s.rows(w), "at {w}");
+        }
+        assert_eq!((s.rows(47), s.rows(46), s.rows(20)), (1, 2, 3));
+        assert_eq!(Sizing::default().rows(20), 1);
+    }
+
+    #[test]
+    fn forms_on_the_lava_keep_rows_for_the_whole_line() {
+        let s = Sizing::of(SONG.iter().copied());
+        let forms = lyrics_forms(&Show::Lines(&s), Place::Overlay);
+        // 47 holds every line on one row; 36 and 24 need two.
+        assert_eq!(
+            sizes(&forms),
+            [
+                (47, 5),
+                (47, 3),
+                (36, 4),
+                (24, 4),
+                (47, 1),
+                (36, 2),
+                (24, 2)
+            ]
+        );
+        assert!(forms.iter().all(|f| !f.fill && !f.seconds));
+        // Short songs: never narrower than 20; long lines: never wider
+        // than 56, wrapped instead.
+        let short = Sizing::of(["la la la"]);
+        let narrow = lyrics_forms(&Show::Lines(&short), Place::Overlay);
+        assert_eq!(narrow[0].size, Size::new(20, 5));
+        assert_eq!(narrow.len(), 3, "{narrow:?}");
+        let long = "word ".repeat(30);
+        let long = Sizing::of([long.as_str()]);
+        let wide = lyrics_forms(&Show::Lines(&long), Place::Overlay);
+        assert_eq!(wide[0].size, Size::new(56, 4 + 3));
+    }
+
+    #[test]
+    fn side_forms_come_at_the_narrowest_width_for_each_row_count() {
+        let s = Sizing::of(SONG.iter().copied());
+        let forms = lyrics_forms(&Show::Lines(&s), Place::Side);
+        assert!(forms.iter().all(|f| f.fill));
+        let two = (W.0..=47).find(|&w| s.rows(w) <= 2).unwrap();
+        assert_eq!(
+            sizes(&forms),
+            [
+                (47, 5),
+                (two, 6),
+                (20, 7),
+                (47, 3),
+                (two, 4),
+                (20, 5),
+                (47, 1),
+                (two, 2),
+                (20, 3)
+            ]
+        );
+        // A line so long even three rows of the widest panel can't hold
+        // it: the narrowest panel, in as many rows as it takes.
+        let long = "word ".repeat(40);
+        let long = Sizing::of([long.as_str()]);
+        let forms = lyrics_forms(&Show::Lines(&long), Place::Side);
+        let rows = long.rows(20);
+        assert_eq!(sizes(&forms), [(20, rows + 4), (20, rows + 2), (20, rows)]);
+    }
+
+    #[test]
+    fn cut_ends_after_a_word() {
+        assert_eq!(cut("Slow rise, slow rise", 30), "Slow rise, slow rise");
+        assert_eq!(cut("Slow rise, slow rise", 12), "Slow rise…");
+        assert_eq!(
+            cut("Floating like a thought behind your eyes", 28),
+            "Floating like a thought…"
+        );
+        assert_eq!(cut("Unbelievably", 6), "Unbel…");
+        for w in 2..=48 {
+            for line in SONG {
+                let c = cut(line, w);
+                assert!(width(&c) <= w, "{c:?} at {w}");
+                if let Some(kept) = c.strip_suffix('…').filter(|_| c != *line) {
+                    let next = line[kept.len()..].chars().next();
+                    let first = !kept.contains(' ');
+                    assert!(
+                        first || matches!(next, Some(' ' | ',' | ';' | ':')),
+                        "{line:?} cut mid-word at {w}: {c:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_current_line_is_whole_in_the_rows_its_form_keeps() {
+        let s = Sizing::of(SONG.iter().copied());
+        for w in W.0..=W.1 {
+            for line in SONG {
+                let rows = whole(line, w, s.rows(w));
+                assert_eq!(
+                    rows.join(" "),
+                    line.split_whitespace().collect::<Vec<_>>().join(" ")
+                );
+            }
+        }
+        // More than its rows (never offered): the last row cut after a word.
+        let rows = whole(SONG[4], 20, 2);
+        assert_eq!(rows, ["Cooling at the top", "and coming down to…"]);
+        assert_eq!(neighbour(SONG[4], 20, 3).len(), 3);
+        assert_eq!(neighbour(SONG[4], 20, 2), ["Cooling at the top…"]);
     }
 
     #[test]
