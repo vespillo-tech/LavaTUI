@@ -777,7 +777,8 @@ impl Model {
             Request::Unlike { uris }
         };
         self.library.request(request, Want::Like { uri, on });
-        self.toast(if on { "♥ liked" } else { "♡ unliked" });
+        let g = self.glyphs();
+        self.toast(if on { g.liked_toast } else { g.unliked_toast });
     }
 
     fn logged_in_or_say(&mut self) -> bool {

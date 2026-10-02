@@ -28,6 +28,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::{Anchor, Backdrop, ChipText, DockWidget, Look, Place, WidgetForm, align_x};
 use crate::app::{Account, Model};
+use crate::glyphs::Glyphs;
 use crate::media::{Snapshot, Status, Unavailable};
 use crate::theme::Role;
 use crate::ui::keymap::PlayerKey;
@@ -137,62 +138,9 @@ fn message_text(text: &str, g: &Glyphs) -> String {
     format!("{}{text}", g.note)
 }
 
-/// The glyphs the widget shows its state and controls with.
-#[derive(Debug, PartialEq, Eq)]
-pub struct Glyphs {
-    pub playing: &'static str,
-    pub paused: &'static str,
-    pub stopped: &'static str,
-    pub previous: &'static str,
-    pub next: &'static str,
-    /// Liked (in `accent`) and not (`dim`).
-    pub liked: &'static str,
-    pub unliked: &'static str,
-    pub add: &'static str,
-    pub playlists: &'static str,
-    pub shuffle: &'static str,
-    pub repeat: &'static str,
-    /// Before a message (with its space), or nothing.
-    pub note: &'static str,
-}
-
-/// The usual set.
-pub const RICH: Glyphs = Glyphs {
-    playing: "▶",
-    paused: "‖",
-    stopped: "■",
-    previous: "◂◂",
-    next: "▸▸",
-    liked: "♥",
-    unliked: "♡",
-    add: "+",
-    playlists: "≡",
-    shuffle: "⇄",
-    repeat: "↻",
-    note: "♪ ",
-};
-
-/// Where the terminal can't be trusted with more ([`Model::safe_glyphs`]:
-/// hosts embedding Ghostty's terminal drew no `◂◂ ‖ ▸▸ ≡` there, though
-/// `▶` and `…` were fine): ASCII and Latin-1, and `▶`.
-pub const SAFE: Glyphs = Glyphs {
-    playing: "▶",
-    paused: "||",
-    stopped: "#",
-    previous: "«",
-    next: "»",
-    liked: "<3",
-    unliked: "<3",
-    add: "+",
-    playlists: "=",
-    shuffle: "shuf",
-    repeat: "rep",
-    note: "",
-};
-
-/// The model's glyph set.
+/// The model's glyph set ([`crate::glyphs`]).
 pub fn glyphs(model: &Model) -> &'static Glyphs {
-    if model.safe_glyphs { &SAFE } else { &RICH }
+    model.glyphs()
 }
 
 /// `▶`, `‖` or `■`.
@@ -292,7 +240,7 @@ impl DockWidget for Music {
     fn chip(&self, model: &Model) -> Option<ChipText> {
         let snap = model.music.snapshot.as_ref()?;
         if let Status::Unavailable(reason) = &snap.status {
-            return problem_chip(reason, snap.player_name());
+            return problem_chip(reason, snap.player_name(), glyphs(model));
         }
         snap.track.as_ref()?;
         if !matches!(snap.status, Status::Playing | Status::Paused) {
@@ -307,12 +255,13 @@ impl DockWidget for Music {
 
 /// The chip for a player problem: the next step when it's short, else
 /// where to read it (the music controls' note).
-fn problem_chip(reason: &Unavailable, player: &str) -> Option<ChipText> {
+fn problem_chip(reason: &Unavailable, player: &str, g: &Glyphs) -> Option<ChipText> {
+    let note = g.note;
     let text = match reason {
         Unavailable::Unsupported => return None,
-        Unavailable::NotRunning if player.contains(' ') => "♪ open your player".into(),
-        Unavailable::NotRunning => format!("♪ open {player}"),
-        _ => "♪ see Shift+A".into(),
+        Unavailable::NotRunning if player.contains(' ') => format!("{note}open your player"),
+        Unavailable::NotRunning => format!("{note}open {player}"),
+        _ => format!("{note}see Shift+A"),
     };
     Some(ChipText {
         text: fit(&text, CHIP_MAX),
@@ -863,13 +812,16 @@ mod tests {
         let long = "Allow control of Spotify: System Settings › Privacy & Security \
                     › Automation › your terminal › Spotify";
         for (place, w) in [(Place::Side, 20), (Place::Overlay, 30)] {
-            let forms = music_forms(&Show::Message(message_text(long, &RICH)), place);
+            let forms = music_forms(
+                &Show::Message(message_text(long, &crate::glyphs::RICH)),
+                place,
+            );
             assert_eq!(forms.len(), 1);
             assert!(forms[0].size.width <= w, "{forms:?}");
             assert!(forms[0].size.height >= 3);
         }
         let short = music_forms(
-            &Show::Message(message_text("Spotify isn't running", &RICH)),
+            &Show::Message(message_text("Spotify isn't running", &crate::glyphs::RICH)),
             Place::Overlay,
         );
         assert_eq!(short[0].size, ratatui::layout::Size::new(23, 1));
