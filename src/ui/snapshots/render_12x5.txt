@@ -154,6 +154,18 @@ Lamplight M…
 ~~~~~~~~~~~~
 ~~~~~~~~~~~~
 ~~~~~~~~~~~~
+── library: already in the playlist ──
+~add again?~
+Enter · Esc~
+~~~~~~~~~~~~
+~~~~~~~~~~~~
+~~~~~~~~~~~~
+── library: checking a long playlist ──
+~checking…~~
+Enter · Esc~
+~~~~~~~~~~~~
+~~~~~~~~~~~~
+~~~~~~~~~~~~
 ── library: logged out ──
 not logged …
 ~~~~~~~~~~~~

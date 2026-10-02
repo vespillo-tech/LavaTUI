@@ -265,7 +265,9 @@ says they're on. Press `Esc` to go back.
 
 **In lists and pickers**, use the arrow keys (or `j` and `k`) to move.
 `Enter` chooses. `Esc` goes back. In the playlist list, press `/` and
-type to find a playlist or song.
+type to find a playlist or song. When you add a song, playlists that
+already have it show a `✓`. If you pick one of those, LavaTUI asks
+before adding the song again.
 
 **The mouse** works too. Click the music buttons, or click the progress
 bar to jump in the song. Click or drag on the lamp to warm the wax. Scroll

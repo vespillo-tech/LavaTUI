@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::library::{KEYCHAIN_HEADS_UP, PENDING_FOR};
+use super::library::{CHECK_STALL, KEYCHAIN_HEADS_UP, PENDING_FOR};
 use super::*;
 use crate::media::{Capabilities, Command, FakeSource, Snapshot, Status as Play, Track};
 use crate::spotify_web::fake::{FakeWeb, demo, track as web_track};
@@ -741,6 +741,10 @@ fn windows_spotify_is_matched_through_the_web_player() {
     key(&mut m, t0, P::AddToPlaylist);
     assert!(matches!(m.overlay, Overlay::Library(_)), "{}", toast(&m));
     m.update(Action::Keep, t0);
+    settle(&mut m, t0);
+    // It's in there already: added again only when asked to.
+    assert_eq!(stage(&m), Some(super::Stage::Confirm));
+    m.update(Action::Keep, t0);
     tick(&mut m, t0);
     assert_eq!(toast(&m), "added to Lamplight Mix");
 
@@ -1334,4 +1338,255 @@ fn a_failed_liked_lookup_waits_and_add_stays() {
     tick(&mut m, t0 + Duration::from_secs(21));
     assert_eq!(m.liked(), Some(false));
     assert!(buttons(&m).contains(&P::Like));
+}
+
+// ---- a song the playlist has already (lava-75z.24) -------------------------
+
+/// The pages of playlist songs read so far.
+fn reads(account: &FakeWeb) -> usize {
+    let s = account.state();
+    let reads = s.requests.iter();
+    reads
+        .filter(|r| matches!(r, Request::PlaylistUris { .. }))
+        .count()
+}
+
+fn adds(account: &FakeWeb) -> usize {
+    let s = account.state();
+    let adds = s.requests.iter();
+    adds.filter(|r| matches!(r, Request::AddToPlaylist { .. }))
+        .count()
+}
+
+fn stage(m: &Model) -> Option<super::Stage> {
+    m.library.adding.as_ref().map(|a| a.stage)
+}
+
+/// The add picker open on the demo account (what's playing, `t0`, is in
+/// "Lamplight Mix", the first row) and read ahead.
+fn add_picker(name: &str, account: &FakeWeb) -> (Model, Instant) {
+    let (mut m, t0, _) = rig(name, account);
+    key(&mut m, t0, P::AddToPlaylist);
+    settle(&mut m, t0);
+    (m, t0)
+}
+
+#[test]
+fn a_song_the_playlist_has_asks_before_adding_it_again() {
+    let account = demo();
+    let (mut m, t0) = add_picker("again", &account);
+    // Read ahead: the playlist that has it is marked, quietly.
+    let mix = m.list_row(ListKind::AddTo, 0).unwrap();
+    assert_eq!(mix.detail, "✓ 60");
+    assert_eq!(m.list_row(ListKind::AddTo, 1).unwrap().detail, "0");
+
+    m.update(Action::Keep, t0);
+    assert_eq!(stage(&m), Some(super::Stage::Confirm));
+    assert!(matches!(m.overlay, Overlay::Library(_)), "still asking");
+    assert_eq!(adds(&account), 0, "nothing added yet");
+    // Everything but ⏎ / esc / q waits.
+    m.update(Action::Down, t0);
+    m.update(Action::Type('x'), t0);
+    assert_eq!(stage(&m), Some(super::Stage::Confirm));
+
+    // ⏎: in it goes, again.
+    m.update(Action::Keep, t0);
+    assert_eq!(m.overlay, Overlay::None);
+    tick(&mut m, t0);
+    assert_eq!(toast(&m), "added to Lamplight Mix");
+    let twice = account.state().tracks["mix"]
+        .iter()
+        .filter(|t| t.uri == PLAYING)
+        .count();
+    assert_eq!(twice, 2);
+}
+
+#[test]
+fn esc_at_the_question_adds_nothing_and_goes_back_to_the_list() {
+    let account = demo();
+    let (mut m, t0) = add_picker("again-esc", &account);
+    m.update(Action::Keep, t0);
+    assert_eq!(stage(&m), Some(super::Stage::Confirm));
+    m.update(Action::Back, t0);
+    assert_eq!(m.library.adding, None);
+    let Overlay::Library(view) = m.overlay else {
+        panic!("back to the list")
+    };
+    assert_eq!((view.kind, view.cursor), (ListKind::AddTo, 0));
+    // q from the question closes it all.
+    m.update(Action::Keep, t0);
+    m.update(Action::Close, t0);
+    assert_eq!((m.overlay, m.library.adding.clone()), (Overlay::None, None));
+    settle(&mut m, t0);
+    assert_eq!(adds(&account), 0);
+    assert_eq!(account.state().tracks["mix"].len(), 60);
+}
+
+#[test]
+fn a_song_the_playlist_lacks_goes_straight_in() {
+    let account = demo();
+    let (mut m, t0) = add_picker("not-there", &account);
+    m.update(Action::Down, t0);
+    m.update(Action::Keep, t0);
+    assert_eq!(m.overlay, Overlay::None, "no question");
+    tick(&mut m, t0);
+    assert_eq!(toast(&m), "added to lavatui test");
+    // Known now: the mark follows the add, and no page is read again.
+    let before = reads(&account);
+    key(&mut m, t0, P::AddToPlaylist);
+    settle(&mut m, t0);
+    assert_eq!(m.list_row(ListKind::AddTo, 1).unwrap().detail, "✓ 1");
+    assert_eq!(reads(&account), before, "still known");
+}
+
+/// The add picker opened again after the playlist changed elsewhere (a
+/// new snapshot id: what was read of it is stale), Spotify holding its
+/// answers from here on.
+fn reopen_changed(m: &mut Model, account: &FakeWeb, t: Instant, snapshot: &str) {
+    if m.overlay != Overlay::None {
+        m.update(Action::Close, t);
+    }
+    account.state().hold = true;
+    account.state().playlists[0].snapshot_id = snapshot.into();
+    key(m, t, P::AddToPlaylist);
+    // The playlists come back; their songs don't, yet.
+    account.release();
+    account.state().hold = true;
+    tick(m, t);
+}
+
+#[test]
+fn chosen_before_the_check_is_done_it_waits_then_decides() {
+    let account = demo();
+    let (mut m, t0) = add_picker("checking", &account);
+    reopen_changed(&mut m, &account, t0, "changed");
+    m.update(Action::Keep, t0);
+    assert!(matches!(stage(&m), Some(super::Stage::Checking { .. })));
+    assert!(m.library.busy(), "frames keep coming while it checks");
+    account.release();
+    settle(&mut m, t0);
+    assert_eq!(stage(&m), Some(super::Stage::Confirm));
+}
+
+#[test]
+fn a_failed_check_still_adds_and_says_so() {
+    let account = demo();
+    account.state().fail_uris = Some(Error::Offline("no network".into()));
+    let (mut m, t0) = add_picker("check-failed", &account);
+    assert_eq!(m.list_row(ListKind::AddTo, 0).unwrap().detail, "60");
+    m.update(Action::Keep, t0);
+    assert_eq!(m.overlay, Overlay::None);
+    tick(&mut m, t0);
+    assert_eq!(
+        toast(&m),
+        "added to Lamplight Mix · couldn't check it first"
+    );
+    assert_eq!(account.state().tracks["mix"].len(), 61);
+}
+
+#[test]
+fn a_stalled_check_adds_anyway_and_enter_need_not_wait() {
+    let account = demo();
+    let (mut m, t0) = add_picker("check-stalled", &account);
+    reopen_changed(&mut m, &account, t0, "elsewhere");
+    m.update(Action::Keep, t0);
+    assert!(matches!(stage(&m), Some(super::Stage::Checking { .. })));
+    tick(&mut m, t0 + CHECK_STALL - Duration::from_millis(1));
+    assert!(m.library.adding.is_some(), "still waiting");
+    tick(&mut m, t0 + CHECK_STALL);
+    assert_eq!(m.overlay, Overlay::None);
+    account.release();
+    settle(&mut m, t0 + CHECK_STALL);
+    assert_eq!(
+        toast(&m),
+        "added to Lamplight Mix · couldn't check it first"
+    );
+
+    // ⏎ while checking adds at once.
+    reopen_changed(&mut m, &account, t0, "again");
+    m.update(Action::Keep, t0);
+    assert!(matches!(stage(&m), Some(super::Stage::Checking { .. })));
+    m.update(Action::Keep, t0);
+    assert_eq!(m.overlay, Overlay::None);
+    account.release();
+    settle(&mut m, t0);
+    assert_eq!(toast(&m), "added to Lamplight Mix");
+}
+
+#[test]
+fn a_long_playlist_is_read_once_page_by_page() {
+    let account = demo();
+    {
+        let mut s = account.state();
+        let mut big: Vec<_> = (0..260)
+            .map(|i| web_track(&format!("b{i}"), &format!("Deep Wax {i}"), "Wax & Wane"))
+            .collect();
+        big[255] = web_track("t0", "Slow Rise 0", "Wax & Wane");
+        let mut p = crate::spotify_web::fake::playlist("big", "Long Night", "me", false, 260);
+        p.snapshot_id = "big1".into();
+        s.playlists.insert(0, p);
+        s.tracks.insert("big".into(), big);
+    }
+    let (mut m, t0) = add_picker("long", &account);
+    assert_eq!(m.list_row(ListKind::AddTo, 0).unwrap().name, "Long Night");
+    assert_eq!(m.list_row(ListKind::AddTo, 0).unwrap().detail, "✓ 260");
+    let pages: Vec<u32> = account
+        .state()
+        .requests
+        .iter()
+        .filter_map(|r| match r {
+            Request::PlaylistUris {
+                playlist_id,
+                offset,
+            } if playlist_id == "big" => Some(*offset),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(pages, [0, 50, 100, 150, 200, 250], "each page once");
+    m.update(Action::Keep, t0);
+    assert_eq!(stage(&m), Some(super::Stage::Confirm));
+
+    // Opened again with nothing changed: nothing is read again.
+    m.update(Action::Close, t0);
+    let before = reads(&account);
+    key(&mut m, t0, P::AddToPlaylist);
+    settle(&mut m, t0);
+    assert_eq!(reads(&account), before);
+}
+
+#[test]
+fn reading_ahead_stops_at_its_budget_and_when_spotify_says_wait() {
+    let account = demo();
+    {
+        let mut s = account.state();
+        for n in 0..3 {
+            let id = format!("long{n}");
+            let tracks = (0..1000)
+                .map(|i| web_track(&format!("{id}x{i}"), "Drip", "Wax & Wane"))
+                .collect();
+            s.playlists.push(crate::spotify_web::fake::playlist(
+                &id, &id, "me", false, 1000,
+            ));
+            s.tracks.insert(id, tracks);
+        }
+    }
+    let (mut m, t0) = add_picker("budget", &account);
+    for _ in 0..20 {
+        tick(&mut m, t0);
+    }
+    assert_eq!(reads(&account), 40, "the read-ahead budget");
+    m.update(Action::Close, t0);
+
+    // Too many requests: nothing more until the wait is over.
+    let account = demo();
+    account.state().fail_uris = Some(Error::RateLimited {
+        retry_after: Duration::from_secs(30),
+    });
+    let (mut m, t0) = add_picker("rate-limited", &account);
+    assert_eq!(reads(&account), 1);
+    settle(&mut m, t0 + Duration::from_secs(10));
+    assert_eq!(reads(&account), 1);
+    account.state().fail_uris = None;
+    settle(&mut m, t0 + Duration::from_secs(31));
+    assert!(reads(&account) > 1);
 }

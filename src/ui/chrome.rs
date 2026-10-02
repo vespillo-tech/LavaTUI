@@ -5,7 +5,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 
-use crate::app::{ListKind, Model, Overlay, TOAST_FADE, TOAST_TIME, Toast};
+use crate::app::{ListKind, Model, Overlay, Stage, TOAST_FADE, TOAST_TIME, Toast};
 use crate::theme::{ColorDepth, Ink, Role};
 
 /// The status bar's key hints in display order, with their drop rank
@@ -60,9 +60,21 @@ pub const FIND_HINTS: &[(&str, &str, u8)] = &[
     ("Esc", "clear", 4),
 ];
 
-/// The library hints for `kind`, or the filter's while `typing`.
-pub fn library_hints(kind: ListKind, typing: bool) -> &'static [(&'static str, &'static str, u8)] {
+/// While a song waits to be added: Spotify is being asked whether the
+/// playlist has it, or it does (lava-75z.24).
+pub const CHECKING_HINTS: &[(&str, &str, u8)] = &[("Enter", "add anyway", 1), ("Esc", "cancel", 2)];
+pub const AGAIN_HINTS: &[(&str, &str, u8)] = &[("Enter", "add again", 1), ("Esc", "cancel", 2)];
+
+/// The library hints for `kind`, or the filter's while `typing`, or an
+/// add's while one waits.
+pub fn library_hints(
+    kind: ListKind,
+    typing: bool,
+    adding: Option<Stage>,
+) -> &'static [(&'static str, &'static str, u8)] {
     match kind {
+        _ if adding == Some(Stage::Confirm) => AGAIN_HINTS,
+        _ if adding.is_some() => CHECKING_HINTS,
         _ if typing => FIND_HINTS,
         ListKind::Playlists => PLAYLISTS_HINTS,
         ListKind::Tracks => TRACKS_HINTS,
@@ -152,7 +164,11 @@ pub fn draw_status(buf: &mut Buffer, r: Rect, model: &Model) {
     let all = if matches!(model.overlay, Overlay::Picker(_)) {
         PICKER_HINTS
     } else if let Overlay::Library(view) = model.overlay {
-        library_hints(view.kind, view.typing)
+        library_hints(
+            view.kind,
+            view.typing,
+            model.library.adding.as_ref().map(|a| a.stage),
+        )
     } else if matches!(model.overlay, Overlay::Settings(_)) {
         match model.settings_view() {
             _ if model.settings_screen.editing => TYPING_HINTS,

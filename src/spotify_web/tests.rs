@@ -382,6 +382,42 @@ fn my_playlists_follows_every_page() {
 }
 
 #[test]
+fn playlist_uris_asks_for_uris_only_and_pages_past_holes() {
+    let mut r = logged_in();
+    let body = r#"{"items":[
+        {"item":{"uri":"spotify:track:t1"}},
+        {"track":{"uri":"spotify:track:t2"}},
+        {"item":{"uri":"spotify:episode:e1"}},
+        {"item":null},
+        null
+    ],"total":120,"next":"https://next"}"#;
+    r.mock.reply(200, body);
+    let page = r.client.playlist_uris("pl/1", 50).unwrap();
+    assert_eq!(
+        r.mock.sent()[0].url,
+        "https://api.spotify.com/v1/playlists/pl%2F1/items?limit=50&offset=50\
+         &additional_types=track,episode&fields=items%28item%28uri%29%2Ctrack%28uri%29%29%2Cnext%2Ctotal"
+    );
+    assert_eq!(
+        page.uris,
+        ["spotify:track:t1", "spotify:track:t2", "spotify:episode:e1"]
+    );
+    // The next page starts after the empty slots too.
+    assert_eq!((page.next, page.total), (Some(55), 120));
+
+    r.mock.reply(
+        200,
+        r#"{"items":[{"item":{"uri":"spotify:track:t9"}}],"total":120,"next":null}"#,
+    );
+    let last = r.client.playlist_uris("pl/1", 119).unwrap();
+    assert_eq!((last.uris.len(), last.next), (1, None));
+    // A page with nothing on it ends the reading, whatever `next` says.
+    r.mock
+        .reply(200, r#"{"items":[],"total":120,"next":"https://next"}"#);
+    assert_eq!(r.client.playlist_uris("pl/1", 120).unwrap().next, None);
+}
+
+#[test]
 fn playlist_tracks_reads_item_or_track_and_skips_holes() {
     let mut r = logged_in();
     let body = r#"{"items":[

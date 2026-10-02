@@ -30,6 +30,8 @@ pub struct Glyphs {
     pub running: &'static str,
     /// The cursor's row in a list (with its space).
     pub pointer: &'static str,
+    /// A playlist that has the playing song already (the add picker).
+    pub has: &'static str,
 }
 
 /// The usual set.
@@ -50,6 +52,7 @@ pub const RICH: Glyphs = Glyphs {
     unliked_toast: "♡ unliked",
     running: "▸",
     pointer: "▸ ",
+    has: "✓",
 };
 
 /// ASCII and Latin-1, and `▶` (which those hosts drew fine).
@@ -70,6 +73,7 @@ pub const SAFE: Glyphs = Glyphs {
     unliked_toast: "unliked",
     running: "»",
     pointer: "» ",
+    has: "*",
 };
 
 #[cfg(test)]
@@ -101,6 +105,7 @@ mod tests {
                 g.unliked_toast,
                 g.running,
                 g.pointer,
+                g.has,
             ]
         };
         for s in all(&SAFE) {

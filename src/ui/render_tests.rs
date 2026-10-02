@@ -276,6 +276,21 @@ fn scenarios() -> Vec<(&'static str, Setup)> {
             m.update(Action::Player(PlayerKey::AddToPlaylist), t);
             m.toast = None;
         }),
+        ("library: already in the playlist", |m, t| {
+            already_in(m, t);
+            m.toast = None;
+        }),
+        ("library: checking a long playlist", |m, t| {
+            already_in(m, t);
+            if let Some(a) = &mut m.library.adding {
+                a.stage = crate::app::Stage::Checking {
+                    since: t,
+                    read: 150,
+                    total: 400,
+                };
+            }
+            m.toast = None;
+        }),
         ("library: logged out", |m, t| {
             spotify(m, t, false);
             m.update(Action::PlayerKeys, t);
@@ -304,6 +319,18 @@ fn spotify(m: &mut Model, t: Instant, logged_in: bool) {
     music_track(m, t, Status::Playing, 1, "spotify:track:t0");
     // The account's answers land on the next frame.
     m.update(Action::Resize, t);
+}
+
+/// The add picker's question: what's playing is in "Lamplight Mix"
+/// already (lava-75z.24).
+fn already_in(m: &mut Model, t: Instant) {
+    spotify(m, t, true);
+    m.update(Action::PlayerKeys, t);
+    m.update(Action::Player(PlayerKey::AddToPlaylist), t);
+    for _ in 0..3 {
+        m.update(Action::Resize, t);
+    }
+    m.update(Action::Keep, t);
 }
 
 const LRC: &str = "[00:05.00]Wax rises slowly through the amber light\\n\

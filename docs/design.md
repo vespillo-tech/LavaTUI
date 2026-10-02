@@ -759,8 +759,19 @@ without scrolling from 80×24 up:
   app: on macOS AppleScript's `play track … in context …`, elsewhere the
   track alone), `p` plays the playlist from the
   top, and pages of 50 load as the cursor nears the end. The add picker
-  lists only owned or collaborative playlists. Empty lists say why in one
-  dim line: `not logged in · ⏎ to log in`, `loading…`, Spotify's error.
+  lists only owned or collaborative playlists; those that have the
+  playing song already show a dim `✓` before the count (`✓ 60`).
+  Choosing one of them asks first (lava-75z.24): the rows give way to
+  `already in Lamplight Mix` (text) and `add it again?` (accent), a blank
+  row above when there's room, hints `⏎ add again  esc cancel`; in a
+  one-row bottom sheet or the inline selector, one line, the longest of
+  `already in <name> · add it again?`, `in <name> · add again?`,
+  `already there · add again?`, `add it again?` that fits (no `‹ ›`: it's
+  a question, not a list), with `Enter add again · Esc cancel` on the
+  bottom border or under it. `⏎` adds, `esc` goes back to the list, `q`
+  closes. Still checking: `checking Lamplight Mix…` (dim; `150 of 400
+  songs` under it on long playlists), `⏎ add anyway`. Empty lists say
+  why in one dim line: `not logged in · ⏎ to log in`, `loading…`, Spotify's error.
   Keys: `j k ↑ ↓` move, `g G` / page up / down jump, `⏎` / `l` open or
   choose, `p` play all, `/` find, `esc` / `h` back (closes at the top),
   `q` close. Hints: `↑↓ move  ⏎ open  p play  / find  esc close` (`⏎

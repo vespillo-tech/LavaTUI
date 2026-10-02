@@ -88,6 +88,16 @@ impl<T> Page<T> {
     }
 }
 
+/// One page of a playlist's item URIs ([`super::Request::PlaylistUris`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Uris {
+    pub uris: Vec<String>,
+    /// Where the next page starts; `None` after the last.
+    pub next: Option<u32>,
+    /// Items in the playlist.
+    pub total: u32,
+}
+
 // ---- raw JSON shapes ------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
@@ -109,6 +119,25 @@ impl<T> RawPage<T> {
             offset: self.offset,
             total: self.total,
             has_more: self.next.is_some(),
+        }
+    }
+}
+
+impl RawPage<RawUriItem> {
+    /// The page read from `offset`, as URIs. The next page starts after
+    /// every slot of this one, the empty ones too.
+    pub fn into_uris(self, offset: u32) -> Uris {
+        let next = offset + self.items.len() as u32;
+        let more = self.next.is_some() && !self.items.is_empty();
+        Uris {
+            uris: self
+                .items
+                .into_iter()
+                .flatten()
+                .filter_map(|i| i.item.or(i.track)?.uri)
+                .collect(),
+            next: more.then_some(next),
+            total: self.total,
         }
     }
 }
@@ -250,6 +279,13 @@ impl RawPlaylistItem {
         track.is_local |= self.is_local;
         Some(track)
     }
+}
+
+/// A playlist entry with only its URI asked for.
+#[derive(Debug, Deserialize)]
+pub(super) struct RawUriItem {
+    item: Option<RawUri>,
+    track: Option<RawUri>,
 }
 
 #[derive(Debug, Deserialize)]

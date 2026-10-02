@@ -18,6 +18,11 @@ What changed in each version of LavaTUI, in plain words.
   the music stays on screen. A cover or lyrics that couldn't load are
   tried again while the song plays.
 - The add-to-playlist button shows for every Spotify song right away.
+- Adding a song to a playlist that already has it now asks first:
+  "already in Lamplight Mix · add it again?" Press `Enter` to add it
+  again, or `Esc` to pick another playlist. In the add list, playlists
+  that have the song show a `✓`. If LavaTUI can't check, it adds the song
+  as before and says it couldn't check.
 
 ## 1.2.0 — 2026-10-02 — first public release
 

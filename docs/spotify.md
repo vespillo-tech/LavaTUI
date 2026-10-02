@@ -152,6 +152,7 @@ July 2026 changes:
 | Who am I | `GET /me` | none |
 | My playlists (all pages, 50 each) | `GET /me/playlists` | `playlist-read-private`, `playlist-read-collaborative` |
 | Playlist contents (page of 50) | `GET /playlists/{id}/items` | `playlist-read-private` |
+| Has it already? (URIs only, page of 50) | `GET /playlists/{id}/items?fields=items(item(uri),track(uri)),next,total` | `playlist-read-private` |
 | New playlist | `POST /me/playlists` (`POST /users/{id}/playlists` is gone) | `playlist-modify-public` / `-private` |
 | Add to playlist (100 per call) | `POST /playlists/{id}/items` | `playlist-modify-public`, `playlist-modify-private` |
 | Liked? (40 per call) | `GET /me/library/contains` | `user-library-read` |
@@ -185,7 +186,8 @@ All of it lives in the player keys (`A`, with the music widget placed):
 it in its playlist through the Web API's player when it's available,
 else through the desktop app: on macOS in its playlist, on Linux the
 track alone (MPRIS has no playlists), and on Windows not at all (the
-media controls can't be told what to play), which the toast says), `a` add the playing track to a playlist, `s`
+media controls can't be told what to play), which the toast says), `a` add the playing track to a playlist
+(asking first when it's there already, below), `s`
 like / unlike (the `♥` in the widget), and `x` / `r` shuffle / repeat
 through the Web API when Spotify allows them. With the mouse on, the
 widget's `log in`, `♡`, `+` and `≡` do the same. See docs/design.md §4.4
@@ -201,6 +203,32 @@ files, ads, episodes and other players get no URI: like and add say
 there's nothing to act on. The Web API's shuffle / repeat likewise apply
 only while its player is playing the track shown (lava-1xk.27); another
 player keeps its own modes and keys.
+
+### Adding a song a playlist has already (lava-75z.24)
+
+Spotify has no "which of my playlists hold this track" call, so the add
+picker reads its playlists' contents itself, URIs only
+(`Request::PlaylistUris`, the `fields` filter above: a few KB a page).
+`app/model/library.rs` keeps them per playlist id with the
+`snapshot_id` they were read at; a new snapshot (the playlists are read
+again each time the picker opens) drops them, and our own add moves them
+to the snapshot the add returned, so a big playlist is read once.
+
+- One page request in flight at a time, on the worker; the next page is
+  asked for when one lands. Reading ahead starts at the cursor's
+  playlist, then the rest in order, at most 40 pages (2000 songs) per
+  opening; the chosen playlist is always read to the end.
+- `⏎` on a playlist known to have the song asks `already in <name> · add
+  it again?` (`⏎` adds again, `esc` back to the list, `q` closes); known
+  not to: adds at once. Still reading: `checking <name>…` (with `150 of
+  400 songs` on long ones), `⏎` adds without waiting.
+- A failed read, or one that stops moving for 5 s (e.g. a long
+  `Retry-After`: no reads until it's over), never loses the add: it goes
+  ahead and the toast says `added to <name> · couldn't check it first`.
+- Rows of playlists known to have the playing song show a quiet `✓`
+  (`*` in the safe glyphs) before the count.
+- Liked Songs isn't offered in the picker; like / unlike (`s`) already
+  knows whether the song is liked.
 
 ## Using it from the code
 
