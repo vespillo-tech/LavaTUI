@@ -23,6 +23,9 @@ mod palettes;
 mod tests;
 mod xterm;
 
+#[cfg(test)]
+pub use xterm::delta_e;
+
 use std::sync::LazyLock;
 
 use ratatui::style::{Color, Modifier, Style};
@@ -30,6 +33,10 @@ use ratatui::style::{Color, Modifier, Style};
 /// The terminal's own default colour, as a foreground or a background:
 /// what NO_COLOR draws everything in, and what `transparent` leaves.
 pub const TERMINAL_DEFAULT: Color = Color::Reset;
+
+/// Colours closer than this (OKLab ΔE) count as the same for drawing a
+/// half-block cell in one colour ([`Theme::near`], [`Theme::merge`]).
+pub const NEAR: f32 = 0.03;
 
 /// The nine colour roles every palette defines (docs/design.md §5.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -403,6 +410,49 @@ impl Theme {
                 Color::Rgb(r, g, b)
             }
             _ => b,
+        }
+    }
+
+    /// Whether `a` and `b` look the same side by side: within [`NEAR`]
+    /// (OKLab ΔE) of each other. Colours that can't be told (the
+    /// terminal's defaults) are near only themselves.
+    #[cfg(test)]
+    pub fn near(&self, a: Color, b: Color) -> bool {
+        a == b
+            || match (seen(a), seen(b)) {
+                (Some(x), Some(y)) => xterm::delta_e(x, y) <= NEAR,
+                _ => false,
+            }
+    }
+
+    /// The one colour a half-block cell may show for pixels `a` and `b`
+    /// when they're within `within` (OKLab ΔE; [`NEAR`]: they look the
+    /// same): `a` if they're equal, else their mean (so neither pixel moves
+    /// more than half of `within`). `None` when they're further apart, or
+    /// either isn't RGB (16 colours, none: there's no mean to take).
+    #[inline]
+    pub fn merge(&self, a: Color, b: Color, within: f32) -> Option<Color> {
+        match (a, b) {
+            _ if a == b => Some(a),
+            (Color::Rgb(r, g, bl), Color::Rgb(r2, g2, b2)) => {
+                let (x, y) = (Rgb(r, g, bl), Rgb(r2, g2, b2));
+                (within == f32::INFINITY || xterm::delta_e_squared(x, y) <= within * within).then(
+                    || {
+                        let Rgb(r, g, b) = x.lerp(y, 0.5);
+                        Color::Rgb(r, g, b)
+                    },
+                )
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether `a` is darker than `b` (unknown colours aren't).
+    #[inline]
+    pub fn darker(&self, a: Color, b: Color) -> bool {
+        match (seen(a), seen(b)) {
+            (Some(x), Some(y)) => luminance(x) < luminance(y),
+            _ => false,
         }
     }
 

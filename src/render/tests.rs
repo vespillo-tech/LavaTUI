@@ -78,6 +78,7 @@ fn draw_synthetic_at(style: &StyleEntry, theme: &Theme, area: Rect, time: f64) -
         height,
         theme,
         time,
+        translucent: false,
     };
     let mut buf = Buffer::empty(area);
     style.draw(&canvas, &mut buf);
@@ -318,7 +319,10 @@ fn lamp_view_matches_origin_in_offset_wider_buffers() {
                             style: id.style(),
                             theme: &theme,
                             time: 7.25,
-                            options: LampOptions { reduced },
+                            options: LampOptions {
+                                reduced,
+                                translucent: false,
+                            },
                         }
                         .render(area, buf, &mut LampState::default());
                     }
@@ -429,10 +433,11 @@ fn bench_lamp() {
 
     const FRAMES: u32 = 300;
     for (cols, rows) in [(80u16, 24u16), (200, 60)] {
-        for (depth, depth_name) in [
-            (ColorDepth::TrueColor, "truecolor"),
-            (ColorDepth::Ansi256, "256"),
-            (ColorDepth::Ansi16, "16"),
+        for (depth, depth_name, translucent) in [
+            (ColorDepth::TrueColor, "truecolor", false),
+            (ColorDepth::Ansi256, "256", false),
+            (ColorDepth::Ansi16, "16", false),
+            (ColorDepth::TrueColor, "truecolor, translucent cells", true),
         ] {
             let theme = theme(depth);
             let mut report = format!("{cols}x{rows} {depth_name}:");
@@ -457,7 +462,10 @@ fn bench_lamp() {
                         style: id.style(),
                         theme: &theme,
                         time: f64::from(frame) / 60.0,
-                        options: LampOptions::default(),
+                        options: LampOptions {
+                            reduced: false,
+                            translucent,
+                        },
                     }
                     .render(area, &mut next, &mut state);
                     render_time += t0.elapsed();
@@ -510,6 +518,7 @@ fn topo_left_wall_has_no_wrapped_contours() {
         height,
         theme: &theme,
         time: 0.0,
+        translucent: false,
     };
     let mut buf = Buffer::empty(area);
     StyleId::by_name("topo")

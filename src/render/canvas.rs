@@ -4,7 +4,7 @@ use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
-use super::cell::half_block;
+use super::cell::{HalfBlocks, Pixel};
 use crate::sim::Sample;
 use crate::theme::{Ink, Role, Theme};
 
@@ -19,6 +19,9 @@ pub struct Canvas<'a> {
     pub theme: &'a Theme,
     /// Seconds since launch, for styles that animate on their own.
     pub time: f64,
+    /// The terminal shows cell backgrounds see-through (glyphs opaque):
+    /// see [`super::cell::half_block`].
+    pub translucent: bool,
 }
 
 /// What shows where there's no wax.
@@ -93,17 +96,12 @@ impl Canvas<'_> {
         &mut buf[(self.area.x + at.cx as u16, self.area.y + at.cy as u16)]
     }
 
-    /// Draw a half-block canvas (1×2 pixels per cell): `pixel(x, y)` is
-    /// `None` for an empty pixel (the liquid shows) or ink of a colour.
+    /// Draw a half-block canvas (1×2 pixels per cell) of `pixel(x, y)`s.
     #[inline]
-    pub fn draw_half_blocks(
-        &self,
-        buf: &mut Buffer,
-        mut pixel: impl FnMut(usize, usize) -> Option<Color>,
-    ) {
+    pub fn draw_half_blocks(&self, buf: &mut Buffer, mut pixel: impl FnMut(usize, usize) -> Pixel) {
+        let mut cells = HalfBlocks::new(self.theme, self.theme.color(LIQUID), self.translucent);
         self.for_each_cell(buf, |at, cell| {
-            let (top, bottom) = (pixel(at.x, at.y), pixel(at.x, at.y + 1));
-            half_block(cell, top, bottom, at.base);
+            cells.draw(cell, pixel(at.x, at.y), pixel(at.x, at.y + 1));
         });
     }
 }

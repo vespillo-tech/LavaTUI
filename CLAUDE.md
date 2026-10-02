@@ -173,6 +173,11 @@ numbers); `docs/design.md` is the layout/visual contract.
                 and writes it on normal/error exit (not panic). Fps: 10 unfocused; frozen
                 frames sleep until the clock / pomodoro readout changes
                 (`idle_until`); `frame_drawn` feeds adaptive quality.
+- `cells.rs`  — `display.cells = "auto"`: whether the terminal shows cell
+                backgrounds see-through with opaque glyphs (Ghostty with
+                `background-opacity` < 1 + `background-opacity-cells`;
+                reads its config files and `config-file` includes once at
+                start; `Model::translucent_cells` → `LampOptions.translucent`).
 - `timing.rs` — pure loop timing: `FixedStep` (accumulator, no per-frame
                 cap: sim time tracks real time × speed at any fps; only a
                 > 1.5 s `STALL` is cut short; `alpha()` for interpolation),
@@ -228,12 +233,16 @@ numbers); `docs/design.md` is the layout/visual contract.
                 listed in `styles::ALL` as `StyleEntry::of::<S>()` (cycle
                 order; `StyleId` looks up by name; `styles::ALIASES` maps
                 old names, e.g. `glass` → `chrome`). `canvas.rs`: `Canvas`
-                (samples, theme, time, its `area`) and the
+                (samples, theme, time, its `area`, `translucent`) and the
                 shared cell loops: `for_each_cell(buf, |at, cell|)` (an
                 `At` carries the cell, its top-left pixel and the liquid's
-                colour, `base`; `LIQUID` is the ink behind the wax), `draw_half_blocks(buf, |x, y| Option<Color>)`,
+                colour, `base`; `LIQUID` is the ink behind the wax), `draw_half_blocks(buf, |x, y| Pixel)` (`Pixel::Liquid` /
+                `Back(c)`: a style's backdrop / `Ink(c)`: wax),
                 `cell_at` / `cell_mut` for styles that walk their own order
-                (matrix, column by column). `cell.rs`: `half_block`,
+                (matrix, column by column). `cell.rs`: `half_block` (opacity-safe:
+                halves within `theme::NEAR` merge to one `█`/space, the
+                liquid/backdrop is always the background; `translucent`
+                merges all wax halves; `HalfBlocks` memoises the last pair),
                 `braille_dots(cx, cy, |x, y| bool)`, `blank` / `glyph` /
                 `mark`. Level helpers in `mod.rs`: `coverage` (quantised AA
                 edge), `soft_edge`, `wax_heat`, `bayer`,

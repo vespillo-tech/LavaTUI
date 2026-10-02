@@ -26,8 +26,8 @@
 //! dither anchored to the lamp (`render/dither256.rs`) spreads over
 //! neighbouring pixels.
 
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use std::sync::{LazyLock, OnceLock};
 
 use super::Rgb;
 
@@ -313,16 +313,60 @@ struct Candidate {
 }
 
 /// sRGB → linear light.
+#[inline]
 fn linear(c: Rgb) -> [f32; 3] {
-    let lin = |v: u8| {
-        let v = f32::from(v) / 255.0;
-        if v <= 0.040_45 {
-            v / 12.92
-        } else {
-            ((v + 0.055) / 1.055).powf(2.4)
-        }
-    };
+    /// Per 8-bit value: [`distance`] runs in the lamp's cell loop.
+    static LINEAR: LazyLock<[f32; 256]> = LazyLock::new(|| {
+        std::array::from_fn(|v| {
+            let v = v as f32 / 255.0;
+            if v <= 0.040_45 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        })
+    });
+    let lin = |v: u8| LINEAR[usize::from(v)];
     [lin(c.0), lin(c.1), lin(c.2)]
+}
+
+/// Perceptual distance between two colours: their OKLab ΔE (about 0.02
+/// is a just-noticeable difference).
+#[cfg(test)]
+pub fn delta_e(x: Rgb, y: Rgb) -> f32 {
+    delta_e_squared(x, y).sqrt()
+}
+
+/// [`delta_e`] squared, for the lamp's cell loop: OKLab without the
+/// chroma [`Lab`] keeps, and a cube root accurate to ~1e-6.
+#[inline]
+pub fn delta_e_squared(x: Rgb, y: Rgb) -> f32 {
+    let (x, y) = (oklab(x), oklab(y));
+    (x[0] - y[0]).powi(2) + (x[1] - y[1]).powi(2) + (x[2] - y[2]).powi(2)
+}
+
+#[inline]
+fn oklab(c: Rgb) -> [f32; 3] {
+    let [r, g, b] = linear(c);
+    let l = cbrt(0.412_221_46 * r + 0.536_332_55 * g + 0.051_445_995 * b);
+    let m = cbrt(0.211_903_5 * r + 0.680_699_5 * g + 0.107_396_96 * b);
+    let s = cbrt(0.088_302_46 * r + 0.281_718_85 * g + 0.629_978_7 * b);
+    [
+        0.210_454_26 * l + 0.793_617_8 * m - 0.004_072_047 * s,
+        1.977_998_5 * l - 2.428_592_2 * m + 0.450_593_7 * s,
+        0.025_904_037 * l + 0.782_771_77 * m - 0.808_675_77 * s,
+    ]
+}
+
+/// Cube root of `x` ≥ 0: a bit-level first guess, then two Newton steps.
+#[inline]
+fn cbrt(x: f32) -> f32 {
+    if x <= 0.0 {
+        return 0.0;
+    }
+    let mut y = f32::from_bits(x.to_bits() / 3 + 0x2a51_4067);
+    y = (2.0 * y + x / (y * y)) / 3.0;
+    (2.0 * y + x / (y * y)) / 3.0
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -335,11 +379,13 @@ struct Lab {
 
 impl Lab {
     /// sRGB → OKLab (Björn Ottosson's matrices).
+    #[inline]
     fn of(c: Rgb) -> Lab {
         Lab::of_linear(linear(c))
     }
 
     /// Linear-light RGB → OKLab.
+    #[inline]
     fn of_linear([r, g, b]: [f32; 3]) -> Lab {
         let l = (0.412_221_46 * r + 0.536_332_55 * g + 0.051_445_995 * b).cbrt();
         let m = (0.211_903_5 * r + 0.680_699_5 * g + 0.107_396_96 * b).cbrt();
@@ -356,6 +402,19 @@ impl Lab {
 
     fn chroma(self) -> f32 {
         self.chroma
+    }
+}
+
+#[test]
+fn fast_cbrt_matches_std() {
+    for i in 0..=100_000 {
+        let x = i as f32 / 100_000.0;
+        assert!(
+            (cbrt(x) - x.cbrt()).abs() < 2e-6,
+            "{x}: {} vs {}",
+            cbrt(x),
+            x.cbrt()
+        );
     }
 }
 

@@ -22,7 +22,7 @@ use crate::clock::{
     self, ClockTime, Face, PhaseEnd, Pomodoro, PomodoroConfig, Status, format_remaining,
 };
 use crate::config::store::Store;
-use crate::config::{self, ColorChoice, Overridden, Session, Settings};
+use crate::config::{self, CellsChoice, ColorChoice, Overridden, Session, Settings};
 use crate::dock::cover::Caps;
 use crate::dock::{Place, WIDGETS};
 use crate::graphics::Kitty;
@@ -142,6 +142,9 @@ pub struct Model {
     pub music: Music,
     /// What the terminal can show pictures with (read once at start).
     pub caps: Caps,
+    /// Ghostty's config makes cell backgrounds see-through (read once at
+    /// start, for `display.cells = "auto"`).
+    pub ghostty_translucent: bool,
     /// The cover as a real picture: what the terminal holds and what's on
     /// its way (bytes the loop writes after each frame).
     pub kitty: Kitty,
@@ -222,6 +225,7 @@ impl Model {
             last_reset_key: None,
             music: Music::default(),
             caps: Caps::detect(),
+            ghostty_translucent: crate::cells::detect(),
             kitty: Kitty::default(),
             library: Library::new(settings.spotify_client_id()),
             lyrics: LyricsState::default(),
@@ -633,6 +637,18 @@ pub fn heat_toast(heat: u8) -> String {
 /// `speed ×2`, `speed ×0.25`.
 pub fn speed_toast(speed: SimSpeed) -> String {
     format!("speed ×{}", speed.factor())
+}
+
+impl Model {
+    /// Whether the lamp draws for see-through cell backgrounds
+    /// (`display.cells`; see `render::cell::half_block`).
+    pub fn translucent_cells(&self) -> bool {
+        match self.settings.display.cells {
+            CellsChoice::Auto => self.ghostty_translucent,
+            CellsChoice::Opaque => false,
+            CellsChoice::Translucent => true,
+        }
+    }
 }
 
 fn palette_named(name: &str) -> &'static Palette {

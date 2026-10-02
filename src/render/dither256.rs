@@ -6,7 +6,10 @@
 //! style that already dithers its own bands on that matrix (heatmap) lines
 //! up with it instead of beating against it. Half-block cells are dithered
 //! per pixel: a cell drawn whole (`█`, or a blank) whose two pixels resolve
-//! differently becomes `▀`. Other glyphs take one threshold per cell.
+//! differently is split, the darker half behind (as `cell::half_block`
+//! splits). With `translucent` (see there) a whole cell takes one
+//! threshold instead, so it stays whole: no half-row seams, at the cost of
+//! a dither pattern a cell tall. Other glyphs take one threshold per cell.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -15,7 +18,7 @@ use ratatui::style::Color;
 use super::bayer;
 use crate::theme::Theme;
 
-pub fn resolve(theme: &Theme, area: Rect, buf: &mut Buffer) {
+pub fn resolve(theme: &Theme, area: Rect, buf: &mut Buffer, translucent: bool) {
     if area.is_empty() {
         return;
     }
@@ -39,13 +42,21 @@ pub fn resolve(theme: &Theme, area: Rect, buf: &mut Buffer) {
                 }
                 whole @ ("█" | " ") => {
                     let c = if whole == " " { bg } else { fg };
-                    let (top, bottom) = (pixel(c, 0), pixel(c, 1));
+                    let (top, bottom) = match translucent {
+                        true => {
+                            let one = theme.dither(c, bayer(x, y));
+                            (one, one)
+                        }
+                        false => (pixel(c, 0), pixel(c, 1)),
+                    };
                     if top == bottom {
                         if whole == " " {
                             cell.bg = top;
                         } else {
                             cell.fg = top;
                         }
+                    } else if theme.darker(top, bottom) {
+                        cell.set_char('▄').set_fg(bottom).set_bg(top);
                     } else {
                         cell.set_char('▀').set_fg(top).set_bg(bottom);
                     }

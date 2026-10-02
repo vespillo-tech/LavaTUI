@@ -135,6 +135,7 @@ fn draw_lamp(
         time: model.time(),
         options: LampOptions {
             reduced: model.quality.reduced_grid(),
+            translucent: model.translucent_cells(),
         },
     };
     frame.render_stateful_widget(view, area, lamp);

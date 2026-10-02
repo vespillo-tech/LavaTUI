@@ -5,9 +5,8 @@
 //! NO_COLOR, just the silhouette).
 
 use ratatui::buffer::Buffer;
-use ratatui::style::Color;
 
-use crate::render::{Canvas, Grid, LIQUID, LampStyle, coverage, wax_heat};
+use crate::render::{Canvas, Grid, LIQUID, LampStyle, Pixel, coverage, wax_heat};
 use crate::theme::Ink;
 
 pub struct Solid;
@@ -21,13 +20,19 @@ impl LampStyle for Solid {
     }
 }
 
-fn pixel(c: &Canvas, x: usize, y: usize) -> Option<Color> {
+fn pixel(c: &Canvas, x: usize, y: usize) -> Pixel {
     let s = c.at(x, y);
     let cover = coverage(s.density);
     let wax = Ink::Wax(wax_heat(s.temp));
     if c.theme.blends() {
-        Some(c.theme.paint(LIQUID).mix(wax, cover).color())
+        let color = c.theme.paint(LIQUID).mix(wax, cover).color();
+        match cover {
+            0.0 => Pixel::Back(color),
+            _ => Pixel::Ink(color),
+        }
+    } else if cover >= 0.5 {
+        Pixel::Ink(c.theme.color(wax))
     } else {
-        (cover >= 0.5).then(|| c.theme.color(wax))
+        Pixel::Liquid
     }
 }
