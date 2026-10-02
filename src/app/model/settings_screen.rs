@@ -150,6 +150,7 @@ pub enum Item {
     StripeFix,
     Face,
     Hour24,
+    Seconds,
     FocusLength,
     ShortBreak,
     LongBreak,
@@ -402,6 +403,7 @@ impl Model {
             Page::Clock => out.extend([
                 Face,
                 Hour24,
+                Seconds,
                 FocusLength,
                 ShortBreak,
                 LongBreak,
@@ -515,6 +517,11 @@ impl Model {
                 "time format",
                 if s.clock.hour24 { "24-hour" } else { "12-hour" },
                 "14:30 or 2:30.",
+            ),
+            Item::Seconds => choice(
+                "seconds",
+                on_off(s.clock.seconds),
+                "Shows the seconds when the clock is big. Off: just hours and minutes.",
             ),
             Item::FocusLength => row(
                 "focus length",
@@ -1322,6 +1329,7 @@ impl Model {
                 s.display.cells = STRIPE_FIXES[i];
             }
             Item::Hour24 => s.clock.hour24 = !s.clock.hour24,
+            Item::Seconds => s.clock.seconds = !s.clock.seconds,
             Item::FocusLength | Item::ShortBreak | Item::LongBreak | Item::Cycles => {
                 let p = &mut s.pomodoro;
                 let (value, list): (&mut u32, &[u32]) = match item {

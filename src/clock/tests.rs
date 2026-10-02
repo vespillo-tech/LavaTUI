@@ -909,3 +909,22 @@ fn gallery() {
         }
     }
 }
+
+#[test]
+fn fit_never_picks_seconds_when_off() {
+    for &face in FACES {
+        for hour24 in [true, false] {
+            let opts = FaceOptions {
+                hour24,
+                seconds: false,
+            };
+            for w in (0..=120).step_by(3) {
+                for h in 0..=40 {
+                    if let Some(f) = face.fit(opts, Size::new(w, h)) {
+                        assert!(!f.seconds, "{} {w}x{h}", face.name());
+                    }
+                }
+            }
+        }
+    }
+}

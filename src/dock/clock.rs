@@ -20,12 +20,9 @@ const DATE_ROWS: u16 = 2;
 /// The clock's variants in `place`, most preferred first: each face form
 /// with the date line, then without (the date goes before the face
 /// shrinks, §1.3). Seconds only in L/XL, and never on the lava, where
-/// they'd be the one thing ticking over the wax.
-fn variants(face: &dyn Face, hour24: bool, place: Place) -> Vec<(Form, bool)> {
-    let opts = FaceOptions {
-        hour24,
-        seconds: true,
-    };
+/// they'd be the one thing ticking over the wax; never with
+/// `opts.seconds` off (`clock.seconds = false`).
+fn variants(face: &dyn Face, opts: FaceOptions, place: Place) -> Vec<(Form, bool)> {
     face.all_forms(opts)
         .into_iter()
         .filter(|f| !f.seconds || (f.tier >= Tier::L && place == Place::Side))
@@ -34,8 +31,8 @@ fn variants(face: &dyn Face, hour24: bool, place: Place) -> Vec<(Form, bool)> {
 }
 
 /// The clock's forms for `face` in `place` (pure, for the layout tests).
-pub fn clock_forms(face: &dyn Face, hour24: bool, place: Place) -> Vec<WidgetForm> {
-    variants(face, hour24, place)
+pub fn clock_forms(face: &dyn Face, opts: FaceOptions, place: Place) -> Vec<WidgetForm> {
+    variants(face, opts, place)
         .into_iter()
         .enumerate()
         .map(|(i, (f, date))| {
@@ -59,13 +56,13 @@ pub fn clock_forms(face: &dyn Face, hour24: bool, place: Place) -> Vec<WidgetFor
 /// its rect, and the date line's rect, if the form has one.
 pub fn clock_parts(
     face: &dyn Face,
-    hour24: bool,
+    opts: FaceOptions,
     place: Place,
     form: WidgetForm,
     area: Rect,
     align: Alignment,
 ) -> Option<(Form, Rect, Option<Rect>)> {
-    let &(f, date) = variants(face, hour24, place).get(usize::from(form.variant))?;
+    let &(f, date) = variants(face, opts, place).get(usize::from(form.variant))?;
     let (w, h) = (f.size.width, f.size.height);
     if w > area.width || h > area.height {
         return None;
@@ -89,13 +86,13 @@ impl DockWidget for Clock {
     }
 
     fn forms(&self, model: &Model, place: Place) -> Vec<WidgetForm> {
-        clock_forms(model.face, model.settings.clock.hour24, place)
+        clock_forms(model.face, model.clock_options(), place)
     }
 
     fn draw(&self, model: &Model, form: WidgetForm, area: Rect, look: Look, buf: &mut Buffer) {
-        let hour24 = model.settings.clock.hour24;
+        let opts = model.clock_options();
         let place = place_of(look);
-        let Some((f, rect, date)) = clock_parts(model.face, hour24, place, form, area, look.align)
+        let Some((f, rect, date)) = clock_parts(model.face, opts, place, form, area, look.align)
         else {
             return;
         };
@@ -109,14 +106,7 @@ impl DockWidget for Clock {
             main: theme.text(Role::Text),
             dim: theme.text(Role::Dim),
         };
-        face.draw(
-            f,
-            model.local.time,
-            model.face_options(true),
-            rect,
-            buf,
-            style,
-        );
+        face.draw(f, model.local.time, opts, rect, buf, style);
         if let Some(r) = date {
             let text = &model.local.date;
             let w = (text.chars().count() as u16).min(r.width);

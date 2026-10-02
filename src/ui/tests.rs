@@ -29,6 +29,8 @@ struct Case {
     cover_size: CoverSize,
     face: &'static dyn Face,
     hour24: bool,
+    /// `clock.seconds`.
+    seconds: bool,
     /// The clock's chip (none in minimal with `minimal.clock = "off"`).
     clock_chip: bool,
     /// A running pomodoro's chip width (rank 3); `None` while idle (0).
@@ -63,6 +65,7 @@ fn case(face: &'static dyn Face) -> Case {
         cover_size: CoverSize::Medium,
         face,
         hour24: true,
+        seconds: true,
         clock_chip: true,
         pomodoro_chip: None,
         music_track: true,
@@ -72,6 +75,13 @@ fn case(face: &'static dyn Face) -> Case {
 }
 
 impl Case {
+    fn clock_opts(&self) -> clock::FaceOptions {
+        clock::FaceOptions {
+            hour24: self.hour24,
+            seconds: self.seconds,
+        }
+    }
+
     fn widgets(&self) -> usize {
         if self.places[COVER] != Place::Off {
             5
@@ -92,7 +102,7 @@ impl Case {
             DockItem {
                 place: p[0],
                 anchor: self.anchors[0],
-                forms: forms(p[0], &|p| clock_forms(self.face, self.hour24, p)),
+                forms: forms(p[0], &|p| clock_forms(self.face, self.clock_opts(), p)),
                 chip: self.clock_chip.then_some(5),
                 rank: 1,
             },
@@ -192,7 +202,7 @@ fn clock_of(l: &Layout, case: &Case) -> Option<(clock::Form, Rect, Option<Rect>)
     } else {
         case.anchors[CLOCK].align()
     };
-    clock_parts(case.face, case.hour24, place, p.form, p.rect, align)
+    clock_parts(case.face, case.clock_opts(), place, p.form, p.rect, align)
 }
 
 /// Every invariant §1 and §4.6 promise, for one layout.
@@ -550,6 +560,7 @@ fn every_size_is_clean() {
         },
         Case {
             pomodoro_chip: Some(7),
+            seconds: false,
             ..base
         },
         Case {
@@ -1077,6 +1088,46 @@ fn no_seconds_on_the_lava() {
         let (form, ..) = clock_of(&at(w, h, &c), &c).unwrap();
         assert!(!form.seconds, "{w}x{h}");
     }
+}
+
+/// `clock.seconds = false`: no form with seconds at any size, in any place,
+/// but the same big tiers are still offered and picked.
+#[test]
+fn seconds_off_keeps_the_big_forms_without_seconds() {
+    for &face in clock::FACES {
+        for hour24 in [true, false] {
+            for place in [SIDE, LAVA] {
+                let tiers = |seconds| {
+                    let opts = clock::FaceOptions { hour24, seconds };
+                    let forms = clock_forms(face, opts, place);
+                    let mut tiers: Vec<_> = (0..forms.len() as u16)
+                        .filter_map(|variant| {
+                            let form = forms[usize::from(variant)];
+                            let area = Rect::new(0, 0, form.size.width, form.size.height);
+                            let (f, ..) =
+                                clock_parts(face, opts, place, form, area, Alignment::Left)?;
+                            assert!(seconds || !f.seconds && !form.seconds, "{}", face.name());
+                            Some(f.tier)
+                        })
+                        .collect();
+                    tiers.dedup();
+                    tiers
+                };
+                assert_eq!(tiers(true), tiers(false), "{} {place:?}", face.name());
+            }
+        }
+    }
+    let c = Case {
+        seconds: false,
+        ..case(blocks())
+    };
+    for (w, h) in [(220, 50), (300, 90)] {
+        let (form, ..) = clock_of(&at(w, h, &c), &c).unwrap();
+        assert!(!form.seconds && form.tier >= clock::Tier::L, "{w}x{h}");
+    }
+    let on = case(blocks());
+    let (form, ..) = clock_of(&at(300, 90, &on), &on).unwrap();
+    assert!(form.seconds, "seconds on: today's look");
 }
 
 // --- status bar & toasts ----------------------------------------------------

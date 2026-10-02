@@ -48,6 +48,8 @@ transparent = false      # true = never paint the background (keeps terminal tra
 [clock]
 face = "blocks"          # blocks | segment | analog | binary | words | text
 hour24 = true
+seconds = true           # seconds on the big clock in the side panel; false = 14:32
+                         # at every size (no second hand, no seconds column)
 
 [pomodoro]
 focus_min = 25

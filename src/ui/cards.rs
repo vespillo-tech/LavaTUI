@@ -180,10 +180,9 @@ fn clock_shows_face(layout: &Layout, model: &Model, sheet: Rect) -> bool {
             )
         }
     };
-    let hour24 = model.settings.clock.hour24;
     let face = dock::clock_parts(
         model.face,
-        hour24,
+        model.clock_options(),
         place,
         placed.form,
         placed.rect,
