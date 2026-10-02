@@ -19,13 +19,19 @@
 //! bump) for blobs only a few sample pixels across, and draws the pool at
 //! least [`MIN_POOL_PIXELS`] deep. Moving blobs are drawn as teardrops:
 //! the half of each ellipse ahead of the motion is shortened and the half
-//! behind lengthened by the same amount (`TAPER`), which keeps the area, so
-//! a rising blob trails a tail. Buds and melting blobs get a skirt joining
+//! behind lengthened by the same amount (the blob's eased `taper`), which
+//! keeps the area, so a rising blob trails a tail. Buds and melting blobs get a skirt joining
 //! them to the pool: a broad bulge that draws in to a neck as a bud lets
 //! go. The pool is coloured hot where it is deep and cooler at its skin.
+//!
+//! Nothing snaps from one frame to the next: a merge or split crossfades
+//! from the blobs it replaced (the world's ghosts) to the new ones, skirts
+//! grow in and fade out, a blob only a little over `MELTED_RADIUS` fades
+//! with its size, and lobe detail follows the grid the lamp is shown at,
+//! not the one it is sampled at.
 
 use super::rng::hash;
-use super::{Phase, World, ambient_temp, pool_ceiling, pool_surface};
+use super::{Blob, MELTED_RADIUS, World, ambient_temp, pool_ceiling, pool_surface};
 
 /// Density at a wax surface. Inside is `>= SURFACE`; a lone blob peaks at
 /// about 1.05 and overlaps go higher, so clamp before mapping to colour.
@@ -56,16 +62,14 @@ const LOBE_PIXELS: (f64, f64) = (2.5, 5.0);
 /// The pool is drawn at least this many sample pixels deep, so a small
 /// lamp's pool never thins to a stray row.
 pub const MIN_POOL_PIXELS: f32 = 2.0;
+/// A blob fades out over its last `FADE_RADIUS × MELTED_RADIUS` of
+/// radius before it melts away (and a bud fades in over its first).
+const FADE_RADIUS: f64 = 1.0;
 /// Most lobes a blob has.
 const MAX_LOBES: usize = 3;
 /// Skirt joining a bud to the pool: its half-width in blob radii when the
-/// bud starts and when it lets go, and how far grown a melting blob's is.
+/// bud starts and when it lets go (`Blob::neck` 0 … 1).
 const SKIRT: (f64, f64) = (0.9, 0.35);
-const MELT_SKIRT: f64 = 0.3;
-/// Teardrop taper per unit of vertical speed (lamp heights / s), and its
-/// cap: a hot blob at full speed is about 0.4 / 1.6 front / back.
-const TAPER: f64 = 10.0;
-const MAX_TAPER: f64 = 0.5;
 /// Weight given to the liquid's temperature when blending, so `temp` fades
 /// smoothly from wax to liquid at the edges.
 const LIQUID_WEIGHT: f32 = 0.02;
@@ -107,6 +111,8 @@ pub(super) struct BlobSnap {
     stretch: f64,
     taper: f64,
     temp: f32,
+    /// How fully it is drawn, 0 … 1 (kernel strength).
+    weight: f64,
     lobes: [Lobe; MAX_LOBES],
     lobe_count: usize,
     /// Joins a bud or melting blob to the pool.
@@ -137,27 +143,30 @@ impl Field {
         let pool_level =
             world.prev_pool_level + (world.pool_level() - world.prev_pool_level) * alpha;
         let floor = world.bottom_width();
-        for blob in &world.blobs {
+        let snap = |blob: &Blob| {
             let pose = blob.prev.lerp(blob.pose(), alpha);
-            // Rising: the tail hangs below; sinking: it trails above.
-            let taper = (TAPER * blob.vy).clamp(-MAX_TAPER, MAX_TAPER);
+            let taper = pose.taper;
             let temp = blob.temp as f32;
             let r = pose.radius;
+            // A bud just out of the pool, or a melting blob almost gone,
+            // fades with its size rather than popping in or out.
+            // Fades ease in and out, so the outline never starts or stops
+            // moving with a jerk.
+            let size = smooth((r - MELTED_RADIUS) / (FADE_RADIUS * MELTED_RADIUS));
+            let weight = smooth(pose.weight) * size;
             // Attached to the pool: a skirt of wax joins the two, a broad
-            // bulge while a bud swells that draws in to a neck as it lets go.
-            let grown = match blob.phase {
-                Phase::Budding { target } => Some((r / target).min(1.0)),
-                Phase::Melting => Some(MELT_SKIRT),
-                Phase::Free => None,
-            };
-            let skirt = grown.map(|grown| {
+            // bulge while a bud swells that draws in to a neck as it lets
+            // go (and fades as it rises away).
+            let grown = pose.neck;
+            let skirt = (pose.attach > 0.0).then(|| {
                 let surface = pool_surface(pool_level, pose.x, floor, time);
                 let bottom = pose.y - r * pose.stretch;
                 let width = r * (SKIRT.0 + (SKIRT.1 - SKIRT.0) * grown);
                 let height = (0.5 * (bottom - surface) + 0.5 * width).max(0.6 * width);
                 let (x, y) = (pose.x, surface.max(0.5 * (surface + bottom)));
                 let radius = (width * height).sqrt();
-                Kernel::new(x, y, radius, height / radius, 0.0, 1.0, temp)
+                let weight = weight * smooth(pose.attach);
+                Kernel::new(x, y, radius, height / radius, 0.0, weight, temp)
             });
             let mut snap = BlobSnap {
                 x: pose.x,
@@ -166,6 +175,7 @@ impl Field {
                 stretch: pose.stretch,
                 taper,
                 temp,
+                weight,
                 lobes: [Lobe::default(); MAX_LOBES],
                 lobe_count: 0,
                 skirt,
@@ -174,8 +184,12 @@ impl Field {
                 *slot = lobe;
                 snap.lobe_count += 1;
             }
-            self.blobs.push(snap);
-        }
+            snap
+        };
+        let ghosts = world.ghosts.iter().map(|g| &g.blob);
+        self.blobs
+            .extend(world.blobs.iter().chain(ghosts).map(snap));
+        self.blobs.retain(|b| b.weight > 0.0);
         self.view_width = world.view_width as f32;
         self.wall_width = world.wall_width;
         self.pool_level = pool_level;
@@ -253,7 +267,7 @@ impl Field {
             let detail = lobe_detail(b.radius / px.size);
             let r = b.radius;
             let kernel = |x: f64, y: f64, radius: f64, weight: f64| {
-                Kernel::new(x, y, radius, b.stretch, b.taper, weight, b.temp)
+                Kernel::new(x, y, radius, b.stretch, b.taper, b.weight * weight, b.temp)
             };
             // At full detail the main bump shrinks to share the blob with
             // its lobes; with none it is the whole, round blob.
@@ -283,12 +297,26 @@ impl Field {
     /// pixel `(i, j)` is `sample((i + ½) / cols, (j + ½) / rows)`. Cost
     /// scales with the wax area on screen, not blobs × pixels.
     pub fn fill(&self, out: &mut [Sample], cols: usize, rows: usize) {
+        self.fill_detailed(out, cols, rows, (cols, rows));
+    }
+
+    /// [`Field::fill`] for a grid that will be shown at `detail` (columns,
+    /// rows) pixels, e.g. a reduced grid upsampled to the full one: shapes
+    /// (lobes, the pool's least depth) follow the shown grid, so the wax
+    /// keeps its shape whatever grid samples it.
+    pub fn fill_detailed(
+        &self,
+        out: &mut [Sample],
+        cols: usize,
+        rows: usize,
+        detail: (usize, usize),
+    ) {
         assert_eq!(out.len(), cols * rows, "fill: buffer is not cols × rows");
         out.fill(Sample::default());
         if cols == 0 || rows == 0 {
             return;
         }
-        let px = self.pixel(cols, rows);
+        let px = self.pixel(detail.0.max(1), detail.1.max(1));
         let px_w = self.view_width / cols as f32;
         let px_h = 1.0 / rows as f32;
         let left = -0.5 * self.view_width;
@@ -325,7 +353,8 @@ impl Field {
 
         // Pool: only the rows its surface can reach.
         let lift = self.pool_lift(px);
-        let ceiling = (pool_ceiling(self.pool_level) as f32 + lift).max(MIN_POOL_PIXELS * px_h);
+        let ceiling =
+            (pool_ceiling(self.pool_level) as f32 + lift).max(MIN_POOL_PIXELS * px.height);
         let top = ceiling + POOL_BAND;
         if let Some((j0, _)) = span((1.0 - top) / px_h, rows as f32, rows) {
             for i in 0..cols {
@@ -416,6 +445,12 @@ fn add_pool(s: &mut Sample, depth: f32) {
     s.temp += w * temp;
 }
 
+/// [`smooth01`] in `f64`.
+fn smooth(t: f64) -> f64 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
 #[inline]
 fn smooth01(t: f32) -> f32 {
     let t = t.clamp(0.0, 1.0);
@@ -425,8 +460,7 @@ fn smooth01(t: f32) -> f32 {
 /// How much of its lobes a blob `pixels` sample pixels in radius shows,
 /// 0 (one round bump) … 1.
 fn lobe_detail(pixels: f64) -> f64 {
-    let t = ((pixels - LOBE_PIXELS.0) / (LOBE_PIXELS.1 - LOBE_PIXELS.0)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
+    smooth((pixels - LOBE_PIXELS.0) / (LOBE_PIXELS.1 - LOBE_PIXELS.0))
 }
 
 /// Sample pixel size, in world units: across (the larger side, for lobe

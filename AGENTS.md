@@ -160,6 +160,7 @@ cargo fmt --check                    # formatting gate
 cargo clippy --all-targets -- -D warnings   # lint gate
 cargo test --release -- --ignored --nocapture bench_fill   # field sampler + step timing
 cargo test --release -- --ignored --nocapture bench_lamp   # per-style frame time + bytes/frame
+cargo test --release -- --ignored --nocapture pop_harness  # frame-to-frame shape jumps + causes (POP_SECS=600)
 UPDATE_SNAPSHOTS=1 cargo test        # rewrite render + layout snapshots (review the diff!)
 ```
 
@@ -266,12 +267,21 @@ numbers); `docs/design.md` is the layout/visual contract.
                 a straight-walled tank whose walls ease to a new width.
                 Pool on the heater buds blobs; heat/buoyancy/drag/cohesion,
                 merge + split, melt back into the pool; wax area conserved.
+                Nothing the field draws may snap between frames: a merge or
+                split leaves `Ghost`s (the old blobs, fading out, carried by
+                the blob that replaced them) while the new blob's `weight`
+                fades in; skirts fade by `attach`; buds fade in; the
+                teardrop `taper` eases; all of it is in the interpolated
+                `Pose`. `render/pops.rs` measures it (`wax_does_not_pop`
+                in the gate, `pop_harness` the long report).
                 `field.rs`: `Field::prepare(&world, alpha)` once per frame,
                 then `fill(&mut [Sample], cols, rows)` / `sample(u, v)`
                 (v down; density `>= SURFACE` is wax). Kernels are built per
-                fill for its pixel size: lobes fade out on blobs only a few
-                pixels across and the pool is drawn >= `MIN_POOL_PIXELS`
-                deep. Randomness: `rng.rs` (`Rng`, stateless `hash`).
+                fill for the pixel size it is shown at (`fill_detailed` for
+                a coarser grid that is upsampled): lobes fade out on blobs
+                only a few pixels across and the pool is drawn >=
+                `MIN_POOL_PIXELS` deep. Randomness: `rng.rs` (`Rng`,
+                stateless `hash`).
                 `controls.rs`: heat, reseed, heat pulse, `SimSpeed`. Model
                 notes and all tuning constants are at the top of `sim/mod.rs`
                 (incl. `WAX_TEMP`, the span renderers map onto wax colours).
@@ -297,8 +307,9 @@ numbers); `docs/design.md` is the layout/visual contract.
                 grid for adaptive quality; state
                 `LampState` = reused scratch buffers); it samples the field
                 at the style's `Grid` (half-block 1×2, braille 2×4, …; >400k
-                samples → coarse fill + bilinear upsample), then calls the
-                style's `draw(&Canvas, buf)`.
+                samples → coarse fill + bilinear upsample; a switch to or
+                from the reduced grid crossfades over 12 frames), then calls
+                the style's `draw(&Canvas, buf)`.
                 In 256-colour mode a final pass (`render/dither256.rs`) turns
                 blended RGB into xterm indices, Bayer-dithering dark tints the
                 cube lacks (`Theme::dithering`/`Theme::dither`).

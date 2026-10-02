@@ -21,6 +21,8 @@ mod cell;
 #[cfg(test)]
 mod composite;
 mod dither256;
+#[cfg(test)]
+mod pops;
 mod styles;
 #[cfg(test)]
 mod tests;
@@ -180,6 +182,56 @@ pub fn smoothstep(t: f32) -> f32 {
 pub struct LampState {
     samples: Vec<Sample>,
     coarse: Vec<Sample>,
+    /// The grid last drawn ([`LampOptions::reduced`]), and how far (0 … 1)
+    /// a switch to it has faded in from the other: the full and reduced
+    /// grids place edges a little differently, so a switch crossfades
+    /// over [`GRID_FADE_FRAMES`] rather than nudging every edge at once.
+    reduced: Option<bool>,
+    switch: f32,
+    other: Vec<Sample>,
+}
+
+/// Frames a switch between the full and reduced sample grids takes.
+const GRID_FADE_FRAMES: f32 = 12.0;
+
+impl LampState {
+    /// Sample `field` into `samples` (`width × height`), at the `reduced`
+    /// grid or the full one, crossfading after a switch.
+    fn sample(&mut self, field: &Field, reduced: bool, width: usize, height: usize) {
+        let n = width * height;
+        match self.reduced {
+            Some(was) if was != reduced => self.switch = 0.0,
+            None => self.switch = 1.0,
+            Some(_) => {}
+        }
+        self.reduced = Some(reduced);
+        self.samples.resize(n, Sample::default());
+        sample(
+            field,
+            reduced,
+            &mut self.samples,
+            &mut self.coarse,
+            width,
+            height,
+        );
+        if self.switch < 1.0 {
+            self.switch = (self.switch + 1.0 / GRID_FADE_FRAMES).min(1.0);
+            self.other.resize(n, Sample::default());
+            sample(
+                field,
+                !reduced,
+                &mut self.other,
+                &mut self.coarse,
+                width,
+                height,
+            );
+            let t = smoothstep(self.switch);
+            for (s, o) in self.samples.iter_mut().zip(&self.other) {
+                s.density = o.density + (s.density - o.density) * t;
+                s.temp = o.temp + (s.temp - o.temp) * t;
+            }
+        }
+    }
 }
 
 /// The lamp as a widget: samples `field` at the style's grid and draws it.
@@ -235,20 +287,7 @@ impl StatefulWidget for LampView<'_> {
         let grid = self.style.grid();
         let width = usize::from(area.width) * usize::from(grid.x);
         let height = usize::from(area.height) * usize::from(grid.y);
-        let n = width * height;
-
-        state.samples.resize(n, Sample::default());
-        let budget = sample_budget(n, self.options.reduced);
-        if n <= budget {
-            self.field.fill(&mut state.samples, width, height);
-        } else {
-            let k = (budget as f64 / n as f64).sqrt();
-            let cw = ((width as f64 * k) as usize).max(1);
-            let ch = ((height as f64 * k) as usize).max(1);
-            state.coarse.resize(cw * ch, Sample::default());
-            self.field.fill(&mut state.coarse, cw, ch);
-            upsample(&state.coarse, cw, ch, &mut state.samples, width, height);
-        }
+        state.sample(self.field, self.options.reduced, width, height);
 
         let canvas = Canvas {
             area,
@@ -263,6 +302,32 @@ impl StatefulWidget for LampView<'_> {
         if let Some(theme) = &dithering {
             dither256::resolve(theme, area, buf, self.options.translucent);
         }
+    }
+}
+
+/// Sample `field` into `out` (`width × height`): directly within the
+/// budget, else coarser (`coarse` is scratch) and upsampled.
+fn sample(
+    field: &Field,
+    reduced: bool,
+    out: &mut [Sample],
+    coarse: &mut Vec<Sample>,
+    width: usize,
+    height: usize,
+) {
+    let n = width * height;
+    let budget = sample_budget(n, reduced);
+    if n <= budget {
+        field.fill(out, width, height);
+    } else {
+        let k = (budget as f64 / n as f64).sqrt();
+        let cw = ((width as f64 * k) as usize).max(1);
+        let ch = ((height as f64 * k) as usize).max(1);
+        coarse.resize(cw * ch, Sample::default());
+        // Shaped for the grid it is shown at, so switching grids
+        // (adaptive quality) doesn't reshape the wax.
+        field.fill_detailed(coarse, cw, ch, (width, height));
+        upsample(coarse, cw, ch, out, width, height);
     }
 }
 

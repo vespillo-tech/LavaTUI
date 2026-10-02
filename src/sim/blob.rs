@@ -33,6 +33,20 @@ pub struct Blob {
     /// 0 = cold, 1 = hot. Buoyancy is neutral at [`super::NEUTRAL_TEMP`].
     pub temp: f64,
     pub phase: Phase,
+    /// How fully the field draws this blob, 0 … 1: a blob born of a
+    /// merge or split fades in while what it replaced fades out (a
+    /// [`Ghost`]), so the outline morphs instead of snapping.
+    pub(super) weight: f64,
+    /// How fully the skirt joining it to the pool is drawn, 0 … 1: it
+    /// grows in as a blob settles to melt and fades as a bud lets go.
+    pub(super) attach: f64,
+    /// How far that skirt has drawn in to a neck, 0 (a broad bulge) … 1:
+    /// a bud's grows with it, a melting blob's eases to its own.
+    pub(super) neck: f64,
+    /// Teardrop taper, `> 0` with the tail below (rising): eases toward
+    /// what the blob's speed asks for, so the shape never swings with a
+    /// sudden change of speed.
+    pub(super) taper: f64,
     /// Pose at the start of the last step, for render interpolation.
     pub(super) prev: Pose,
     /// Seconds before this blob may merge or melt again (after a split or
@@ -50,6 +64,10 @@ pub(super) struct Pose {
     pub y: f64,
     pub radius: f64,
     pub stretch: f64,
+    pub taper: f64,
+    pub weight: f64,
+    pub attach: f64,
+    pub neck: f64,
 }
 
 impl Pose {
@@ -60,8 +78,21 @@ impl Pose {
             y: mix(self.y, to.y),
             radius: mix(self.radius, to.radius),
             stretch: mix(self.stretch, to.stretch),
+            taper: mix(self.taper, to.taper),
+            weight: mix(self.weight, to.weight),
+            attach: mix(self.attach, to.attach),
+            neck: mix(self.neck, to.neck),
         }
     }
+}
+
+/// What a merge or split replaced, still drawn while it fades out: the
+/// blob as it was, carried along with the blob that took its place
+/// (`follow`, by id), so the outline morphs from the old shape to the new.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct Ghost {
+    pub blob: Blob,
+    pub follow: u64,
 }
 
 impl Blob {
@@ -81,6 +112,10 @@ impl Blob {
             y: self.y,
             radius: self.radius,
             stretch: self.stretch,
+            taper: self.taper,
+            weight: self.weight,
+            attach: self.attach,
+            neck: self.neck,
         }
     }
 
@@ -90,7 +125,8 @@ impl Blob {
 
     /// Fold `other` into `self`, conserving area and momentum. The result is
     /// stretched along the axis the two met on, so the merged ellipse covers
-    /// roughly the same footprint as the pair did (no visible pop).
+    /// roughly the same footprint as the pair did; the field still
+    /// crossfades from the pair (see [`Ghost`]).
     pub(super) fn absorb(&mut self, other: &Blob, merge_stretch: f64) {
         let (a, b) = (self.area(), other.area());
         let (wa, wb) = (a / (a + b), b / (a + b));
@@ -104,9 +140,23 @@ impl Blob {
         self.vy = mix(self.vy, other.vy);
         self.temp = mix(self.temp, other.temp);
         self.stretch = mix(self.stretch, other.stretch) * (1.0 + merge_stretch * along);
-        self.prev.x = mix(self.prev.x, other.prev.x);
-        self.prev.y = mix(self.prev.y, other.prev.y);
         self.set_area(a + b);
+        // Its pose a step ago is the pair's, merged the same way: the frame
+        // drawn between the two steps sees one consistent blob.
+        let prev_area = PI * (self.prev.radius.powi(2) + other.prev.radius.powi(2));
+        self.prev = Pose {
+            x: mix(self.prev.x, other.prev.x),
+            y: mix(self.prev.y, other.prev.y),
+            radius: (prev_area / PI).sqrt(),
+            stretch: self.stretch,
+            taper: mix(self.prev.taper, other.prev.taper),
+            weight: 0.0,
+            attach: self.attach.max(other.attach),
+            neck: self.neck,
+        };
+        self.weight = 0.0;
+        self.attach = self.prev.attach;
+        self.taper = mix(self.taper, other.taper);
         if b > a {
             self.id = other.id;
             self.wander_phase = other.wander_phase;
