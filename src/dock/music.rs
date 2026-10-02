@@ -453,10 +453,15 @@ fn keys_hint(model: &Model, r: Rect, controls: &[Control]) -> Option<&'static st
     if model.settings.input.mouse || model.music.keys {
         return None;
     }
-    let right = controls.iter().map(|c| c.rect.x).min().unwrap_or(r.right());
+    // Three columns clear of the heart, if there is one.
+    let right = controls
+        .iter()
+        .map(|c| c.rect.x.saturating_sub(3))
+        .min()
+        .unwrap_or(r.right());
     [KEYS_HINT, KEYS_HINT_SHORT]
         .into_iter()
-        .find(|hint| r.x + width(hint) + 3 <= right)
+        .find(|hint| r.x + width(hint) <= right)
 }
 
 /// [`keys_hint`]'s words (the short one fits beside the heart).
