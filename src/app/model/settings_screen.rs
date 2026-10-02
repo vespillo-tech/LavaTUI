@@ -310,16 +310,6 @@ fn stripe_fix_name(c: CellsChoice) -> &'static str {
     }
 }
 
-fn detail_name(d: Detail) -> &'static str {
-    match d {
-        Detail::Auto => "automatic",
-        Detail::Pixels => "sharp picture",
-        Detail::Sextant => "fine blocks",
-        Detail::Quadrant => "medium blocks",
-        Detail::HalfBlock => "large blocks",
-    }
-}
-
 fn cover_size_name(s: CoverSize) -> &'static str {
     match s {
         CoverSize::Small => "small",
@@ -562,9 +552,10 @@ impl Model {
             ),
             Item::CoverDetail => choice(
                 "cover picture",
-                detail_name(s.art.detail),
-                "Sharp picture needs a terminal that shows images, like kitty or Ghostty. \
-                 Blocks work everywhere; bigger blocks look softer.",
+                s.art.detail.label(),
+                "Auto picks the best this terminal can show. Photo needs one that shows \
+                 images, like kitty or Ghostty. Fine, medium and coarse are drawn in \
+                 text; coarser looks softer.",
             ),
             Item::CoverSize => choice(
                 "cover size",

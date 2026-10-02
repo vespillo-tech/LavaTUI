@@ -9,9 +9,13 @@
 //!   and the widgets on the lava clear, so the face it previews stays in
 //!   view.
 //! * Small: a bottom sheet, up to half the height, across the lamp's
-//!   columns (clear of a right panel) or the full width.
+//!   columns (clear of a right panel) or the full width, with
+//!   `Enter save · Esc cancel` in its bottom border.
 //! * Tiny / micro: an inline `‹ braille ›` selector in the top row, which
-//!   sheds its pads, then its arrows, then letters, so it always shows.
+//!   sheds its pads, then its arrows, then letters, so it always shows;
+//!   the same guidance under it when there's a row to spare.
+//! * The face picker also shows the face it previews in a card of its own
+//!   ([`face_preview`]) while the clock itself isn't showing it.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -24,6 +28,16 @@ use crate::theme::Role;
 use crate::ui::chrome::PICKER_HINTS;
 use crate::ui::layout::{Layout, PICKER_SHEET, SizeTier, reaches, side_margin};
 
+/// The pickers' save / cancel guidance where there's no status bar hint
+/// row of their own, longest first: the first that fits is shown.
+pub const PICKER_GUIDE: &[&str] = &[
+    "preview · Enter save · Esc cancel",
+    "Enter save · Esc cancel",
+    "Enter ok · Esc cancel",
+    "Enter ok  Esc cancel",
+    "Enter · Esc",
+];
+
 const SHEET_W: u16 = 26;
 /// Narrowest bottom sheet that still reads (border + `▸ ` + a name).
 const MIN_BOTTOM_W: u16 = 16;
@@ -31,14 +45,21 @@ const MIN_BOTTOM_W: u16 = 16;
 /// Where an open picker goes at a given size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Placement {
-    /// The one-line selector: its text and the rect it's drawn in.
-    Inline { rect: Rect, text: InlineText },
+    /// The one-line selector: its text and the rect it's drawn in, and
+    /// the guidance line under it (its rect and which [`Spec::guide`]).
+    Inline {
+        rect: Rect,
+        text: InlineText,
+        guide: Option<(Rect, usize)>,
+    },
     Sheet {
         sheet: Rect,
         /// The item rows.
         list: Rect,
-        /// The `⏎ keep  esc revert` row, roomy sheets only.
+        /// The `Enter save   Esc cancel` row, roomy sheets only.
         hint: Option<u16>,
+        /// Which [`Spec::guide`] the bottom border carries (bottom sheets).
+        guide: Option<usize>,
     },
 }
 
@@ -46,10 +67,17 @@ impl Placement {
     /// Every cell the picker draws on.
     pub fn footprint(&self) -> Rect {
         match *self {
-            Placement::Inline { rect, .. } => rect,
+            Placement::Inline { rect, guide, .. } => guide.map_or(rect, |(g, _)| rect.union(g)),
             Placement::Sheet { sheet, .. } => sheet,
         }
     }
+}
+
+/// The first of `guide` no wider than `width`.
+fn fit_guide(guide: &[&str], width: u16) -> Option<usize> {
+    guide
+        .iter()
+        .position(|g| g.chars().count() <= usize::from(width))
 }
 
 /// How much of ` ‹ name › ` the inline selector shows.
@@ -108,6 +136,9 @@ pub struct Spec<'a> {
     pub left: bool,
     /// The inline selector's text (the cursor's item).
     pub current: &'a str,
+    /// Save / cancel guidance for the inline selector and the bottom
+    /// sheet, longest first (empty: none).
+    pub guide: &'a [&'a str],
 }
 
 /// Where `picker` goes in `area`, which `layout` was made for.
@@ -118,6 +149,7 @@ pub fn placement(area: Rect, layout: &Layout, picker: &Picker) -> Option<Placeme
         width: SHEET_W,
         left: picker.kind == PickerKind::Face,
         current: items.get(picker.cursor).copied().unwrap_or(""),
+        guide: PICKER_GUIDE,
     };
     place(area, layout, spec)
 }
@@ -133,7 +165,16 @@ pub fn place(area: Rect, layout: &Layout, spec: Spec) -> Option<Placement> {
         let text = InlineText::fit(spec.current, area.width)?;
         let w = text.render(spec.current).chars().count() as u16;
         let rect = Rect::new(area.x + (area.width - w) / 2, area.y, w, 1);
-        return Some(Placement::Inline { rect, text });
+        // Under it, while a row of lamp is still left below.
+        let guide = (area.height >= 3)
+            .then(|| fit_guide(spec.guide, area.width))
+            .flatten()
+            .map(|i| {
+                let gw = spec.guide[i].chars().count() as u16;
+                let g = Rect::new(area.x + (area.width - gw) / 2, area.y + 1, gw, 1);
+                (g, i)
+            });
+        return Some(Placement::Inline { rect, text, guide });
     }
 
     let n = spec.n.max(1).min(usize::from(u16::MAX - 8)) as u16;
@@ -165,6 +206,7 @@ pub fn place(area: Rect, layout: &Layout, spec: Spec) -> Option<Placement> {
             sheet,
             list,
             hint: Some(y + h - 3),
+            guide: None,
         });
     }
 
@@ -181,6 +223,8 @@ pub fn place(area: Rect, layout: &Layout, spec: Spec) -> Option<Placement> {
         sheet,
         list: Rect::new(area.x + 1, y + 1, w.saturating_sub(2), h - 2),
         hint: None,
+        // In the bottom border: `╰─ Enter save · Esc cancel ─╯`.
+        guide: fit_guide(spec.guide, w.saturating_sub(6)),
     })
 }
 
@@ -231,7 +275,7 @@ pub fn hit_in(
 ) -> Option<Hit> {
     let at = (col, row).into();
     match place {
-        Placement::Inline { rect, text } => {
+        Placement::Inline { rect, text, .. } => {
             if !rect.contains(at) {
                 return None;
             }
@@ -274,22 +318,34 @@ pub fn draw(buf: &mut Buffer, area: Rect, layout: &Layout, picker: &Picker, mode
         theme.text(Role::Accent),
     );
 
-    let (sheet, list, hint) = match place {
-        Placement::Inline { rect, text } => {
+    let (sheet, list, hint, guide) = match place {
+        Placement::Inline { rect, text, guide } => {
             let s = text.render(items[picker.cursor]);
             buf.set_string(rect.x, rect.y, s, accent.patch(bg));
+            if let Some((g, i)) = guide {
+                buf.set_string(g.x, g.y, PICKER_GUIDE[i], dim.patch(bg));
+            }
             return;
         }
-        Placement::Sheet { sheet, list, hint } => (sheet, list, hint),
+        Placement::Sheet {
+            sheet,
+            list,
+            hint,
+            guide,
+        } => (sheet, list, hint, guide),
     };
 
     Clear.render(sheet, buf);
     buf.set_style(sheet, bg);
-    Block::bordered()
+    let mut block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(theme.role(Role::Metal)))
-        .title(Line::styled(format!(" {} ", picker.kind.title()), accent))
-        .render(sheet, buf);
+        .title(Line::styled(format!(" {} ", picker.kind.title()), accent));
+    if let Some(i) = guide {
+        let line = Line::styled(format!(" {} ", PICKER_GUIDE[i]), dim);
+        block = block.title_bottom(line.centered());
+    }
+    block.render(sheet, buf);
 
     let rows = usize::from(list.height);
     let first = visible_top(picker.top, picker.cursor, rows, items.len());
@@ -311,7 +367,7 @@ pub fn draw(buf: &mut Buffer, area: Rect, layout: &Layout, picker: &Picker, mode
         }
     }
     if let Some(y) = hint {
-        // `⏎ keep   esc revert`, from the same table as the status bar.
+        // `Enter save   Esc cancel`, from the same table as the status bar.
         let mut x = list.x + 1;
         for (key, label, _) in PICKER_HINTS.iter().filter(|h| h.0 != "↑↓") {
             if x + (key.chars().count() + 1 + label.chars().count()) as u16 > list.right() {
@@ -320,7 +376,7 @@ pub fn draw(buf: &mut Buffer, area: Rect, layout: &Layout, picker: &Picker, mode
             buf.set_string(x, y, key, dim);
             x += key.chars().count() as u16 + 1;
             buf.set_string(x, y, label, dim);
-            x += label.chars().count() as u16 + 3;
+            x += label.chars().count() as u16 + 2;
         }
     }
 }

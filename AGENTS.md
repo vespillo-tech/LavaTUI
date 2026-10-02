@@ -449,7 +449,12 @@ numbers); `docs/design.md` is the layout/visual contract.
                 pure geometry the model also reads — form per size, lines,
                 body rect, `footprint`, `max_scroll`; `mod.rs` draws),
                 `picker.rs` (`placement`/`hit`: geometry shared by draw and
-                mouse),
+                mouse; `Enter save · Esc cancel` guidance in small forms),
+                `cards.rs` (design §4.8: the welcome card — `Model::welcome`,
+                `ui.welcome`, `w` — the music note, the face picker's
+                preview, and the guide line in the toast row while the music
+                controls own the keys; pure geometry the model reads to
+                decide whether a key dismisses the welcome),
                 `settings.rs` (the settings screen `,`: `geometry`/`hit`/`draw`;
                 its state and keys are `app/model/settings_screen.rs`: pages
                 of `Row`s built from the model, live changes, reset, the

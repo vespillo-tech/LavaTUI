@@ -97,6 +97,9 @@ pub struct Pomodoro {
 pub struct Ui {
     pub mode: UiMode,
     pub status_bar: bool,
+    /// Show the welcome card at start. Dismissing it turns this off (its
+    /// own change, saved at once); `w` shows the card again.
+    pub welcome: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -233,6 +236,7 @@ impl Default for Ui {
         Self {
             mode: UiMode::Full,
             status_bar: true,
+            welcome: true,
         }
     }
 }

@@ -78,7 +78,7 @@
 
   ▸ spotify                 not set up
     lyrics                         off
-    cover picture            automatic
+    cover picture                 auto
     cover size                  medium
     small cover with music          on
     reset this page              reset

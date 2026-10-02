@@ -69,7 +69,7 @@ fn align(mut lines: Vec<Line>) -> Vec<Line> {
     lines
 }
 
-/// Two columns (lamp + clock & pomodoro + mouse | widgets + music + app:
+/// Two columns (lamp + clock & timer + app | widgets + music + mouse:
 /// at most 22 rows, so 80x24 shows them whole), labels lined up per
 /// column; or one `width` wide, app first so `m ? q` are on screen at the
 /// smallest sizes, one action a line, labels lined up per section (room
@@ -89,8 +89,8 @@ fn columns(two: bool, width: u16) -> Vec<Vec<Line>> {
             align(col)
         };
         return vec![
-            column(&[Section::Lamp, Section::Clock, Section::Mouse]),
-            column(&[Section::Widgets, Section::Music, Section::App]),
+            column(&[Section::Lamp, Section::Clock, Section::App]),
+            column(&[Section::Widgets, Section::Music, Section::Mouse]),
         ];
     }
     let mut one = align(section(Section::App, true));

@@ -238,8 +238,8 @@ impl Model {
             && let Drawn::Text(mode) = self.pictures()
         {
             self.toast(format!(
-                "no pixels in this terminal · cover in {}",
-                mode.name()
+                "no photo in this terminal · cover quality {}",
+                Drawn::Text(mode).label()
             ));
         }
     }
@@ -317,15 +317,11 @@ impl Model {
         let detail = art.detail;
         self.changed(now);
         self.sync_music();
-        let drawn = match self.pictures() {
-            Drawn::Pixels(_) => "pixels",
-            Drawn::Text(mode) => mode.name(),
-            Drawn::None => "no pictures here",
-        };
-        self.toast(if drawn == detail.name() {
-            format!("cover · {drawn}")
+        let drawn = self.pictures().label();
+        self.toast(if drawn == detail.label() {
+            format!("cover quality · {drawn}")
         } else {
-            format!("cover · {} · {drawn}", detail.name())
+            format!("cover quality · {} · {drawn}", detail.label())
         });
     }
 
@@ -337,8 +333,8 @@ impl Model {
         }
         self.music.keys = true;
         self.toast(match self.library.account() {
-            super::library::Account::LoggedOut => "music keys · i log in · esc when done",
-            _ => "music keys · esc when done",
+            super::library::Account::LoggedOut => "music controls · i log in · Esc back",
+            _ => "music controls · Esc back",
         });
     }
 

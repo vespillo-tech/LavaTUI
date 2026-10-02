@@ -13,49 +13,52 @@ use crate::theme::{ColorDepth, Ink, Role};
 pub const HINTS: &[(&str, &str, u8)] = &[
     ("s", "style", 4),
     ("c", "clock", 3),
-    ("p", "palette", 2),
-    ("m", "minimal", 0),
-    ("␣", "pomo", 1),
+    ("p", "colours", 2),
+    ("m", "lamp only", 0),
+    ("Space", "timer", 1),
     (",", "settings", 5),
     ("?", "help", 6),
 ];
 
-/// Hints shown while the player keys are on (`A`).
+/// Hints shown while the player keys are on (`A`): the way back first.
 pub const PLAYER_HINTS: &[(&str, &str, u8)] = &[
-    ("␣", "play", 5),
+    ("Space", "play", 4),
     ("n p", "skip", 3),
     ("←→", "seek", 2),
     ("↑↓", "volume", 1),
     ("b", "playlists", 0),
-    ("esc", "done", 4),
+    ("Esc", "back", 5),
 ];
 
 /// Hints while the playlist browser or add-to-playlist picker is open
 /// (also the sheet's own hint row, without `↑↓`).
 pub const PLAYLISTS_HINTS: &[(&str, &str, u8)] = &[
     ("↑↓", "move", 0),
-    ("⏎", "open", 3),
+    ("Enter", "open", 3),
     ("p", "play", 2),
     ("/", "find", 1),
-    ("esc", "close", 4),
+    ("Esc", "close", 4),
 ];
 pub const TRACKS_HINTS: &[(&str, &str, u8)] = &[
     ("↑↓", "move", 0),
-    ("⏎", "play", 3),
+    ("Enter", "play", 3),
     ("p", "play all", 2),
     ("/", "find", 1),
-    ("esc", "back", 4),
+    ("Esc", "back", 4),
 ];
 pub const ADD_HINTS: &[(&str, &str, u8)] = &[
     ("↑↓", "move", 0),
-    ("⏎", "add", 3),
+    ("Enter", "add", 3),
     ("/", "find", 1),
-    ("esc", "close", 4),
+    ("Esc", "close", 4),
 ];
 /// While typing into the library's filter (`/`): letters type, so only
 /// the keys that don't.
-pub const FIND_HINTS: &[(&str, &str, u8)] =
-    &[("↑↓", "move", 0), ("⏎", "choose", 3), ("esc", "clear", 4)];
+pub const FIND_HINTS: &[(&str, &str, u8)] = &[
+    ("↑↓", "move", 0),
+    ("Enter", "choose", 3),
+    ("Esc", "clear", 4),
+];
 
 /// The library hints for `kind`, or the filter's while `typing`.
 pub fn library_hints(kind: ListKind, typing: bool) -> &'static [(&'static str, &'static str, u8)] {
@@ -79,8 +82,11 @@ pub const PAGES_HINTS: &[(&str, &str, u8)] =
 pub const TYPING_HINTS: &[(&str, &str, u8)] = &[("⏎", "save", 1), ("esc", "cancel", 2)];
 
 /// Hints shown while a picker is open (also the sheet's own hint row).
-pub const PICKER_HINTS: &[(&str, &str, u8)] =
-    &[("↑↓", "preview", 0), ("⏎", "keep", 1), ("esc", "revert", 2)];
+pub const PICKER_HINTS: &[(&str, &str, u8)] = &[
+    ("↑↓", "preview", 0),
+    ("Enter", "save", 1),
+    ("Esc", "cancel", 2),
+];
 
 /// Width of hints laid out with two spaces between them.
 fn hints_width(hints: &[(&str, &str, u8)]) -> usize {

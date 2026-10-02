@@ -235,6 +235,9 @@ impl Status {
     }
 }
 
+/// [`Snapshot::player_name`] when the backend doesn't say.
+const UNNAMED_PLAYER: &str = "The player";
+
 /// Why the player can't be shown or controlled.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Unavailable {
@@ -257,10 +260,19 @@ impl Unavailable {
     /// One calm sentence for the UI. `player` names the player
     /// ([`Snapshot::player_name`]).
     pub fn message(&self, player: &str) -> String {
+        self.message_for(player, "music")
+    }
+
+    /// [`Self::message`] for a widget showing `what` (`music`, `album
+    /// art`, `lyrics`): the next step names what it brings back.
+    pub fn message_for(&self, player: &str, what: &str) -> String {
         match self {
             Self::Unsupported => "No media player support on this platform yet".into(),
-            Self::NotInstalled => format!("{player} isn't installed"),
-            Self::NotRunning => format!("{player} isn't running"),
+            Self::NotInstalled => format!("{player} is not installed"),
+            Self::NotRunning if player == UNNAMED_PLAYER => {
+                format!("Open your music player to show {what}")
+            }
+            Self::NotRunning => format!("Open {player} to show {what}"),
             #[cfg(target_os = "macos")]
             Self::PermissionDenied => format!(
                 "Allow control of {player}: System Settings › Privacy & Security › \
@@ -323,7 +335,7 @@ impl Snapshot {
 
     /// The player's name, or a generic one.
     pub fn player_name(&self) -> &str {
-        self.player.as_deref().unwrap_or("The player")
+        self.player.as_deref().unwrap_or(UNNAMED_PLAYER)
     }
 
     /// Why there's nothing to show, as one sentence (`None` when available
@@ -528,7 +540,7 @@ mod tests {
         }
         assert_eq!(
             Unavailable::NotRunning.message("Spotify"),
-            "Spotify isn't running"
+            "Open Spotify to show music"
         );
         #[cfg(target_os = "macos")]
         assert!(
@@ -541,7 +553,7 @@ mod tests {
         snap.status = Status::Unavailable(Unavailable::NotRunning);
         assert_eq!(
             snap.unavailable_message().as_deref(),
-            Some("The player isn't running")
+            Some("Open your music player to show music")
         );
     }
 }

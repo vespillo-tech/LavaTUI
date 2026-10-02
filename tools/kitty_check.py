@@ -19,7 +19,8 @@ when lavatui asks (`a=q`), it answers OK, then the OSC 10 fence. With
 `--no-answer` it stays silent (as a terminal without kitty graphics
 would): expect no transmission and no placeholder, the cover in text
 cells. With `--ghostex` it runs as Ghostex's built-in terminal does
-(`ZMX_SESSION`, `GHOSTEX_SESSION_ID`): expect not even a query.
+(`ZMX_SESSION`, `GHOSTEX_SESSION_ID`): expect not even a query, and no
+sextant cells (that terminal shows them as `?`; quadrants instead).
 
 Needs Spotify playing a track with a cover (it reads the live player).
 
@@ -35,6 +36,7 @@ BIN = os.path.join(HERE, "..", "target", "release", "lavatui")
 APC = re.compile(rb"\x1b_G([^;\x1b]*)(?:;([^\x1b]*))?\x1b\\")
 SYNC = re.compile(rb"\x1b\[\?2026h(.*?)\x1b\[\?2026l", re.S)
 PLACEHOLDER = "\U0010EEEE".encode()
+SEXTANT = re.compile("[\U0001FB00-\U0001FB3B]")
 QUERY = b"\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\"
 ANSWER = b"\x1b_Gi=31;OK\x1b\\\x1b]10;rgb:ffff/ffff/ffff\x1b\\"
 FG = re.compile(rb"38;2;(\d+);(\d+);(\d+)")
@@ -142,6 +144,9 @@ def report(out, outdir, label):
             r, g, b = map(int, fg.groups())
             ids[(r << 16) | (g << 8) | b] = ids.get((r << 16) | (g << 8) | b, 0) + 1
     print(f"   probe query sent: {'yes' if QUERY in out else 'no'}")
+    # Sextants (U+1FB00–U+1FB3B): Ghostex's terminal can't draw them.
+    sextants = len(SEXTANT.findall(out.decode("utf-8", "replace")))
+    print(f"   sextant cells written: {sextants}")
     print(f"   placeholder cells written, by image id: {ids}")
     print(f"   ...and by frame (cells are only rewritten when they change): {by_frame}")
     return sends, ids

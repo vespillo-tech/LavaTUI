@@ -19,9 +19,17 @@ fn local() -> LocalTime {
     }
 }
 
+/// A model on a fresh config at `path`. Colour depth is truecolor unless
+/// `session` says otherwise, never what the environment (`NO_COLOR`,
+/// `COLORTERM`) happens to say; the welcome card starts dismissed (its
+/// tests show it themselves).
 fn model_with(session: Session, path: PathBuf, cols: u16, rows: u16) -> (Model, Instant) {
     let t0 = Instant::now();
-    let model = Model::new(
+    let session = Session {
+        color: session.color.or(Some(ColorChoice::Truecolor)),
+        ..session
+    };
+    let mut model = Model::new(
         &session,
         Store::new(Some(path)),
         Rect::new(0, 0, cols, rows),
@@ -30,6 +38,7 @@ fn model_with(session: Session, path: PathBuf, cols: u16, rows: u16) -> (Model, 
         1,
         t0,
     );
+    model.welcome = false;
     (model, t0)
 }
 
@@ -135,7 +144,7 @@ fn minimal_toggle_is_instant() {
     );
     assert_eq!(
         m.toast.as_ref().unwrap().text,
-        "no status bar in minimal · m to leave",
+        "no status bar in lamp-only mode · m to leave",
         "but says why"
     );
     m.update(Action::ToggleMinimal, t0);
@@ -182,7 +191,10 @@ fn reset_needs_two_presses_within_two_seconds() {
     m.update(Action::PomodoroToggle, t0);
     m.update(Action::PomodoroReset, t0);
     assert_eq!(m.pomodoro.status(), Status::Running);
-    assert_eq!(m.toast.as_ref().unwrap().text, "press r again to reset");
+    assert_eq!(
+        m.toast.as_ref().unwrap().text,
+        "press r again to reset the timer"
+    );
     tick(&mut m, t0 + Duration::from_secs(3));
     m.update(Action::PomodoroReset, t0 + Duration::from_secs(3));
     assert_eq!(
@@ -200,7 +212,7 @@ fn reset_needs_two_presses_within_two_seconds() {
     );
     tick(&mut m, second + Duration::from_millis(160));
     assert_eq!(m.pomodoro.status(), Status::Idle);
-    assert_eq!(m.toast.as_ref().unwrap().text, "pomodoro reset");
+    assert_eq!(m.toast.as_ref().unwrap().text, "timer reset");
 }
 
 /// lava-ebq.19 (2): terminals without key-release reports send a held key
@@ -281,7 +293,7 @@ fn help_scroll_is_clamped_when_the_window_grows() {
         panic!("help is open");
     };
     assert!(scroll > 0, "small help scrolls");
-    m.tick(t0, Rect::new(0, 0, 40, 70), local());
+    m.tick(t0, Rect::new(0, 0, 40, 90), local());
     assert_eq!(m.overlay, Overlay::Help { scroll: 0 });
 }
 
@@ -585,7 +597,7 @@ fn widget_keys_cycle_places_and_persist() {
     assert_eq!(clock.widget, 0);
     m.update(Action::Place("clock"), t0);
     assert_eq!(m.settings.dock.place(&Clock), Place::Overlay);
-    assert_eq!(m.toast.as_ref().unwrap().text, "clock · on the lava");
+    assert_eq!(m.toast.as_ref().unwrap().text, "clock · on the lamp");
     assert_eq!(m.layout.on_lava[0].items[0].widget, 0);
     m.update(Action::Place("pomodoro"), t0);
     assert!(m.layout.panel.is_none(), "nothing left beside the lamp");
@@ -595,10 +607,13 @@ fn widget_keys_cycle_places_and_persist() {
     // `l` moves the one last put there; `L` picks the other.
     m.update(Action::NextAnchor, t0);
     assert_eq!(m.settings.dock.anchor(&Pomodoro), Anchor::Top);
-    assert_eq!(m.toast.as_ref().unwrap().text, "pomodoro · top");
+    assert_eq!(m.toast.as_ref().unwrap().text, "timer · top");
     assert_eq!(m.layout.on_lava.len(), 2, "two anchors, two stacks");
     m.update(Action::NextLavaWidget, t0);
-    assert_eq!(m.toast.as_ref().unwrap().text, "l moves clock · now centre");
+    assert_eq!(
+        m.toast.as_ref().unwrap().text,
+        "l moves the clock · now centre"
+    );
     m.update(Action::NextAnchor, t0);
     assert_eq!(m.settings.dock.anchor(&Clock), Anchor::Top);
     assert_eq!(m.layout.on_lava.len(), 1, "together again");
@@ -621,7 +636,7 @@ fn widget_toasts_say_when_there_is_no_room() {
     m.update(Action::Place("clock"), t0);
     assert_eq!(
         m.toast.as_ref().unwrap().text,
-        "clock · on the lava · no room"
+        "clock · on the lamp · enlarge to see"
     );
     assert!(m.layout.chipped(0), "the chip stands in");
     m.update(Action::ToggleMinimal, t0);
@@ -629,13 +644,10 @@ fn widget_toasts_say_when_there_is_no_room() {
     m.update(Action::Place("clock"), t0);
     assert_eq!(
         m.toast.as_ref().unwrap().text,
-        "clock · side panel · not in minimal"
+        "clock · beside the lamp · hidden in lamp-only mode"
     );
     m.update(Action::NextAnchor, t0);
-    assert_eq!(
-        m.toast.as_ref().unwrap().text,
-        "nothing on the lava · t f a put widgets there"
-    );
+    assert_eq!(m.toast.as_ref().unwrap().text, actions::NOTHING_ON_LAMP);
 }
 
 // --- music (lava-75z.2) --------------------------------------------------
@@ -739,7 +751,7 @@ mod music {
         let (mut m, t0) = model_with(session, temp_config("music-life"), 120, 36);
         let alive = with(&mut m, &fake(t0));
         m.update(Action::Place("music"), t0);
-        assert_eq!(m.toast.as_ref().unwrap().text, "music · side panel");
+        assert_eq!(m.toast.as_ref().unwrap().text, "music · beside the lamp");
         tick(&mut m, t0);
         assert_eq!(alive.load(Ordering::SeqCst), 1);
         let placed = m.layout.placed(2).expect("music in the panel");
@@ -882,8 +894,8 @@ mod music {
         with(&mut m, &source);
         m.update(Action::Place("music"), t0);
         for (reason, says) in [
-            (Unavailable::NotRunning, "Spotify isn't running"),
-            (Unavailable::NotInstalled, "Spotify isn't installed"),
+            (Unavailable::NotRunning, "Open Spotify to show music"),
+            (Unavailable::NotInstalled, "Spotify is not installed"),
             (Unavailable::PermissionDenied, "Spotify"),
             (Unavailable::Unsupported, "No media player"),
         ] {
@@ -895,7 +907,14 @@ mod music {
             let forms = Music.forms(&m, Place::Side);
             assert_eq!(forms.len(), 1, "one calm message");
             assert!(forms[0].size.width <= 20 && forms[0].size.height <= 6);
-            assert!(Music.chip(&m).is_none(), "no chip without a track");
+            // Its chip: the next step, or where to read it.
+            let chip = Music.chip(&m).map(|c| c.text);
+            let want = match says {
+                "Open Spotify to show music" => Some("♪ open Spotify"),
+                "No media player" => None,
+                _ => Some("♪ see Shift+A"),
+            };
+            assert_eq!(chip.as_deref(), want);
             m.update(Action::PlayerKeys, t0);
             m.update(Action::Player(P::PlayPause), t0);
             assert!(
@@ -968,6 +987,112 @@ mod music {
         );
     }
 
+    // --- music troubleshooting (lava-1xk.6, .12, .15) ----------------------
+
+    /// The player's problem, as `source` reports it.
+    fn unavailable(source: &FakeSource, reason: Unavailable, t0: Instant) {
+        source.set(Snapshot {
+            player: Some("Spotify".into()),
+            ..Snapshot::new(crate::media::Status::Unavailable(reason), t0)
+        });
+    }
+
+    #[test]
+    fn the_music_controls_always_say_how_to_leave() {
+        for (cols, rows, minimal) in [
+            (80, 24, false),
+            (80, 24, true),
+            (20, 8, false),
+            (12, 5, true),
+        ] {
+            let (mut m, t0) = model_with(Session::default(), temp_config("guide"), cols, rows);
+            let source = fake(t0);
+            with(&mut m, &source);
+            m.update(Action::Place("music"), t0);
+            if minimal {
+                m.update(Action::ToggleMinimal, t0);
+            }
+            m.update(Action::PlayerKeys, t0);
+            // Long after the toast has gone.
+            tick(&mut m, t0 + S * 5);
+            assert!(m.toast.is_none());
+            let (_, text) = crate::ui::cards::guide(&m.layout, &m)
+                .unwrap_or_else(|| panic!("{cols}x{rows}: no guide"));
+            assert!(text.contains("Esc back"), "{cols}x{rows}: {text:?}");
+            m.update(Action::Close, t0);
+            assert!(crate::ui::cards::guide(&m.layout, &m).is_none());
+        }
+    }
+
+    #[test]
+    fn a_player_problem_keeps_a_chip_and_a_note_when_the_widget_cant_fit() {
+        let (mut m, t0) = model_with(Session::default(), temp_config("note"), 80, 24);
+        let source = fake(t0);
+        with(&mut m, &source);
+        m.update(Action::Place("music"), t0);
+        m.update(Action::ToggleMinimal, t0); // side widgets: chips only
+        unavailable(&source, Unavailable::PermissionDenied, t0);
+        tick(&mut m, t0);
+        let (music, _) = crate::dock::by_name("music").unwrap();
+        let chips = m.layout.chips.as_ref().unwrap();
+        assert!(chips.items.iter().any(|c| c.widget == music), "{chips:?}");
+        assert_eq!(Music.chip(&m).unwrap().text, "♪ see Shift+A");
+        assert!(crate::ui::cards::music_note(&m.layout, &m).is_none());
+        m.update(Action::PlayerKeys, t0);
+        let (_, lines) = crate::ui::cards::music_note(&m.layout, &m).expect("the note");
+        let said = lines.join(" ");
+        let want = Unavailable::PermissionDenied.message("Spotify");
+        assert_eq!(said, want, "the whole sentence, wrapped");
+        // At 20x8 the not-running chip still outlasts the clock's.
+        let (mut m, t0) = model_with(Session::default(), temp_config("note-tiny"), 20, 8);
+        let source = fake(t0);
+        with(&mut m, &source);
+        m.update(Action::Place("music"), t0);
+        unavailable(&source, Unavailable::NotRunning, t0);
+        tick(&mut m, t0);
+        let chips = m.layout.chips.as_ref().unwrap();
+        assert_eq!(chips.items.len(), 1);
+        assert_eq!(chips.items[0].widget, music);
+        assert_eq!(Music.chip(&m).unwrap().text, "♪ open Spotify");
+    }
+
+    #[test]
+    fn the_cover_says_the_players_problem_too() {
+        let (mut m, t0) = model("cover-problem");
+        let source = fake(t0);
+        with(&mut m, &source);
+        m.update(Action::Place("cover"), t0);
+        for (reason, says) in [
+            (Unavailable::NotRunning, "Open Spotify to show album art"),
+            (Unavailable::NotInstalled, "Spotify is not installed"),
+            (Unavailable::PermissionDenied, "Spotify"),
+        ] {
+            unavailable(&source, reason.clone(), t0);
+            tick(&mut m, t0);
+            let forms = Cover.forms(&m, Place::Side);
+            assert_eq!(forms.len(), 1, "{reason:?}: one message");
+            let mut buf = ratatui::buffer::Buffer::empty(Rect::new(0, 0, 30, 10));
+            let rect = Rect::new(0, 0, forms[0].size.width, forms[0].size.height);
+            let look = crate::dock::Look {
+                backdrop: crate::dock::Backdrop::Panel,
+                align: ratatui::layout::Alignment::Left,
+            };
+            Cover.draw(&m, forms[0], rect, look, &mut buf);
+            let text: String = (0..10)
+                .map(|y| {
+                    (0..30)
+                        .map(|x| buf[(x, y)].symbol().to_owned())
+                        .collect::<String>()
+                        .trim()
+                        .to_owned()
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert!(text.contains(says), "{reason:?}: {text:?}");
+            assert!(!text.contains("nothing playing"), "{reason:?}");
+        }
+    }
+
     // --- the cover widget (lava-75z.13) ----------------------------------
 
     use crate::dock::Cover;
@@ -994,7 +1119,7 @@ mod music {
         let inline = |m: &Model| Music.forms(m, Place::Side)[0].size == (32, 6).into();
         assert!(inline(&m), "the card keeps a small cover of its own");
         m.update(Action::Place("cover"), t0);
-        assert_eq!(m.toast.as_ref().unwrap().text, "cover · side panel");
+        assert_eq!(m.toast.as_ref().unwrap().text, "cover · beside the lamp");
         tick(&mut m, t0);
         assert!(!inline(&m), "one cover at a time");
         let p = m.layout.placed(COVER_W).expect("in the panel");
@@ -1048,6 +1173,79 @@ mod music {
         };
         tick(&mut m, t0);
         assert_eq!(Cover.forms(&m, Place::Side)[0].size.width, 24);
+    }
+
+    /// lava-1xk.20: inside Ghostex (zmx) no cover setting ever writes a
+    /// sextant (U+1FB00–U+1FB3B) or a kitty placeholder (U+10EEEE): the
+    /// frame's real bytes, through the crossterm backend. Natively the
+    /// same cover does use sextants, so the check means something.
+    #[test]
+    fn inside_ghostex_covers_use_only_glyphs_it_draws() {
+        use crate::dock::cover::sextants;
+        const GHOSTEX: &[(&str, &str)] = &[
+            ("TERM", "xterm-ghostty"),
+            ("TERM_PROGRAM", "ghostty"),
+            ("ZMX_SESSION", "s1"),
+            ("GHOSTEX_SESSION_ID", "test-session"),
+        ];
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |k: &str| pairs.iter().find(|p| p.0 == k).map(|p| p.1.to_owned())
+        };
+        let inside = Caps {
+            pixels: crate::graphics::detect(env(GHOSTEX)),
+            sextants: sextants(env(GHOSTEX)),
+        };
+        assert_eq!(inside, Caps::default(), "no pixels, no sextants");
+        let native = Caps {
+            pixels: None,
+            sextants: sextants(env(&GHOSTEX[..2])),
+        };
+        assert!(native.sextants);
+
+        let bytes = |caps: Caps, detail: Detail| -> String {
+            let (mut m, t0) = model_with(Session::default(), temp_config("ghostex"), 120, 36);
+            m.caps = caps;
+            // A busy picture: every cell splits two ways.
+            let art = Art::from_fn(|x, y| {
+                let on = (x / 3 + y / 5) % 2 == 0;
+                if on {
+                    Rgb(230, 90, 30)
+                } else {
+                    Rgb(20, 30, 90)
+                }
+            });
+            m.music.connect_with(
+                {
+                    let source = fake(t0);
+                    move || Box::new(source.clone())
+                },
+                move || ArtLoader::preloaded(COVER, art.clone()),
+            );
+            m.update(Action::Place("cover"), t0);
+            m.settings.art.detail = detail;
+            tick(&mut m, t0);
+            tick(&mut m, t0);
+            let backend = ratatui::backend::CrosstermBackend::new(Vec::<u8>::new());
+            let mut terminal = ratatui::Terminal::new(backend).unwrap();
+            terminal.resize(m.layout.area).unwrap();
+            let mut lamp = crate::render::LampState::default();
+            terminal
+                .draw(|f| crate::ui::draw(f, &m, &mut lamp))
+                .unwrap();
+            m.kitty.write(terminal.backend_mut().writer_mut()).unwrap();
+            String::from_utf8_lossy(terminal.backend().writer()).into_owned()
+        };
+        let forbidden = |c: char| ('\u{1FB00}'..='\u{1FB3B}').contains(&c) || c == '\u{10EEEE}';
+        for detail in Detail::ALL {
+            let out = bytes(inside, detail);
+            assert!(
+                out.contains('▀') || out.contains('▌') || out.contains('▖'),
+                "{detail:?}: a cover"
+            );
+            let bad: Vec<char> = out.chars().filter(|&c| forbidden(c)).collect();
+            assert!(bad.is_empty(), "{detail:?}: {} forbidden glyphs", bad.len());
+        }
+        assert!(bytes(native, Detail::Sextant).chars().any(forbidden));
     }
 
     #[test]
@@ -1224,7 +1422,7 @@ mod music {
         );
         assert_eq!(
             m.toast.as_ref().unwrap().text,
-            "no pixels in this terminal · cover in sextant"
+            "no photo in this terminal · cover quality fine"
         );
         tick(&mut m, t0);
         assert!(!m.kitty.busy(), "nothing sent");
@@ -1252,11 +1450,11 @@ mod music {
         assert_eq!(
             seen,
             [
-                "cover · pixels · quadrant",
-                "cover · sextant",
-                "cover · quadrant",
-                "cover · halfblock",
-                "cover · auto · quadrant",
+                "cover quality · photo · medium",
+                "cover quality · fine · medium",
+                "cover quality · medium",
+                "cover quality · coarse",
+                "cover quality · auto · medium",
             ]
         );
         assert_eq!(m.settings.art.detail, Detail::Auto);
@@ -1411,7 +1609,7 @@ mod lyrics {
         m.update(Action::Place("lyrics"), t0);
         assert_eq!(
             m.toast.as_ref().unwrap().text,
-            "lyrics · side panel · via lrclib.net"
+            "lyrics · beside the lamp · song details go to lrclib.net"
         );
         assert_eq!(m.settings.dock.place(&Music), Place::Off, "music stays off");
         settle(&mut m, t0);
@@ -1552,4 +1750,128 @@ mod lyrics {
         let wake = m.idle_until().unwrap() - (t0 + S * 7 + S * 85 / 100);
         assert!(wake <= S / 3, "{wake:?}");
     }
+}
+
+// --- first-time guidance (lava-1xk.9, .10, .8) ------------------------------
+
+/// A model as on a first start: the welcome card up.
+fn first_start(name: &str, cols: u16, rows: u16) -> (Model, Instant, PathBuf) {
+    let path = temp_config(name);
+    let (mut m, t0) = model_with(Session::default(), path.clone(), cols, rows);
+    m.welcome = m.settings.ui.welcome;
+    assert!(m.welcome, "on by default");
+    (m, t0, path)
+}
+
+#[test]
+fn the_welcome_card_goes_with_the_first_key_and_stays_gone() {
+    let (mut m, t0, path) = first_start("welcome", 80, 24);
+    let (_, form) = crate::ui::cards::welcome_card(&m.layout).expect("room for it");
+    assert_eq!(form, crate::ui::cards::WelcomeForm::Full);
+    let style = m.style;
+    m.update(Action::NextStyle, t0);
+    assert!(!m.welcome, "dismissed");
+    assert_ne!(m.style, style, "and the key still did its thing");
+    tick(&mut m, t0 + Duration::from_millis(1100));
+    let (again, _) = model_with(Session::default(), path, 80, 24);
+    assert!(!again.settings.ui.welcome, "saved");
+    // `w` shows it again.
+    m.update(Action::Welcome, t0);
+    assert!(crate::ui::cards::welcome_shown(&m));
+    m.update(Action::Close, t0);
+    assert!(!m.welcome);
+}
+
+#[test]
+fn a_small_window_gets_a_small_card_and_a_tiny_one_waits() {
+    let (m, _, _) = first_start("welcome-small", 30, 10);
+    let (_, form) = crate::ui::cards::welcome_card(&m.layout).expect("room for it");
+    assert_eq!(form, crate::ui::cards::WelcomeForm::Small);
+    assert!(crate::ui::cards::guide(&m.layout, &m).is_none());
+
+    let (mut m, t0, _) = first_start("welcome-tiny", 20, 8);
+    assert!(crate::ui::cards::welcome_card(&m.layout).is_none());
+    let (_, text) = crate::ui::cards::guide(&m.layout, &m).unwrap();
+    assert_eq!(text, " ? help · q quit ");
+    // Keys don't dismiss what wasn't shown: it waits for a larger window.
+    m.update(Action::NextStyle, t0);
+    assert!(m.welcome);
+    m.relayout(Rect::new(0, 0, 80, 24));
+    assert!(crate::ui::cards::welcome_card(&m.layout).is_some());
+    // Help (or esc) does, at any size.
+    m.relayout(Rect::new(0, 0, 20, 8));
+    m.update(Action::Help, t0);
+    assert!(!m.welcome);
+    assert!(!m.settings.ui.welcome);
+}
+
+#[test]
+fn a_lamp_only_start_says_where_help_is() {
+    let path = temp_config("minimal-start");
+    let session = Session {
+        minimal: true,
+        ..Session::default()
+    };
+    let (m, _) = model_with(session, path, 80, 24);
+    // model_with dismisses the welcome after Model::new: the toast came
+    // from the welcome being on. Build one that's already seen it.
+    let mut settings = Settings::default();
+    settings.ui.welcome = false;
+    settings.ui.mode = config::UiMode::Minimal;
+    let path = temp_config("minimal-start-2");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, toml::to_string(&settings).unwrap()).unwrap();
+    let (seen, _) = model_with(Session::default(), path, 80, 24);
+    assert_eq!(seen.toast.as_ref().unwrap().text, MINIMAL_START);
+    assert!(m.toast.is_none(), "the welcome card says it then");
+}
+
+#[test]
+fn small_pickers_say_enter_saves_and_esc_cancels() {
+    for (cols, rows) in [(20, 8), (30, 10), (50, 16)] {
+        let (mut m, t0) = model_with(Session::default(), temp_config("guide-pick"), cols, rows);
+        m.update(Action::StylePicker, t0);
+        let Overlay::Picker(p) = m.overlay else {
+            panic!()
+        };
+        let place = picker::placement(m.layout.area, &m.layout, &p).unwrap();
+        let text = match place {
+            Placement::Inline { guide, .. } => picker::PICKER_GUIDE[guide.unwrap().1],
+            Placement::Sheet { guide, .. } => picker::PICKER_GUIDE[guide.unwrap()],
+        };
+        assert!(
+            text.contains("Enter") && text.contains("Esc"),
+            "{cols}x{rows}: {text}"
+        );
+    }
+}
+
+#[test]
+fn the_face_picker_previews_a_clock_that_isnt_shown_and_leaves_it_off() {
+    use crate::ui::cards::{Preview, face_preview};
+    for minimal in [false, true] {
+        let (mut m, t0) = model("face-preview");
+        if minimal {
+            m.update(Action::ToggleMinimal, t0);
+        } else {
+            m.update(Action::Place("clock"), t0);
+            m.update(Action::Place("clock"), t0);
+            assert_eq!(m.settings.dock.place(&Clock), Place::Off);
+        }
+        let place = m.settings.dock.place(&Clock);
+        let face = m.face.name();
+        m.update(Action::FacePicker, t0);
+        m.update(Action::Down, t0);
+        let area = m.layout.area;
+        let (_, preview) = face_preview(area, &m.layout, &m).expect("a preview");
+        assert!(matches!(preview, Preview::Face(f) if f.tier != clock::Tier::Text));
+        m.update(Action::Close, t0);
+        assert_eq!(m.face.name(), face, "esc puts the face back");
+        assert_eq!(m.settings.dock.place(&Clock), place, "and the placement");
+        assert!(face_preview(area, &m.layout, &m).is_none());
+    }
+    // With the clock showing its face beside the lamp: no second one.
+    let (mut m, t0) = model("face-preview-shown");
+    m.update(Action::FacePicker, t0);
+    assert!(face_preview(m.layout.area, &m.layout, &m).is_none());
 }
