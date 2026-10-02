@@ -141,8 +141,11 @@ strip under a full-width lamp; 250 × 70 with music on goes to two
 columns (clock + pomodoro | music), a single column being taller than
 half the screen; a cramped portrait (70 × 40 with music) wraps the
 pomodoro and music into one row instead of shrinking music to its
-compact form. Cost: ~1 µs a frame by default, ≤ 60 µs with four widgets
-anywhere (`bench_layout`).
+compact form. Cost (`bench_layout`, release, a busy machine): ~1 µs a
+frame by default; with four widgets ~20 µs on average, up to ~170 µs in
+cramped sizes where little fits and every combination is tried (the
+lyrics' song-sized forms, lava-uqi, took four beside the lamp from ~45
+to ~140 µs there), under 1 % of a 60 fps frame.
 
 Below 200 cols the panel's inner width is at most 36 − 2 = 34. From 200
 cols up the panel grows only as far as the face it holds needs, up to
