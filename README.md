@@ -308,6 +308,10 @@ app walks you through each step. More detail is in
   song is looked up only once.
 - **Album covers** are downloaded from your music player's image link
   and saved on your computer.
+- **Where they're saved:** lyrics and covers go in your system's cache
+  folder. They stay small (a few MB), and old ones are removed on their
+  own. To clear saved lyrics and covers, open settings (`,`), go to
+  music & lyrics, and press `Enter` twice on "saved lyrics & covers".
 - **Spotify login:** your login is kept in your computer's password
   store (Keychain on a Mac, Credential Manager on Windows, the Secret
   Service on Linux). If there isn't one, it's kept in a file only you can

@@ -11,9 +11,11 @@
 //! sharper copy, up to [`HIRES_PX`]² and ready to send: PNG, base64.
 //!
 //! Cache: `$XDG_CACHE_HOME/lavatui/art`, else the platform cache dir; one
-//! file per URL (named by its SHA-256), the oldest pruned past
-//! [`CACHE_FILES`]. Every cache problem is a miss, and a failed cover is
-//! just no cover: nothing here ever reaches the UI as an error.
+//! file per URL (named by its SHA-256). A cover read from it is marked
+//! used; after each download the least recently used go, past
+//! [`CACHE_LIMITS`] (files, bytes, months unused). Every cache problem is
+//! a miss, and a failed cover is just no cover: nothing here ever reaches
+//! the UI as an error.
 //!
 //! Players that hand out the cover's bytes rather than a URL (Windows'
 //! media controls, lava-75z.16) [`stash`] them on their own worker and put
@@ -30,6 +32,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use sha2::{Digest, Sha256};
 
+use crate::disk_cache::{self, Limits};
 use crate::theme::Rgb;
 
 /// Decoded covers are this many pixels square.
@@ -38,8 +41,15 @@ pub const ART_PX: u32 = 128;
 /// (Spotify's covers are 640): sharp up to a ~40-column cover on a
 /// 10-pixel-wide cell, and ~200-300 KB to send.
 pub const HIRES_PX: u32 = 400;
-/// Covers kept on disk (a Spotify cover is ~60 KB: ~15 MB at most).
-const CACHE_FILES: usize = 256;
+/// The cover cache's files' extension.
+pub const CACHE_EXT: &str = "img";
+/// Covers kept on disk: a Spotify cover is ~60 KB (~15 MB for 256), the
+/// byte cap is for players that hand out bigger pictures.
+pub const CACHE_LIMITS: Limits = Limits {
+    files: 256,
+    bytes: 50 * 1000 * 1000,
+    idle: Duration::from_secs(180 * 24 * 60 * 60),
+};
 /// Bigger downloads are refused (Spotify's 640 px covers are ~100 KB).
 const MAX_BYTES: u64 = 8 * 1024 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -338,13 +348,7 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 
 /// `$XDG_CACHE_HOME/lavatui/art`, else the platform cache dir's.
 pub fn cache_dir() -> Option<PathBuf> {
-    let base = match std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from) {
-        Some(xdg) if xdg.is_absolute() => xdg.join("lavatui"),
-        _ => directories::ProjectDirs::from("", "", "lavatui")?
-            .cache_dir()
-            .to_path_buf(),
-    };
-    Some(base.join("art"))
+    disk_cache::dir("art")
 }
 
 struct Worker<F> {
@@ -372,18 +376,18 @@ impl<F: Fetch> Worker<F> {
             return Art::decode(&stashed(url)?, hires).ok();
         }
         let path = self.cache.as_ref().map(|dir| dir.join(file_name(url)));
-        if let Some(art) = path
-            .as_ref()
-            .and_then(|p| fs::read(p).ok())
-            .and_then(|bytes| Art::decode(&bytes, hires).ok())
-        {
+        if let Some((p, art)) = path.as_ref().and_then(|p| {
+            let bytes = fs::read(p).ok()?;
+            Some((p, Art::decode(&bytes, hires).ok()?))
+        }) {
+            disk_cache::touch(p, SystemTime::now());
             return Some(art);
         }
         let bytes = self.fetch.get(url).ok()?;
         let art = Art::decode(&bytes, hires).ok()?;
         if let (Some(dir), Some(path)) = (&self.cache, &path) {
             let _ = fs::create_dir_all(dir).and_then(|()| write_atomic(path, &bytes));
-            prune(dir, CACHE_FILES);
+            disk_cache::prune(dir, CACHE_EXT, CACHE_LIMITS, SystemTime::now());
         }
         Some(art)
     }
@@ -393,7 +397,7 @@ impl<F: Fetch> Worker<F> {
 fn file_name(url: &str) -> String {
     let hash = Sha256::digest(url.as_bytes());
     let hex: String = hash[..16].iter().map(|b| format!("{b:02x}")).collect();
-    format!("{hex}.img")
+    format!("{hex}.{CACHE_EXT}")
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -408,25 +412,6 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         let _ = fs::remove_file(&tmp);
     }
     result
-}
-
-/// Delete the oldest covers past `keep`.
-fn prune(dir: &Path, keep: usize) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    let mut files: Vec<(SystemTime, PathBuf)> = entries
-        .flatten()
-        .filter(|e| e.path().extension().is_some_and(|x| x == "img"))
-        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
-        .collect();
-    if files.len() <= keep {
-        return;
-    }
-    files.sort();
-    for (_, path) in &files[..files.len() - keep] {
-        let _ = fs::remove_file(path);
-    }
 }
 
 #[cfg(test)]
@@ -531,10 +516,16 @@ mod tests {
         }
         assert_eq!(*count.lock().unwrap(), 1);
 
-        // A new loader, offline: the cover comes from disk.
+        // A new loader, offline: the cover comes from disk, and is marked
+        // used (so pruning keeps it).
+        let file = dir.0.join(file_name("https://i.example/a"));
+        let long_ago = UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+        disk_cache::touch(&file, long_ago);
         let mut offline = ArtLoader::spawn(Served(Arc::new(Mutex::new(0)), 0), Some(dir.0.clone()));
         offline.want("https://i.example/a");
         assert!(matches!(wait(&offline), ArtState::Ready(_)));
+        let used = fs::metadata(&file).unwrap().modified().unwrap();
+        assert!(used > long_ago);
         offline.want("https://i.example/broken");
         assert_eq!(wait(&offline), ArtState::Missing);
     }
@@ -591,24 +582,6 @@ mod tests {
         assert_eq!(stash_in(&mine, vec![2; 3]).as_ref(), Some(&urls[2]));
         assert_eq!(lock(&mine).len(), STASHED);
         assert_eq!(lock(&mine).last().map(|(u, _)| u), Some(&urls[2]));
-    }
-
-    #[test]
-    fn prune_keeps_the_newest() {
-        let dir = TempDir::new("art-prune");
-        fs::create_dir_all(&dir.0).unwrap();
-        for i in 0..5 {
-            fs::write(dir.0.join(format!("{i}.img")), b"x").unwrap();
-            thread::sleep(Duration::from_millis(15));
-        }
-        fs::write(dir.0.join("keep.txt"), b"x").unwrap();
-        prune(&dir.0, 2);
-        let mut left: Vec<_> = fs::read_dir(&dir.0)
-            .unwrap()
-            .map(|e| e.unwrap().file_name().into_string().unwrap())
-            .collect();
-        left.sort();
-        assert_eq!(left, ["3.img", "4.img", "keep.txt"]);
     }
 
     #[test]

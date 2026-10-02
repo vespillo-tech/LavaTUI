@@ -134,6 +134,12 @@ through one `osascript` process that stays up. Lyrics are one request per
 track, on their own thread, and cached. The cover's cells are worked out
 once per track and size, so they add nothing per frame.
 
+Both caches stay bounded (`src/disk_cache.rs`, run on the workers after
+each write; reads mark a file used): lyrics keep the 2000 most recently
+used files (16 MB cap, ~2-8 MB in practice), covers the 256 most recent
+within 50 MB; anything unused for 180 days goes. Settings › music &
+lyrics measures and clears them on its own thread.
+
 To reproduce:
 
 ```sh

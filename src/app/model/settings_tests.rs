@@ -322,3 +322,53 @@ fn spotify_eligibility_and_refusal_fit_whole() {
     }
     assert!(ELIGIBILITY.contains("Premium") && ELIGIBILITY.contains("At most 5 accounts"));
 }
+
+#[test]
+fn saved_lyrics_and_covers_show_their_size_and_clear_on_a_second_enter() {
+    use crate::lyrics::cache::tests::TempDir;
+    let tmp = TempDir::new("settings-saved");
+    let (lyrics, covers) = (tmp.0.join("lyrics"), tmp.0.join("art"));
+    std::fs::create_dir_all(&lyrics).unwrap();
+    std::fs::create_dir_all(&covers).unwrap();
+    std::fs::write(lyrics.join("a.json"), [0; 3000]).unwrap();
+    std::fs::write(covers.join("b.img"), [0; 60_000]).unwrap();
+
+    let (mut m, t0) = model_at(temp_config("saved"));
+    m.saved_files = SavedFiles::in_folders(lyrics.clone(), covers.clone());
+    // Ticks until the worker has answered.
+    let settle = |m: &mut Model| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            m.tick(t0, Rect::new(0, 0, 80, 24), local());
+            if !m.saved_files.busy() {
+                return;
+            }
+            assert!(Instant::now() < deadline, "no answer");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    };
+    open(&mut m, t0, 3);
+    to(&mut m, t0, Item::ClearSaved);
+    assert_eq!(row(&m, Item::ClearSaved).value, "…");
+    settle(&mut m);
+    let r = row(&m, Item::ClearSaved);
+    assert_eq!(r.value, "63 KB · clear");
+    assert!(
+        r.about.contains("3 KB of lyrics and 60 KB of covers"),
+        "{}",
+        r.about
+    );
+
+    m.update(Action::Keep, t0);
+    assert_eq!(row(&m, Item::ClearSaved).value, "press enter again");
+    settle(&mut m);
+    assert!(lyrics.join("a.json").exists(), "one enter only asks");
+    m.update(Action::Keep, t0);
+    settle(&mut m);
+    assert!(!lyrics.join("a.json").exists() && !covers.join("b.img").exists());
+    assert_eq!(row(&m, Item::ClearSaved).value, "nothing saved");
+    assert_eq!(
+        m.toast.as_ref().map(|t| t.text.as_str()),
+        Some("saved lyrics and covers cleared")
+    );
+}
