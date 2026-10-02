@@ -157,6 +157,9 @@ pub struct Model {
     /// Ghostty's config makes cell backgrounds see-through (read once at
     /// start, for `display.cells = "auto"`).
     pub ghostty_translucent: bool,
+    /// Draw only glyphs every terminal font has (read once at start;
+    /// `dock::music`'s controls).
+    pub safe_glyphs: bool,
     /// The cover as a real picture: what the terminal holds and what's on
     /// its way (bytes the loop writes after each frame).
     pub kitty: Kitty,
@@ -259,6 +262,7 @@ impl Model {
             caps,
             probe: unconfirmed.map(|p| Probe::new(p, now)),
             ghostty_translucent: crate::cells::detect(),
+            safe_glyphs: crate::cells::safe_glyphs(),
             kitty: Kitty::default(),
             inline: Inline::default(),
             library: Library::new(settings.spotify_client_id()),
