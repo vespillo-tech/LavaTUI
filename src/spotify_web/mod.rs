@@ -10,10 +10,17 @@
 //! secret): [`SpotifyWeb::login`] opens the browser on Spotify's consent
 //! page, a one-shot server on [`REDIRECT_URI`] catches the redirect, and
 //! the worker trades the code for tokens, kept in the OS keyring (else a
-//! 0600 file). Setup and Spotify's current rules: `docs/spotify.md`.
+//! 0600 file; or only the file, `spotify.store = "file"`). Setup and
+//! Spotify's current rules: `docs/spotify.md`.
+//!
+//! On macOS the saved login is read only when it's first needed
+//! ([`Web::unlock`]): reading the Keychain can make macOS ask the user for
+//! permission, and nobody should meet that dialog just for starting the
+//! app (lava-1xk.38).
 //!
 //! ```ignore
-//! let mut spotify = SpotifyWeb::new(client_id);
+//! let mut spotify = SpotifyWeb::new(client_id, LoginStore::System);
+//! if spotify.locked() { spotify.unlock(); /* wait for Event::Unlocked */ }
 //! if !spotify.is_logged_in() { let url = spotify.login()?; /* show url */ }
 //! let id = spotify.request(Request::MyPlaylists);
 //! // each frame:
@@ -41,6 +48,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Duration;
 
+pub use crate::config::LoginStore;
 pub use error::Error;
 pub use types::{Page, PlayerState, Playlist, Repeat, Track, User};
 
@@ -156,6 +164,17 @@ pub enum Event {
     LoggedOut {
         expired: bool,
     },
+    /// The saved login has been read ([`Web::unlock`]; at start where
+    /// reading it never asks the user).
+    Unlocked {
+        logged_in: bool,
+    },
+    /// The login now lives in the store [`Web::set_store`] named. `saved:
+    /// false`: logged in, but that store couldn't keep it.
+    Moved {
+        logged_in: bool,
+        saved: bool,
+    },
     Reply {
         id: RequestId,
         result: Result<Reply, Error>,
@@ -167,6 +186,8 @@ enum Job {
     Code { code: String, verifier: String },
     LoginFailed(Error),
     Logout,
+    Unlock,
+    Move(Box<dyn store::TokenStore>),
 }
 
 /// The handle the UI owns. Dropping it cancels a pending login and lets the
@@ -178,29 +199,52 @@ pub struct SpotifyWeb {
     logged_in: Arc<AtomicBool>,
     next_id: RequestId,
     login_cancel: Option<Arc<AtomicBool>>,
+    /// The saved login is read only when [`Self::unlock`] asks.
+    lazy: bool,
+    unlock_sent: bool,
+}
+
+/// The store for `choice`; [`TOKEN_FILE_ENV`] overrides it.
+fn token_store(choice: LoginStore) -> Box<dyn store::TokenStore> {
+    if let Some(file) = token_file_env() {
+        return Box::new(store::FileStore(file));
+    }
+    match (choice, store::default_file()) {
+        (LoginStore::File, Some(file)) => Box::new(store::FileStore(file)),
+        _ => Box::new(store::SystemStore::new()),
+    }
+}
+
+fn token_file_env() -> Option<std::path::PathBuf> {
+    std::env::var_os(TOKEN_FILE_ENV)
+        .filter(|f| !f.is_empty())
+        .map(Into::into)
+}
+
+/// Whether reading the saved login from `choice` may make the system ask
+/// the user (the macOS Keychain, for a program it doesn't know yet).
+pub fn store_prompts(choice: LoginStore) -> bool {
+    cfg!(target_os = "macos") && choice == LoginStore::System && token_file_env().is_none()
 }
 
 impl SpotifyWeb {
-    /// Starts the worker for `client_id`. A saved login is picked up on the
-    /// worker (a keyring read can be slow or prompt), so
-    /// [`is_logged_in`](Self::is_logged_in) may turn true a moment later.
-    pub fn new(client_id: impl Into<String>) -> Self {
+    /// Starts the worker for `client_id`, keeping the login in `choice`.
+    /// Where reading it can't prompt, the saved login is picked up on the
+    /// worker at once (a keyring read can be slow), so
+    /// [`is_logged_in`](Self::is_logged_in) may turn true a moment later
+    /// ([`Event::Unlocked`]); where it can (macOS Keychain), only after
+    /// [`unlock`](Self::unlock).
+    pub fn new(client_id: impl Into<String>, choice: LoginStore) -> Self {
         let client_id = client_id.into();
         let id = client_id.clone();
-        // A token file instead of the OS keyring (headless runs, scripted
-        // screenshots, a Keychain that would prompt after every rebuild).
-        let file = std::env::var_os(TOKEN_FILE_ENV).filter(|f| !f.is_empty());
-        Self::spawn(client_id, move || {
-            let store: Box<dyn store::TokenStore> = match file {
-                Some(f) => Box::new(store::FileStore(f.into())),
-                None => Box::new(store::SystemStore::new()),
-            };
-            Client::new(http::Ureq::new(), id, store)
+        Self::spawn(client_id, store_prompts(choice), move || {
+            Client::unloaded(http::Ureq::new(), id, token_store(choice))
         })
     }
 
     fn spawn<H: Http + 'static>(
         client_id: String,
+        lazy: bool,
         make: impl FnOnce() -> Client<H> + Send + 'static,
     ) -> Self {
         let (jobs, job_rx) = mpsc::channel();
@@ -211,7 +255,7 @@ impl SpotifyWeb {
             .name("spotify-web".into())
             .spawn(move || {
                 crate::thread_qos::worker();
-                work(make(), &job_rx, &event_tx, &flag)
+                work(make(), lazy, &job_rx, &event_tx, &flag)
             })
             .expect("spawn spotify-web worker");
         Self {
@@ -221,18 +265,35 @@ impl SpotifyWeb {
             logged_in,
             next_id: 0,
             login_cancel: None,
+            lazy,
+            unlock_sent: false,
         }
-    }
-
-    /// The client for the configured Client ID
-    /// ([`Settings::spotify_client_id`](crate::config::Settings::spotify_client_id)),
-    /// or `None` when there isn't one (the library features stay off).
-    pub fn from_settings(settings: &crate::config::Settings) -> Option<Self> {
-        settings.spotify_client_id().map(Self::new)
     }
 
     pub fn is_logged_in(&self) -> bool {
         self.logged_in.load(Ordering::Relaxed)
+    }
+
+    /// The saved login hasn't been read and won't be until
+    /// [`unlock`](Self::unlock).
+    pub fn locked(&self) -> bool {
+        self.lazy && !self.unlock_sent
+    }
+
+    /// Reads the saved login (on the worker; macOS may ask the user
+    /// first); [`Event::Unlocked`] follows. Once only.
+    pub fn unlock(&mut self) {
+        if self.locked() {
+            self.unlock_sent = true;
+            let _ = self.jobs.send(Job::Unlock);
+        }
+    }
+
+    /// Keeps the login in `choice` from now on, moving a saved one there
+    /// (reading it first if it wasn't yet); [`Event::Moved`] follows.
+    pub fn set_store(&mut self, choice: LoginStore) {
+        self.unlock_sent = true;
+        let _ = self.jobs.send(Job::Move(token_store(choice)));
     }
 
     /// Starts a login: opens the browser on Spotify's consent page and
@@ -305,6 +366,10 @@ impl SpotifyWeb {
 /// tests (`FakeWeb`). Nothing here may block.
 pub trait Web {
     fn is_logged_in(&self) -> bool;
+    /// The saved login is still unread: [`Web::unlock`] reads it.
+    fn locked(&self) -> bool;
+    fn unlock(&mut self);
+    fn set_store(&mut self, choice: LoginStore);
     /// Starts a browser login; returns the consent page's URL.
     fn login(&mut self) -> Result<String, Error>;
     fn cancel_login(&mut self);
@@ -316,6 +381,15 @@ pub trait Web {
 impl Web for SpotifyWeb {
     fn is_logged_in(&self) -> bool {
         SpotifyWeb::is_logged_in(self)
+    }
+    fn locked(&self) -> bool {
+        SpotifyWeb::locked(self)
+    }
+    fn unlock(&mut self) {
+        SpotifyWeb::unlock(self);
+    }
+    fn set_store(&mut self, choice: LoginStore) {
+        SpotifyWeb::set_store(self, choice);
     }
     fn login(&mut self) -> Result<String, Error> {
         SpotifyWeb::login(self)
@@ -358,18 +432,28 @@ fn wait_for_code(url: &str, pkce: &Pkce, cancel: &AtomicBool) -> Result<String, 
 }
 
 /// The worker loop: one job at a time until the handle (and any login
-/// thread) is gone.
+/// thread) is gone. Not `lazy`: the saved login is read first.
 fn work<H: Http>(
     mut client: Client<H>,
+    lazy: bool,
     jobs: &Receiver<Job>,
     events: &Sender<Event>,
     logged_in: &AtomicBool,
 ) {
-    logged_in.store(client.is_logged_in(), Ordering::Relaxed);
+    if !lazy {
+        client.load();
+        logged_in.store(client.is_logged_in(), Ordering::Relaxed);
+        let logged_in = client.is_logged_in();
+        if events.send(Event::Unlocked { logged_in }).is_err() {
+            return;
+        }
+    }
     while let Ok(job) = jobs.recv() {
         let mut out = Vec::with_capacity(2);
         match job {
             Job::Request(id, request) => {
+                // Asked for before an unlock: the request needs the login.
+                client.load();
                 let was_logged_in = client.is_logged_in();
                 let result = handle(&mut client, request);
                 let expired = was_logged_in && !client.is_logged_in();
@@ -388,6 +472,16 @@ fn work<H: Http>(
             Job::Logout => {
                 client.logout();
                 out.push(Event::LoggedOut { expired: false });
+            }
+            Job::Unlock => {
+                client.load();
+                let logged_in = client.is_logged_in();
+                out.push(Event::Unlocked { logged_in });
+            }
+            Job::Move(store) => {
+                let saved = client.move_to(store);
+                let logged_in = client.is_logged_in();
+                out.push(Event::Moved { logged_in, saved });
             }
         }
         logged_in.store(client.is_logged_in(), Ordering::Relaxed);

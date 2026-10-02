@@ -15,7 +15,9 @@ use std::time::{Duration, Instant};
 
 use super::{Model, Overlay, depth_for, palette_named, pomodoro_config};
 use crate::clock;
-use crate::config::{CellsChoice, ColorChoice, MinimalClock, Overridden, Settings, UiMode};
+use crate::config::{
+    CellsChoice, ColorChoice, LoginStore, MinimalClock, Overridden, Settings, UiMode,
+};
 use crate::dock::cover::{CoverSize, Detail};
 use crate::dock::{self, Anchor, Backing, Place, WIDGETS};
 use crate::media::{Status, Unavailable};
@@ -173,6 +175,8 @@ pub enum Item {
     ClientId,
     Connect,
     CopyLoginLink,
+    /// Where the login is kept: the Keychain or a private file.
+    LoginStore,
     PlayerApp,
 }
 
@@ -422,7 +426,7 @@ impl Model {
                 if self.library.account() == Account::LoggingIn {
                     out.push(CopyLoginLink);
                 }
-                out.push(PlayerApp);
+                out.extend([LoginStore, PlayerApp]);
             }
         }
         if page != Page::Spotify {
@@ -690,6 +694,22 @@ impl Model {
                 "copy".into(),
                 "No browser tab opened? Copy the link and open it in your browser.",
                 Kind::Button,
+            ),
+            Item::LoginStore => choice(
+                "keep the login in",
+                // The same words everywhere (the about names the Keychain).
+                match s.spotify.store {
+                    LoginStore::System => "password store",
+                    LoginStore::File => "private file",
+                },
+                if cfg!(target_os = "macos") {
+                    "The Keychain is safest, but macOS asks before LavaTUI uses it, and \
+                     again after each update: choose Always Allow. A private file never \
+                     asks, but any program you run can read it."
+                } else {
+                    "The system's password store is safest. A private file works where \
+                     there is none, but any program you run can read it."
+                },
             ),
             Item::PlayerApp => self.player_row(),
         }
@@ -1052,6 +1072,10 @@ impl Model {
         }
         // The client starts with the setup open; make sure it has.
         self.sync_library();
+        if self.library.locked() || self.library.pending.is_some() {
+            // Reading the saved login first (the setup asked for it).
+            return;
+        }
         let lib = &mut self.library;
         match lib.account() {
             Account::Unavailable => {}
@@ -1275,6 +1299,17 @@ impl Model {
             }
             Item::InlineCover => s.art.inline = !s.art.inline,
             Item::Mouse => s.input.mouse = !s.input.mouse,
+            Item::LoginStore => {
+                s.spotify.store = match s.spotify.store {
+                    LoginStore::System => LoginStore::File,
+                    LoginStore::File => LoginStore::System,
+                };
+                // Moving it reads it first: macOS may ask.
+                if self.library.locked() {
+                    self.toast(super::library::KEYCHAIN_HEADS_UP);
+                }
+                self.library.set_store(self.settings.spotify.store);
+            }
             Item::LampOnly => {
                 s.ui.mode = match s.ui.mode {
                     UiMode::Full => UiMode::Minimal,

@@ -117,7 +117,7 @@ fn parse(json: &str, client_id: &str) -> Option<Tokens> {
 
 /// `$XDG_DATA_HOME/lavatui/…` (absolute only, as for the config), else the
 /// platform data dir.
-fn default_file() -> Option<PathBuf> {
+pub fn default_file() -> Option<PathBuf> {
     let xdg = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())

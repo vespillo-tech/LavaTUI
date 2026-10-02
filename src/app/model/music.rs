@@ -442,6 +442,14 @@ impl Model {
                 });
                 Command::SetRepeat(!snap.repeat)
             }
+            // Whether the account can do it is in the saved login, unread
+            // so far (macOS may ask first): read it, then try again.
+            PlayerKey::Shuffle | PlayerKey::Repeat
+                if snap.is_spotify() && self.library.locked() =>
+            {
+                self.unlock_library(Some(key));
+                return;
+            }
             PlayerKey::Shuffle | PlayerKey::Repeat if self.web_modes().is_some() => {
                 self.toast("Spotify won't change that for what's playing");
                 return;

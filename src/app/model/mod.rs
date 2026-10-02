@@ -273,7 +273,11 @@ impl Model {
             kitty: Kitty::default(),
             inline: Inline::default(),
             // The demo never touches a real account (or the keyring).
-            library: Library::new(settings.spotify_client_id().filter(|_| !session.demo)),
+            library: Library::new(
+                settings.spotify_client_id().filter(|_| !session.demo),
+                settings.spotify.store,
+                settings.spotify.logged_in,
+            ),
             lyrics: LyricsState::default(),
             lava_focus: None,
             welcome: settings.ui.welcome,
