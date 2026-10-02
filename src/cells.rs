@@ -36,6 +36,29 @@ pub fn hosted(mut names: impl Iterator<Item = String>) -> bool {
     names.any(|k| k == "ZMX_SESSION" || k.starts_with("GHOSTEX_"))
 }
 
+/// Whether glyphs beyond the ones every terminal font draws should be
+/// left out (the music controls' `◂◂ ‖ ▸▸ ♡ ≡`): in hosts that embed
+/// Ghostty's terminal ([`hosted`]), whose renderer drew none of them
+/// (lava-1xk.21). `LAVATUI_GLYPHS=safe` or `rich` says so either way.
+/// Never in tests.
+pub fn safe_glyphs() -> bool {
+    if cfg!(test) {
+        return false;
+    }
+    let names = std::env::vars_os().map(|(k, _)| k.to_string_lossy().into_owned());
+    glyphs_safe(std::env::var("LAVATUI_GLYPHS").ok().as_deref(), names)
+}
+
+/// [`safe_glyphs`] from `LAVATUI_GLYPHS` and the environment's variable
+/// `names`.
+pub fn glyphs_safe(choice: Option<&str>, names: impl Iterator<Item = String>) -> bool {
+    match choice.map(str::trim) {
+        Some(c) if c.eq_ignore_ascii_case("safe") => true,
+        Some(c) if c.eq_ignore_ascii_case("rich") => false,
+        _ => hosted(names),
+    }
+}
+
 /// Whether we're in Ghostty (`var` reads one variable) and its config
 /// (`read` reads one file) has translucent cell backgrounds. `home` is
 /// the user's home directory.
@@ -196,6 +219,18 @@ mod tests {
             "GHOSTTY_RESOURCES_DIR"
         ])));
         assert!(!hosted(names(&[])));
+    }
+
+    #[test]
+    fn safe_glyphs_in_hosts_unless_told() {
+        let names = |n: &[&str]| n.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let ghostex = names(&["TERM_PROGRAM", "ZMX_SESSION"]);
+        let ghostty = names(&["TERM_PROGRAM", "GHOSTTY_RESOURCES_DIR"]);
+        assert!(glyphs_safe(None, ghostex.clone().into_iter()));
+        assert!(!glyphs_safe(None, ghostty.clone().into_iter()));
+        assert!(!glyphs_safe(Some("rich"), ghostex.into_iter()));
+        assert!(glyphs_safe(Some(" Safe "), ghostty.clone().into_iter()));
+        assert!(!glyphs_safe(Some("what"), ghostty.into_iter()));
     }
 
     #[test]

@@ -32,6 +32,8 @@ mod types;
 #[cfg(test)]
 pub mod fake;
 #[cfg(test)]
+mod live_tests;
+#[cfg(test)]
 mod tests;
 
 use std::sync::Arc;

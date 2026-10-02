@@ -693,6 +693,7 @@ mod music {
     fn fake(now: Instant) -> FakeSource {
         let track = Track {
             id: "fake:1".into(),
+            uri: None,
             name: "Slow Rise".into(),
             artist: "The Paraffins".into(),
             album: "Heat Rises".into(),
@@ -1524,6 +1525,7 @@ mod lyrics {
     fn track(id: &str, name: &str) -> Track {
         Track {
             id: id.into(),
+            uri: crate::media::spotify_track_uri(id),
             name: name.into(),
             artist: "The Paraffins".into(),
             album: "Heat Rises".into(),

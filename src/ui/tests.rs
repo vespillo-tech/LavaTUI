@@ -147,7 +147,7 @@ impl Case {
                 line_w: 30,
             }
         } else {
-            Show::Message(PERMISSION.into())
+            Show::Message(format!("{}{PERMISSION}", crate::glyphs::RICH.note))
         }
     }
 

@@ -17,7 +17,7 @@
 mod clock;
 pub mod cover;
 mod lyrics;
-mod music;
+pub mod music;
 pub mod picture;
 mod pomodoro;
 

@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 
 use ratatui::buffer::{Buffer, Cell};
-use ratatui::layout::Position;
+use ratatui::layout::{Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 
 use crate::app::Model;
@@ -275,8 +275,18 @@ fn float(buf: &mut Buffer, scratch: &Buffer, dim: Color, lamp: &Theme, transluce
             let pos = at(i);
             let to = &mut buf[pos];
             if puts[i] == Put::Gap {
-                if halves(to.symbol(), to.fg, to.bg).is_none() {
-                    to.set_char(' ');
+                match halves(to.symbol(), to.fg, to.bg) {
+                    None => {
+                        to.set_char(' ');
+                    }
+                    // A half block between two letters: the letters' own
+                    // backing (what they're painted on), so a line reads
+                    // as one strip, never `thu▄1`.
+                    Some(_) if !translucent && lamp.has_color() => {
+                        let bg = under(to, lamp);
+                        to.set_char(' ').set_fg(bg).set_bg(bg);
+                    }
+                    Some(_) => {}
                 }
                 continue;
             }
@@ -311,10 +321,49 @@ fn float(buf: &mut Buffer, scratch: &Buffer, dim: Color, lamp: &Theme, transluce
                     }
                 }
             }
-            paint(to, from.symbol(), fg, from.fg != dim, lamp, translucent);
+            let bold = from.fg != dim || from.modifier.contains(Modifier::BOLD);
+            paint(to, from.symbol(), fg, bold, lamp, translucent);
         }
     }
     INKS.with_borrow_mut(|m| *m = inks);
+    // (16 colours: a bright wax colour as a background isn't always
+    // that colour.)
+    if !translucent && matches!(lamp.depth(), ColorDepth::TrueColor | ColorDepth::Ansi256) {
+        solid_around(buf, area, |p| {
+            !area.contains(p) || puts[at_index(area, p)] == Put::Nothing
+        });
+    }
+}
+
+/// Lamp cells (`lamp_cell`) in and one cell around floating widgets that are one colour
+/// all over (`█`, or a half block whose halves match) become that colour's
+/// plain background: they look the same, but no block glyph is left
+/// against the text, where a terminal that draws blocks a hair short of
+/// the cell shows the backdrop through as thin lines (lava-1xk.21). Not
+/// with see-through cell backgrounds, where wax must stay a glyph.
+fn solid_around(buf: &mut Buffer, area: Rect, lamp_cell: impl Fn(Position) -> bool) {
+    let around = Rect::new(
+        area.x.saturating_sub(1),
+        area.y.saturating_sub(1),
+        area.width + 2,
+        area.height + 2,
+    )
+    .intersection(buf.area);
+    for pos in around.positions().filter(|&p| lamp_cell(p)) {
+        let cell = &mut buf[pos];
+        if let Some((top, bottom)) = halves(cell.symbol(), cell.fg, cell.bg)
+            && top == bottom
+            && top != TERMINAL_DEFAULT
+            && cell.symbol() != " "
+        {
+            cell.set_char(' ').set_fg(top).set_bg(top);
+        }
+    }
+}
+
+/// `p`'s index in a row-major vector over `area`.
+fn at_index(area: Rect, p: Position) -> usize {
+    usize::from(p.y - area.y) * usize::from(area.width) + usize::from(p.x - area.x)
 }
 
 /// What a lamp cell shows behind a glyph put in it: its background, or for

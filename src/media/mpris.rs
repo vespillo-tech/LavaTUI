@@ -157,8 +157,15 @@ pub fn track(metadata: &HashMap<String, Meta>) -> Option<Track> {
         _ if !name.is_empty() => format!("{name}\u{1f}{artist}\u{1f}{album}"),
         _ => return None,
     };
+    // Spotify names its track in `xesam:url` (older versions only in the
+    // trackid); a local file, an ad or another player names none.
+    let uri = ["xesam:url", "mpris:trackid"]
+        .iter()
+        .filter_map(|key| metadata.get(*key).and_then(Meta::text))
+        .find_map(super::spotify_track_uri);
     Some(Track {
         id,
+        uri,
         name,
         artist,
         album,
@@ -365,9 +372,13 @@ mod bus {
             snap
         }
 
-        /// MPRIS has all of them; whether a player honours them varies.
+        /// MPRIS has all of them (whether a player honours them varies)
+        /// but no contexts: a track in its playlist plays alone.
         fn capabilities(&self) -> Capabilities {
-            Capabilities::ALL
+            Capabilities {
+                contexts: false,
+                ..Capabilities::ALL
+            }
         }
     }
 
@@ -514,12 +525,55 @@ mod tests {
     #[test]
     fn parses_spotify_metadata() {
         let track = track(&spotify_metadata()).unwrap();
+        // The object path stays the id (seeking needs it); the URL says
+        // which Spotify track it is.
         assert_eq!(track.id, "/com/spotify/track/0DZXVpUtPUom1VO6h5a0SU");
+        assert_eq!(
+            track.uri.as_deref(),
+            Some("spotify:track:0DZXVpUtPUom1VO6h5a0SU")
+        );
         assert_eq!(track.name, "Life");
         assert_eq!(track.artist, "Sigur Rós, Jónsi");
         assert_eq!(track.album, "Dreamcatcher");
         assert_eq!(track.duration, Duration::from_millis(303_440));
         assert!(track.artwork_url.starts_with("https://i.scdn.co/"));
+    }
+
+    #[test]
+    fn only_spotify_tracks_get_a_spotify_uri() {
+        let with = |entries: Vec<(&str, Meta)>| {
+            let mut m = spotify_metadata();
+            m.remove("xesam:url");
+            m.extend(entries.into_iter().map(|(k, v)| (k.to_owned(), v)));
+            track(&m).unwrap()
+        };
+        // Older Spotify: the URI as the trackid, no URL.
+        let old = with(vec![(
+            "mpris:trackid",
+            text("spotify:track:7xGfFoTpQ2E7fRF5lN10tr"),
+        )]);
+        assert_eq!(
+            old.uri.as_deref(),
+            Some("spotify:track:7xGfFoTpQ2E7fRF5lN10tr")
+        );
+        // An ad, a local file, another player: no URI, nothing guessed.
+        for (id, url) in [
+            (
+                "/com/spotify/ad/000000012c4a1bd4",
+                "https://open.spotify.com/ad/x",
+            ),
+            (
+                "/com/spotify/local/Someone/Album/Song/215",
+                "spotify:local:Someone:Album:Song:215",
+            ),
+            (
+                "/org/videolan/vlc/playlist/7",
+                "file:///home/someone/Music/a.flac",
+            ),
+        ] {
+            let t = with(vec![("mpris:trackid", text(id)), ("xesam:url", text(url))]);
+            assert_eq!((t.id.as_str(), t.uri), (id, None), "{url}");
+        }
     }
 
     #[test]

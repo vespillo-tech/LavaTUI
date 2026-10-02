@@ -23,11 +23,12 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Rect};
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use super::{Anchor, ChipText, DockWidget, Look, Place, WidgetForm, align_x};
+use super::{Anchor, Backdrop, ChipText, DockWidget, Look, Place, WidgetForm, align_x};
 use crate::app::{Account, Model};
+use crate::glyphs::Glyphs;
 use crate::media::{Snapshot, Status, Unavailable};
 use crate::theme::Role;
 use crate::ui::keymap::PlayerKey;
@@ -68,12 +69,13 @@ pub enum Show {
         /// Width of the one-line form's text.
         line_w: u16,
     },
-    /// A calm sentence: why there's no player, or that nothing is loaded.
+    /// A calm sentence: why there's no player, or that nothing is loaded
+    /// (with its `♪`, when the glyphs have one).
     Message(String),
 }
 
 fn show(model: &Model) -> Show {
-    let message = |text: &str| Show::Message(text.into());
+    let message = |text: &str| Show::Message(message_text(text, glyphs(model)));
     // Not read yet (the player connects on the next frame): never no
     // forms, which would take the whole panel down with it.
     let Some(snap) = model.music.snapshot.as_ref() else {
@@ -86,7 +88,7 @@ fn show(model: &Model) -> Show {
         (Status::Playing | Status::Paused, Some(track)) => Show::Track {
             cover: model.inline_cover() && !track.artwork_url.is_empty(),
             playing: snap.status == Status::Playing,
-            line_w: width(&line_text(snap)).min(LINE_MAX),
+            line_w: width(&line_text(snap, glyphs(model))).min(LINE_MAX),
         },
     }
 }
@@ -95,7 +97,7 @@ fn show(model: &Model) -> Show {
 pub fn music_forms(show: &Show, place: Place) -> Vec<WidgetForm> {
     match show {
         Show::Message(text) => {
-            let lines = wrap(&message_text(text), message_w(place));
+            let lines = wrap(text, message_w(place));
             let w = lines.iter().map(|l| width(l)).max().unwrap_or(1);
             vec![WidgetForm::fixed(w, lines.len() as u16, V_MESSAGE)]
         }
@@ -132,25 +134,30 @@ fn message_w(place: Place) -> u16 {
     }
 }
 
-fn message_text(text: &str) -> String {
-    format!("♪ {text}")
+fn message_text(text: &str, g: &Glyphs) -> String {
+    format!("{}{text}", g.note)
+}
+
+/// The model's glyph set ([`crate::glyphs`]).
+pub fn glyphs(model: &Model) -> &'static Glyphs {
+    model.glyphs()
 }
 
 /// `▶`, `‖` or `■`.
-fn glyph(snap: &Snapshot) -> char {
+fn glyph(snap: &Snapshot, g: &Glyphs) -> &'static str {
     match snap.status {
-        Status::Playing => '▶',
-        Status::Paused => '‖',
-        _ => '■',
+        Status::Playing => g.playing,
+        Status::Paused => g.paused,
+        _ => g.stopped,
     }
 }
 
 /// `▶ title – artist` (just the title when there's no artist).
-fn line_text(snap: &Snapshot) -> String {
+fn line_text(snap: &Snapshot, g: &Glyphs) -> String {
     let Some(track) = &snap.track else {
         return String::new();
     };
-    let g = glyph(snap);
+    let g = glyph(snap, g);
     match track.artist.trim() {
         "" => format!("{g} {}", track.name),
         artist => format!("{g} {} – {artist}", track.name),
@@ -173,7 +180,7 @@ impl DockWidget for Music {
     fn draw(&self, model: &Model, form: WidgetForm, area: Rect, look: Look, buf: &mut Buffer) {
         if form.variant & 0xff00 == V_MESSAGE {
             if let Show::Message(text) = show(model) {
-                let lines = wrap(&message_text(&text), form.size.width);
+                let lines = wrap(&text, form.size.width);
                 let dim = model.theme.text(Role::Dim);
                 for (i, line) in lines.iter().take(usize::from(area.height)).enumerate() {
                     let line = fit(line, area.width);
@@ -189,10 +196,15 @@ impl DockWidget for Music {
         let Some(parts) = parts(form, area, look.align) else {
             return;
         };
-        let mut pen = Pen { model, snap, buf };
+        let mut pen = Pen {
+            model,
+            snap,
+            buf,
+            lava: look.backdrop == Backdrop::Lava,
+        };
         if parts.line {
             let style = model.theme.text(Role::Text);
-            pen.buf_line(area, 0, &line_text(snap), style, look.align);
+            pen.buf_line(area, 0, &line_text(snap, glyphs(model)), style, look.align);
         }
         if let Some(r) = parts.compact {
             pen.compact(r);
@@ -228,14 +240,14 @@ impl DockWidget for Music {
     fn chip(&self, model: &Model) -> Option<ChipText> {
         let snap = model.music.snapshot.as_ref()?;
         if let Status::Unavailable(reason) = &snap.status {
-            return problem_chip(reason, snap.player_name());
+            return problem_chip(reason, snap.player_name(), glyphs(model));
         }
         snap.track.as_ref()?;
         if !matches!(snap.status, Status::Playing | Status::Paused) {
             return None;
         }
         Some(ChipText {
-            text: fit(&line_text(snap), CHIP_MAX),
+            text: fit(&line_text(snap, glyphs(model)), CHIP_MAX),
             ink: Role::Text,
         })
     }
@@ -243,12 +255,13 @@ impl DockWidget for Music {
 
 /// The chip for a player problem: the next step when it's short, else
 /// where to read it (the music controls' note).
-fn problem_chip(reason: &Unavailable, player: &str) -> Option<ChipText> {
+fn problem_chip(reason: &Unavailable, player: &str, g: &Glyphs) -> Option<ChipText> {
+    let note = g.note;
     let text = match reason {
         Unavailable::Unsupported => return None,
-        Unavailable::NotRunning if player.contains(' ') => "♪ open your player".into(),
-        Unavailable::NotRunning => format!("♪ open {player}"),
-        _ => "♪ see Shift+A".into(),
+        Unavailable::NotRunning if player.contains(' ') => format!("{note}open your player"),
+        Unavailable::NotRunning => format!("{note}open {player}"),
+        _ => format!("{note}see Shift+A"),
     };
     Some(ChipText {
         text: fit(&text, CHIP_MAX),
@@ -329,9 +342,10 @@ struct Control {
 /// The heart: `♥` (accent) when liked, `♡` when not; `None` when there's
 /// no login or the track isn't a Spotify one.
 fn heart(model: &Model) -> Option<(String, Role)> {
+    let g = glyphs(model);
     match model.liked()? {
-        true => Some(("♥".into(), Role::Accent)),
-        false => Some(("♡".into(), Role::Dim)),
+        true => Some((g.liked.into(), Role::Accent)),
+        false => Some((g.unliked.into(), Role::Dim)),
     }
 }
 
@@ -341,18 +355,19 @@ fn heart(model: &Model) -> Option<(String, Role)> {
 /// left ones go, rather than crowd.
 fn card_controls(model: &Model, snap: &Snapshot, r: Rect) -> Vec<Control> {
     let mouse = model.settings.input.mouse;
+    let g = glyphs(model);
     let y = r.y + 3;
     let mut left: Vec<(Button, String, Role)> = Vec::new();
     if mouse {
         let play = if snap.status == Status::Playing {
-            "‖"
+            g.paused
         } else {
-            "▶"
+            g.playing
         };
         left = vec![
-            (Button::Previous, "◂◂".into(), Role::Dim),
+            (Button::Previous, g.previous.into(), Role::Dim),
             (Button::PlayPause, play.into(), Role::Dim),
-            (Button::Next, "▸▸".into(), Role::Dim),
+            (Button::Next, g.next.into(), Role::Dim),
         ];
     }
     let mut right: Vec<(Button, String, Role)> = Vec::new();
@@ -365,9 +380,9 @@ fn card_controls(model: &Model, snap: &Snapshot, r: Rect) -> Vec<Control> {
             }
             if mouse {
                 if spotify_track {
-                    right.push((Button::Add, "+".into(), Role::Dim));
+                    right.push((Button::Add, g.add.into(), Role::Dim));
                 }
-                right.push((Button::Playlists, "≡".into(), Role::Dim));
+                right.push((Button::Playlists, g.playlists.into(), Role::Dim));
             }
         }
         Account::LoggedOut if mouse => right.push((Button::LogIn, "log in".into(), Role::Dim)),
@@ -421,11 +436,12 @@ fn card_controls(model: &Model, snap: &Snapshot, r: Rect) -> Vec<Control> {
 
 /// The compact form's controls: the play glyph and the heart (at the end
 /// of the title row).
-fn compact_controls(model: &Model, r: Rect) -> Vec<Control> {
+fn compact_controls(model: &Model, snap: &Snapshot, r: Rect) -> Vec<Control> {
     let mut out = Vec::new();
     if model.settings.input.mouse && r.height >= 3 {
+        let w = width(glyph(snap, glyphs(model))).min(r.width);
         out.push(Control {
-            rect: Rect::new(r.x, r.y + 2, 1, 1),
+            rect: Rect::new(r.x, r.y + 2, w, 1),
             button: Button::PlayPause,
             text: String::new(),
             ink: Role::Text,
@@ -435,8 +451,9 @@ fn compact_controls(model: &Model, r: Rect) -> Vec<Control> {
         heart(model).filter(|(_, ink)| model.settings.input.mouse || *ink == Role::Accent)
         && r.width >= CARD.0
     {
+        let w = width(&text);
         out.push(Control {
-            rect: Rect::new(r.right() - 1, r.y, 1, 1),
+            rect: Rect::new(r.right() - w, r.y, w, 1),
             button: Button::Like,
             text,
             ink,
@@ -447,8 +464,8 @@ fn compact_controls(model: &Model, r: Rect) -> Vec<Control> {
 
 /// The compact form's progress bar, when the row has room for one (else
 /// it shows the status line).
-fn compact_bar(snap: &Snapshot, now: std::time::Instant, row: Rect) -> Option<Rect> {
-    let left = format!("{} {}", glyph(snap), clock(snap.position_at(now)));
+fn compact_bar(snap: &Snapshot, g: &Glyphs, now: std::time::Instant, row: Rect) -> Option<Rect> {
+    let left = format!("{} {}", glyph(snap, g), clock(snap.position_at(now)));
     let total = total_text(snap);
     let (lw, tw) = (width(&left), width(&total));
     if lw + tw + 6 > row.width {
@@ -492,11 +509,12 @@ pub fn hit(
         }
     }
     if let Some(r) = parts.compact {
-        let controls = compact_controls(model, r);
+        let controls = compact_controls(model, snap, r);
         if let Some(c) = controls.iter().find(|c| c.rect.contains(at)) {
             return Some(c.button.key());
         }
-        let bar = compact_bar(snap, model.now, Rect::new(r.x, r.y + 2, r.width, 1));
+        let row = Rect::new(r.x, r.y + 2, r.width, 1);
+        let bar = compact_bar(snap, glyphs(model), model.now, row);
         if let Some(bar) = bar.filter(|b| b.contains(at)) {
             return Some(seek(bar));
         }
@@ -509,6 +527,9 @@ struct Pen<'a, 'b> {
     model: &'a Model,
     snap: &'a Snapshot,
     buf: &'b mut Buffer,
+    /// On the lava: the controls are bold there, strokes enough for
+    /// their ink to read over bright wax.
+    lava: bool,
 }
 
 impl Pen<'_, '_> {
@@ -531,7 +552,10 @@ impl Pen<'_, '_> {
         self.buf_line(r, 1, &track.artist, dim, align);
         self.buf_line(r, 2, &track.album, dim, align);
         for c in card_controls(self.model, self.snap, r) {
-            let style = theme.text(c.ink);
+            let mut style = theme.text(c.ink);
+            if self.lava {
+                style = style.add_modifier(Modifier::BOLD);
+            }
             self.buf.set_string(c.rect.x, c.rect.y, &c.text, style);
         }
         self.bar(Rect::new(r.x, r.y + 4, r.width, 1));
@@ -544,13 +568,9 @@ impl Pen<'_, '_> {
             return;
         };
         let theme = &self.model.theme;
-        let controls = compact_controls(self.model, r);
+        let controls = compact_controls(self.model, self.snap, r);
         let heart = controls.iter().find(|c| c.button == Button::Like);
-        let title_w = if heart.is_some() {
-            r.width - 2
-        } else {
-            r.width
-        };
+        let title_w = heart.map_or(r.width, |c| r.width - c.rect.width - 1);
         let title = Rect {
             width: title_w,
             ..r
@@ -568,14 +588,13 @@ impl Pen<'_, '_> {
         }
         self.buf_line(r, 1, &track.artist, theme.text(Role::Dim), Alignment::Left);
         let now = self.model.now;
-        let left = format!("{} {}", glyph(self.snap), clock(self.snap.position_at(now)));
         let total = self.total();
         let row = Rect::new(r.x, r.y + 2, r.width, 1);
-        let Some(bar) = compact_bar(self.snap, now, row) else {
+        let Some(bar) = compact_bar(self.snap, glyphs(self.model), now, row) else {
             self.status(row);
             return;
         };
-        self.left(row, &left);
+        self.left(row);
         self.bar(bar);
         let buf = &mut *self.buf;
         let tw = width(&total);
@@ -600,41 +619,44 @@ impl Pen<'_, '_> {
 
     /// The glyph and elapsed time, left (the glyph in `accent` while the
     /// player keys are on: the one hint that they are).
-    fn left(&mut self, r: Rect, text: &str) {
+    fn left(&mut self, r: Rect) {
         let theme = &self.model.theme;
-        let mut chars = text.chars();
-        let Some(g) = chars.next() else {
-            return;
-        };
+        let g = glyph(self.snap, glyphs(self.model));
         let g_style = if self.model.music.keys {
             theme.text(Role::Accent)
         } else {
             theme.text(Role::Text)
         };
+        let rest = format!(" {}", clock(self.snap.position_at(self.model.now)));
         let buf = &mut *self.buf;
-        buf.set_stringn(r.x, r.y, g.to_string(), usize::from(r.width), g_style);
-        let rest: String = chars.collect();
-        let w = usize::from(r.width.saturating_sub(1));
-        buf.set_stringn(r.x + 1, r.y, rest, w, theme.text(Role::Text));
+        let (x, _) = buf.set_stringn(r.x, r.y, g, usize::from(r.width), g_style);
+        let w = usize::from(r.right().saturating_sub(x));
+        buf.set_stringn(x, r.y, rest, w, theme.text(Role::Text));
+    }
+
+    /// `left`'s text: the glyph and the elapsed time.
+    fn left_text(&self) -> String {
+        let g = glyph(self.snap, glyphs(self.model));
+        format!("{g} {}", clock(self.snap.position_at(self.model.now)))
     }
 
     /// `▶ 1:23   ⇄ ↻  vol 70  3:45`: what fits, the total and volume first
     /// to go.
     fn status(&mut self, r: Rect) {
         let theme = &self.model.theme;
-        let now = self.model.now;
-        let left = format!("{} {}", glyph(self.snap), clock(self.snap.position_at(now)));
+        let left = self.left_text();
+        let g = glyphs(self.model);
         let mut right = vec![self.total()];
         let caps = self.model.music.capabilities();
         let mut modes = String::new();
         if caps.shuffle && self.snap.shuffle {
-            modes.push('⇄');
+            modes.push_str(g.shuffle);
         }
         if caps.repeat && self.snap.repeat {
             if !modes.is_empty() {
                 modes.push(' ');
             }
-            modes.push('↻');
+            modes.push_str(g.repeat);
         }
         if caps.volume {
             right.insert(0, format!("vol {}", self.snap.volume));
@@ -653,7 +675,7 @@ impl Pen<'_, '_> {
             }
             right.remove(0);
         }
-        self.left(r, &left);
+        self.left(r);
         let dim = theme.text(Role::Dim);
         let mut x = r.right();
         let buf = &mut *self.buf;
@@ -790,13 +812,16 @@ mod tests {
         let long = "Allow control of Spotify: System Settings › Privacy & Security \
                     › Automation › your terminal › Spotify";
         for (place, w) in [(Place::Side, 20), (Place::Overlay, 30)] {
-            let forms = music_forms(&Show::Message(long.into()), place);
+            let forms = music_forms(
+                &Show::Message(message_text(long, &crate::glyphs::RICH)),
+                place,
+            );
             assert_eq!(forms.len(), 1);
             assert!(forms[0].size.width <= w, "{forms:?}");
             assert!(forms[0].size.height >= 3);
         }
         let short = music_forms(
-            &Show::Message("Spotify isn't running".into()),
+            &Show::Message(message_text("Spotify isn't running", &crate::glyphs::RICH)),
             Place::Overlay,
         );
         assert_eq!(short[0].size, ratatui::layout::Size::new(23, 1));

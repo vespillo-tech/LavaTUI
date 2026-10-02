@@ -310,6 +310,7 @@ fn lyrics(m: &mut Model, t: Instant, presses: usize, secs: u64) {
     use crate::lyrics::client::tests::{Mock, ok};
     let track = Track {
         id: "fake:1".into(),
+        uri: None,
         name: "Slow Rise".into(),
         artist: "The Paraffins".into(),
         album: "Heat Rises".into(),
@@ -362,6 +363,7 @@ fn music(m: &mut Model, t: Instant, status: Status, presses: usize) {
 fn music_track(m: &mut Model, t: Instant, status: Status, presses: usize, id: &str) {
     let track = Track {
         id: id.into(),
+        uri: crate::media::spotify_track_uri(id),
         name: "Convection (Long Version)".into(),
         artist: "Wax & Wane".into(),
         album: "Lamplight".into(),
@@ -1011,4 +1013,195 @@ fn no_mouse_no_buttons() {
         assert!(find_in_music(&m, &buf, glyph).is_none(), "{glyph}");
     }
     assert!(find_in_music(&m, &buf, "♥").is_some());
+}
+
+/// The music widget's form and rect, and where its inline cover is.
+fn music_placed(m: &Model) -> (crate::dock::WidgetForm, Rect, Option<Rect>) {
+    let music = crate::dock::by_name("music").unwrap().0;
+    let p = m
+        .layout
+        .panel
+        .iter()
+        .chain(&m.layout.on_lava)
+        .flat_map(|s| &s.items)
+        .find(|p| p.widget == music)
+        .expect("music placed");
+    let cover = crate::dock::music::cover_rect(p.form, p.rect, ratatui::layout::Alignment::Left);
+    (p.form, p.rect, cover)
+}
+
+/// Under a host embedding Ghostty's terminal (Ghostex), which drew none
+/// of `◂◂ ‖ ▸▸ ≡` (lava-1xk.21), the controls use the safe set, and
+/// presses still land on what's drawn.
+#[test]
+fn hosted_controls_use_safe_glyphs() {
+    use crate::glyphs::SAFE;
+    for lava in [false, true] {
+        let (mut m, t0) = model(80, 24, 7);
+        m.safe_glyphs = true;
+        spotify(&mut m, t0, true);
+        if lava {
+            m.update(Action::Place("music"), t0);
+            m.update(Action::Resize, t0);
+        }
+        let buf = draw(&m, 80, 24);
+        // What the widget draws (on the lava, the lamp shows around it).
+        let (form, rect, cover) = music_placed(&m);
+        let mut drawn = Buffer::empty(buf.area);
+        let look = Look {
+            backdrop: if lava {
+                Backdrop::Lava
+            } else {
+                Backdrop::Panel
+            },
+            align: ratatui::layout::Alignment::Left,
+        };
+        let music = crate::dock::by_name("music").unwrap().0;
+        WIDGETS[music].draw(&m, form, rect, look, &mut drawn);
+        let mut row = String::new();
+        for p in rect.positions() {
+            if cover.is_some_and(|c| c.contains(p)) {
+                continue;
+            }
+            let sym = drawn[p].symbol();
+            if p.y == rect.y + 3 {
+                row.push_str(sym);
+            }
+            let ok = sym
+                .chars()
+                .all(|c| (c as u32) < 0x100 || "▶…━─".contains(c));
+            assert!(ok, "lava {lava}: {sym:?} at {p:?}");
+        }
+        assert!(
+            row.contains("«") && row.contains("||") && row.contains("»"),
+            "{row}"
+        );
+        assert!(row.contains("<3") && row.contains(SAFE.playlists), "{row}");
+
+        let (x, y) = find_in_music(&m, &buf, SAFE.playlists).expect("playlists");
+        m.update(Action::Press { col: x, row: y }, t0);
+        assert!(matches!(m.overlay, Overlay::Library(_)), "lava {lava}");
+        m.update(Action::Close, t0);
+        let (x, y) = find_in_music(&m, &buf, "|").expect("pause");
+        m.update(Action::Press { col: x, row: y }, t0);
+        let snap = m.music.snapshot.as_ref().unwrap();
+        assert_eq!(snap.status, Status::Paused, "lava {lava}");
+    }
+}
+
+/// Floating text leaves no block glyph of the lamp in or right around
+/// it (lava-1xk.21): solid cells become plain backgrounds, and a half
+/// block between two letters takes their backing.
+#[test]
+fn floating_text_has_no_block_glyphs_around_it() {
+    let mut gaps = 0;
+    for seed in [3, 7, 11, 19, 23, 42] {
+        let (mut m, t0) = model(100, 30, seed);
+        spotify(&mut m, t0, true);
+        m.update(Action::Place("music"), t0);
+        m.update(Action::Resize, t0);
+        let buf = draw(&m, 100, 30);
+        let (_, r, cover) = music_placed(&m);
+        let around = Rect::new(r.x - 1, r.y.saturating_sub(1), r.width + 2, r.height + 2);
+        for p in around.intersection(buf.area).positions() {
+            assert_ne!(buf[p].symbol(), "█", "seed {seed} at {p:?}");
+        }
+        let text = |x: u16, y: u16| {
+            let s = buf[(x, y)].symbol();
+            s != " " && !"▀▄█".contains(s) && !cover.is_some_and(|c| c.contains((x, y).into()))
+        };
+        for y in r.top()..r.bottom() {
+            for x in r.left() + 1..r.right() - 1 {
+                if text(x - 1, y) && text(x + 1, y) && buf[(x, y)].symbol() != " " && !text(x, y) {
+                    panic!("seed {seed}: block glyph between letters at ({x}, {y})");
+                }
+                if text(x - 1, y) && text(x + 1, y) && !text(x, y) {
+                    gaps += 1;
+                }
+            }
+        }
+    }
+    assert!(gaps > 0, "no gaps between letters were checked");
+}
+
+/// Under a host embedding Ghostty's terminal (Ghostex), which draws none
+/// of these, no frame shows them: music, lyrics, cover, pomodoro, chips,
+/// toasts, lists and the status bar all take the safe set (lava-1xk.29).
+/// With the rich set the same scenes do show them (the test sees them).
+#[test]
+fn hosted_frames_never_draw_symbols_the_host_lacks() {
+    const LACKING: &str = "♪♡♥⇄↻◂▸‖≡";
+    for safe in [true, false] {
+        let mut seen = String::new();
+        let mut check = |m: &Model, what: &str| {
+            let area = m.layout.area;
+            let buf = draw(m, area.width, area.height);
+            for p in buf.area.positions() {
+                for c in buf[p].symbol().chars().filter(|&c| LACKING.contains(c)) {
+                    assert!(
+                        !safe,
+                        "{what} at {}x{}: {c:?} at {p:?}",
+                        area.width, area.height
+                    );
+                    seen.push(c);
+                }
+            }
+        };
+        for (cols, rows) in [(120, 40), (60, 20), (34, 12)] {
+            let (mut m, t0) = model(cols, rows, 3);
+            m.safe_glyphs = safe;
+            // Lyrics: a line, then a gap (the chip's note).
+            lyrics(&mut m, t0, 1, 12);
+            check(&m, "lyrics");
+            lyrics(&mut m, t0, 0, 33);
+            check(&m, "lyrics gap");
+
+            // Music, its cover and the pomodoro; a like's toast.
+            let (mut m, t0) = model(cols, rows, 3);
+            m.safe_glyphs = safe;
+            spotify(&mut m, t0, true);
+            m.update(Action::Place("cover"), t0);
+            m.update(Action::PomodoroToggle, t0);
+            m.update(Action::Resize, t0);
+            check(&m, "music, cover, pomodoro");
+            m.update(Action::PlayerKeys, t0);
+            m.update(Action::Player(crate::ui::keymap::PlayerKey::Shuffle), t0);
+            m.update(Action::Player(crate::ui::keymap::PlayerKey::Repeat), t0);
+            check(&m, "shuffle, repeat");
+            m.update(Action::Player(crate::ui::keymap::PlayerKey::Like), t0);
+            check(&m, "like toast");
+            // Lists: the library, the settings screen, a picker.
+            m.update(Action::Player(crate::ui::keymap::PlayerKey::Playlists), t0);
+            m.update(Action::Resize, t0);
+            check(&m, "library");
+            m.update(Action::Close, t0);
+            m.update(Action::Back, t0);
+            m.update(Action::Settings, t0);
+            check(&m, "settings");
+            m.update(Action::Close, t0);
+            m.update(Action::StylePicker, t0);
+            check(&m, "picker");
+            m.update(Action::Close, t0);
+            // Paused, frozen.
+            m.update(Action::PomodoroToggle, t0);
+            m.update(Action::Freeze, t0);
+            m.toast = None;
+            check(&m, "paused, frozen");
+
+            // No player: the message and the chip.
+            let (mut m, t0) = model(cols, rows, 3);
+            m.safe_glyphs = safe;
+            let gone = Status::Unavailable(crate::media::Unavailable::NotRunning);
+            music_track(&mut m, t0, gone, 1, "fake:1");
+            m.update(Action::Place("lyrics"), t0);
+            m.update(Action::Place("cover"), t0);
+            m.update(Action::Resize, t0);
+            check(&m, "no player");
+        }
+        if !safe {
+            for c in "♪♡⇄↻◂▸‖≡".chars() {
+                assert!(seen.contains(c), "the rich set's {c:?} was never drawn");
+            }
+        }
+    }
 }

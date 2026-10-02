@@ -19,12 +19,20 @@ pub struct Synthwave;
 
 /// Horizon height, as a fraction of the canvas from the top.
 const HORIZON: f32 = 0.6;
-/// Floor grid: horizontal line density, and vertical lines across the
-/// bottom row.
-const DEPTH_LINES: f32 = 1.6;
-const FAN_LINES: f32 = 7.0;
-/// Seconds for the floor to scroll one line toward the viewer.
-const SCROLL_SECS: f64 = 6.0;
+/// The floor is a plane seen from above: a row `d` pixels below the
+/// horizon is `NEAR_DEPTH × floor height / d` grid squares away, so the
+/// bottom row is `NEAR_DEPTH` squares out at any size.
+const NEAR_DEPTH: f32 = 2.5;
+/// Fan line spacing, as a fraction of the distance below the horizon
+/// (along the bottom row: of the floor's height).
+const FAN: f32 = 0.7;
+/// Line width, in grid squares; never drawn thinner than a pixel.
+const LINE: f32 = 0.05;
+/// Lines fade out between these spacings (pixels): packed tighter, the
+/// far floor is haze rather than dots and moiré.
+const FADE: (f32, f32) = (1.5, 4.5);
+/// Seconds for the floor to slide one square toward the viewer.
+const SCROLL_SECS: f64 = 4.0;
 
 impl LampStyle for Synthwave {
     const NAME: &'static str = "synthwave";
@@ -49,18 +57,19 @@ fn pixel(c: &Canvas, x: usize, y: usize, scroll: f32) -> Pixel {
         return Pixel::Ink(sun_pixel(c, v, heat, rim, neon));
     }
     if !c.theme.blends() {
-        return match floor_line(c, x, y, scroll) >= 0.5 {
+        return match floor_line(c, x, y, scroll, true) > 0.0 {
             true => Pixel::Ink(c.theme.color(Ink::Role(Role::Accent))),
             false => Pixel::Liquid,
         };
     }
     // Halo: the liquid just outside the wax glows in neon.
     let glow = 0.55 * smoothstep(s.density / SURFACE).powi(3);
-    Pixel::Back(
-        backdrop(c, x, y, v, scroll)
-            .mix(neon, quantise(glow, 10.0))
-            .color(),
-    )
+    let back = backdrop(c, x, y, v, scroll)
+        .mix(neon, quantise(glow, 10.0))
+        .color();
+    // In 256 colours the backdrop takes the dominant index of its dither
+    // pair: the sky's dark tints, dithered, read as dots strewn over it.
+    Pixel::Back(c.theme.dither(back, 0.5))
 }
 
 /// A wax pixel: neon on the rim, else the sun's gradient. Only wax inks,
@@ -77,23 +86,31 @@ fn sun_pixel(c: &Canvas, v: f32, heat: f32, rim: bool, neon: Ink) -> Color {
 /// The sky and floor behind the wax.
 fn backdrop<'t>(c: &'t Canvas, x: usize, y: usize, v: f32, scroll: f32) -> crate::theme::Paint<'t> {
     let paint = c.theme.paint(LIQUID);
-    if v < HORIZON {
-        // Dusk: deepening liquid, warming to pink just above the horizon.
+    let d = y as f32 + 0.5 - horizon(c);
+    if d < 0.0 {
+        // Dusk: deepening liquid, warming to pink toward the horizon.
         let t = v / HORIZON;
         return paint
             .mix(Ink::Role(Role::Bg), quantise(0.6 * (1.0 - t), 16.0))
-            .mix(Ink::Wax(0.0), quantise(0.55 * t.powi(4), 24.0));
+            .mix(Ink::Wax(0.0), quantise(0.6 * t.powi(5), 24.0));
     }
-    // The floor: dark, with a pink haze along the horizon.
-    let near = (v - HORIZON) / (1.0 - HORIZON);
+    // The floor: dark, the row along the horizon glowing pink, then the
+    // grid in the accent colour, brighter toward the viewer.
+    let near = d / (c.height as f32 - horizon(c));
     let floor = paint
         .mix(Ink::Role(Role::Bg), 0.6)
-        .mix(Ink::Wax(0.0), quantise(0.4 * (1.0 - near).powi(6), 24.0));
-    let line = floor_line(c, x, y, scroll);
+        .mix(Ink::Wax(0.0), quantise(0.6 * (-d).exp(), 16.0));
+    let line = floor_line(c, x, y, scroll, false);
     floor.mix(
         Ink::Role(Role::Accent),
-        quantise(line * (0.45 + 0.5 * near), 8.0),
+        quantise(line * (0.5 + 0.5 * near), 16.0),
     )
+}
+
+/// The horizon, in pixels from the top: on a pixel boundary, so it's one
+/// crisp edge.
+fn horizon(c: &Canvas) -> f32 {
+    (HORIZON * c.height as f32).round()
 }
 
 /// Retro-sun gradient: gold at the top of the lamp, pink toward the floor,
@@ -102,32 +119,62 @@ fn sun(v: f32, heat: f32) -> f32 {
     quantise(0.65 * (1.0 - v) + 0.35 * heat, 64.0)
 }
 
-/// How strongly pixel (`x`, `y`) lies on a floor grid line, 0..1. Lines
-/// are one pixel wide, found where the line index changes from the pixel
-/// above / left, and fade out where perspective packs them tighter than a
-/// few pixels apart, so the far floor dissolves into haze instead of moiré.
-fn floor_line(c: &Canvas, x: usize, y: usize, scroll: f32) -> f32 {
-    let h = c.height as f32;
-    let horizon = HORIZON * h;
-    let fy = y as f32 + 0.5;
-    let d = fy - horizon;
-    if d <= 1.0 {
+/// How strongly pixel (`x`, `y`) lies on a floor grid line, 0..1: the
+/// part of the pixel a line covers, so lines slide smoothly across pixels
+/// and slanted ones stay unbroken. Lines are a pixel wide, or [`LINE`] of
+/// a square where that's wider, and fade out where perspective packs them
+/// tighter than [`FADE`], so the far floor dissolves into haze instead of
+/// dots. Nothing is drawn above the horizon. With `binary` (no blending)
+/// a line is on (1) where it covers half the pixel and has barely begun
+/// to fade: lines end cleanly, short of where they'd crowd into stripes.
+fn floor_line(c: &Canvas, x: usize, y: usize, scroll: f32, binary: bool) -> f32 {
+    let horizon = horizon(c);
+    let top = y as f32 - horizon;
+    if top < 0.0 {
         return 0.0;
     }
-    let visible = |spacing: f32| smoothstep((spacing - 1.5) / 2.0);
-    // Depth lines: evenly spaced in 1/distance, so they bunch up toward
-    // the horizon. Pixels between consecutive lines: d² / (k h).
-    let depth = |fy: f32| (DEPTH_LINES * h / (fy - horizon) + scroll).floor();
-    if depth(fy) != depth(fy - 1.0) {
-        return visible(d * d / (DEPTH_LINES * h));
+    let d = top + 0.5;
+    let reach = NEAR_DEPTH * (c.height as f32 - horizon);
+    let fade = |spacing: f32| smoothstep((spacing - FADE.0) / (FADE.1 - FADE.0));
+    let shade = |cover: f32, fade: f32| match binary {
+        true => f32::from(u8::from(cover >= 0.5 && fade >= 0.9)),
+        false => cover.min(1.0) * fade,
+    };
+
+    // Depth lines: at `reach / d + scroll` whole, i.e. `d = reach / (n -
+    // scroll)` for whole `n`: they bunch up toward the horizon and speed
+    // up toward the viewer. Exact coverage of the pixel's rows
+    // `top..top + 1` by each line near it.
+    let spacing = d * d / reach;
+    let mut depth = 0.0;
+    if fade(spacing) > 0.0 {
+        let half = 0.5 * (LINE * spacing).max(1.0);
+        let n0 = (reach / (top + 1.0 + half) + scroll).ceil();
+        let n1 = (reach / (top - half).max(1e-3) + scroll).floor();
+        let mut n = n0;
+        while n <= n1 && n < n0 + 3.0 {
+            if n - scroll > 0.0 {
+                let at = reach / (n - scroll);
+                depth += ((at + half).min(top + 1.0) - (at - half).max(top)).max(0.0);
+            }
+            n += 1.0;
+        }
+        depth = shade(depth, fade(spacing));
     }
-    // Fan lines converge on the vanishing point at the centre of the horizon.
-    let k = (h - horizon) / c.width as f32 * FAN_LINES / d;
-    let fan = |fx: f32| ((fx - c.width as f32 / 2.0) * k).floor();
-    if x > 0 && fan(x as f32 + 0.5) != fan(x as f32 - 0.5) {
-        return visible(1.0 / k);
-    }
-    0.0
+
+    // Fan lines: whole values of the floor's sideways coordinate `q`,
+    // converging on the vanishing point at the centre of the horizon.
+    // Coverage from the distance across the line, in pixels; the spacing
+    // is the nearest line's, so each row of a line fades as one. The
+    // vanishing point sits on a pixel's centre: a crisp middle line.
+    let off = x as f32 - (c.width / 2) as f32;
+    let q = off / (FAN * d);
+    let spacing = d / q.round().hypot(1.0 / FAN);
+    let half = 0.5 * (LINE * spacing).max(1.0);
+    let across = (q - q.round()).abs() * spacing;
+    let fan = shade((half + 0.5 - across).clamp(0.0, 1.0), fade(spacing));
+
+    depth.max(fan)
 }
 
 #[cfg(test)]
@@ -332,6 +379,174 @@ mod tests {
                             assert_eq!(ca.bg, cb.bg, "{cx},{cy} ({} {depth:?})", palette.name);
                         }
                     }
+                }
+            }
+        }
+    }
+
+    /// The grid never breaks into dots: over a second of frames at small,
+    /// big and huge sizes, blended and not, every pixel a line lights
+    /// (half strength or more) has a lit neighbour, and nothing is drawn
+    /// above the horizon.
+    #[test]
+    fn grid_has_no_stray_dots() {
+        for (cols, rows) in [(80u16, 24u16), (160, 45), (250, 70), (40, 12)] {
+            let theme = Theme::new(
+                Palette::by_name("synthwave").unwrap(),
+                ColorDepth::TrueColor,
+            );
+            let (width, height) = (usize::from(cols), 2 * usize::from(rows));
+            let canvas = Canvas {
+                area: Rect::new(0, 0, cols, rows),
+                samples: &[],
+                width,
+                height,
+                theme: &theme,
+                time: 0.0,
+                translucent: false,
+            };
+            for binary in [false, true] {
+                for frame in 0..30 {
+                    let scroll = frame as f32 / 30.0 / SCROLL_SECS as f32;
+                    let line: Vec<f32> = (0..height)
+                        .flat_map(|y| (0..width).map(move |x| (x, y)))
+                        .map(|(x, y)| floor_line(&canvas, x, y, scroll, binary))
+                        .collect();
+                    let at = |x: usize, y: usize| line[y * width + x];
+                    for y in 0..height {
+                        for x in 0..width {
+                            let what = format!("{x},{y} {cols}x{rows} frame {frame} {binary}");
+                            if (y as f32) < horizon(&canvas) {
+                                assert_eq!(at(x, y), 0.0, "above the horizon: {what}");
+                            }
+                            if at(x, y) < 0.5 {
+                                continue;
+                            }
+                            let lit = (y.saturating_sub(1)..(y + 2).min(height))
+                                .flat_map(|ny| {
+                                    (x.saturating_sub(1)..(x + 2).min(width))
+                                        .map(move |nx| (nx, ny))
+                                })
+                                .any(|(nx, ny)| (nx, ny) != (x, y) && at(nx, ny) >= 0.25);
+                            assert!(lit, "stray dot at {what}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Writes consecutive frames as PPM images (one image pixel per
+    /// half-block pixel, as the cells show them) for judging the backdrop
+    /// and its motion by eye: `SYNTHWAVE_FRAMES=<dir> cargo test --release
+    /// -- --ignored dump_frames`. Optional `SYNTHWAVE_DEPTH` (truecolor,
+    /// 256, 16, none), `SYNTHWAVE_TRANSLUCENT=1` and `SYNTHWAVE_START`
+    /// (seconds, default 10).
+    #[test]
+    #[ignore]
+    fn dump_frames() {
+        use crate::render::{LampOptions, LampState, LampView, StyleId};
+        use ratatui::widgets::StatefulWidget;
+        use std::io::Write;
+
+        let Ok(dir) = std::env::var("SYNTHWAVE_FRAMES") else {
+            return;
+        };
+        let depth = match std::env::var("SYNTHWAVE_DEPTH").as_deref() {
+            Ok("256") => ColorDepth::Ansi256,
+            Ok("16") => ColorDepth::Ansi16,
+            Ok("none") => ColorDepth::None,
+            _ => ColorDepth::TrueColor,
+        };
+        let translucent = std::env::var("SYNTHWAVE_TRANSLUCENT").is_ok();
+        let start: f64 = std::env::var("SYNTHWAVE_START").map_or(10.0, |s| s.parse().unwrap());
+        let rgb = |c: Color, fallback: [u8; 3]| -> [u8; 3] {
+            const SYSTEM: [u32; 16] = [
+                0x000000, 0xcd0000, 0x00cd00, 0xcdcd00, 0x0000ee, 0xcd00cd, 0x00cdcd, 0xe5e5e5,
+                0x7f7f7f, 0xff0000, 0x00ff00, 0xffff00, 0x5c5cff, 0xff00ff, 0x00ffff, 0xffffff,
+            ];
+            let hex = |h: u32| [(h >> 16) as u8, (h >> 8) as u8, h as u8];
+            let index = |i: u8| match i {
+                0..=15 => hex(SYSTEM[usize::from(i)]),
+                16..=231 => {
+                    let i = i - 16;
+                    let v = |k: u8| if k == 0 { 0 } else { 55 + 40 * k };
+                    [v(i / 36), v(i / 6 % 6), v(i % 6)]
+                }
+                _ => [8 + 10 * (i - 232); 3],
+            };
+            match c {
+                Color::Rgb(r, g, b) => [r, g, b],
+                Color::Indexed(i) => index(i),
+                Color::Reset => fallback,
+                Color::Black => index(0),
+                Color::Red => index(1),
+                Color::Green => index(2),
+                Color::Yellow => index(3),
+                Color::Blue => index(4),
+                Color::Magenta => index(5),
+                Color::Cyan => index(6),
+                Color::Gray => index(7),
+                Color::DarkGray => index(8),
+                Color::LightRed => index(9),
+                Color::LightGreen => index(10),
+                Color::LightYellow => index(11),
+                Color::LightBlue => index(12),
+                Color::LightMagenta => index(13),
+                Color::LightCyan => index(14),
+                Color::White => index(15),
+            }
+        };
+        let style = StyleId::by_name("synthwave").unwrap().style();
+        for (cols, rows) in [(80u16, 24u16), (160, 45), (250, 70)] {
+            for name in ["synthwave", "lava"] {
+                let theme = Theme::new(Palette::by_name(name).unwrap(), depth);
+                let mut world = World::new(7, f64::from(cols) / (2.0 * f64::from(rows)));
+                world.prewarm(1200, 1.0 / 120.0);
+                let mut field = Field::default();
+                let mut state = LampState::default();
+                let area = Rect::new(0, 0, cols, rows);
+                for frame in 0..30 {
+                    for _ in 0..4 {
+                        world.step(1.0 / 120.0);
+                    }
+                    field.prepare(&world, 1.0);
+                    let mut buf = Buffer::empty(area);
+                    LampView {
+                        field: &field,
+                        style,
+                        theme: &theme,
+                        time: start + f64::from(frame) / 30.0,
+                        options: LampOptions {
+                            reduced: false,
+                            translucent,
+                        },
+                    }
+                    .render(area, &mut buf, &mut state);
+                    let (w, h) = (usize::from(cols), 2 * usize::from(rows));
+                    let mut img = format!("P6 {w} {h} 255\n").into_bytes();
+                    let mut px = vec![[0u8; 3]; w * h];
+                    for cy in 0..usize::from(rows) {
+                        for cx in 0..w {
+                            let cell = &buf[(cx as u16, cy as u16)];
+                            let fg = rgb(cell.fg, [220, 220, 220]);
+                            let bg = rgb(cell.bg, [0, 0, 0]);
+                            let (top, bottom) = match cell.symbol() {
+                                "▀" => (fg, bg),
+                                "▄" => (bg, fg),
+                                "█" => (fg, fg),
+                                _ => (bg, bg),
+                            };
+                            px[2 * cy * w + cx] = top;
+                            px[(2 * cy + 1) * w + cx] = bottom;
+                        }
+                    }
+                    img.extend(px.iter().flatten());
+                    let path = format!("{dir}/{name}_{cols}x{rows}_{frame:02}.ppm");
+                    std::fs::File::create(path)
+                        .unwrap()
+                        .write_all(&img)
+                        .unwrap();
                 }
             }
         }
