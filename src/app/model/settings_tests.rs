@@ -320,5 +320,5 @@ fn spotify_eligibility_and_refusal_fit_whole() {
         let words = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
         assert_eq!(words(&wrap_sentences(text, 56, 3).join(" ")), words(text));
     }
-    assert!(ELIGIBILITY.contains("Premium") && ELIGIBILITY.contains("5 people"));
+    assert!(ELIGIBILITY.contains("Premium") && ELIGIBILITY.contains("At most 5 accounts"));
 }

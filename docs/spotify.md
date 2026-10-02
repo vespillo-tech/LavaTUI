@@ -14,7 +14,7 @@ below):
   Client ID (PKCE: no Client Secret).
 - **The app's owner needs an active Spotify Premium subscription**, or
   the app stops working for everyone.
-- The app works for the owner and **up to 5 more users**, each added by
+- At most **5 users in total, the owner included**, each added by
   email under *User Management*. Anyone else can complete the login, but
   every API request then returns 403; the app shows "Spotify refused this
   account" and the setup page says what to fix.

@@ -113,9 +113,8 @@ const SPOTIFY_INTRO: &str = "Play, pause, skip, covers and lyrics work with no s
 
 /// Who can use the library (Spotify's development-mode rules, checked
 /// 2026-10-01: developer.spotify.com/documentation/web-api/concepts/quota-modes).
-pub(super) const ELIGIBILITY: &str = "The account that makes the Spotify app needs Premium. It works \
-    for that account and up to 5 people added under User Management; Spotify refuses anyone \
-    else.";
+pub(super) const ELIGIBILITY: &str = "The account that makes the Spotify app needs Premium. At most 5 \
+    accounts can use it, the owner included, each added under User Management.";
 
 /// What to do when Spotify refuses a logged-in account (lava-1xk.26).
 pub(super) const REFUSED: &str = "Spotify refused this account: the app's owner needs \

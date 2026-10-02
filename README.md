@@ -416,8 +416,8 @@ setup, and Spotify only allows it for some accounts. Check these first
 - **The Spotify account that makes the developer app needs Premium.** If
   that Premium ends, the library stops working for everyone who uses the
   app.
-- **The app works for its owner and up to 5 other people.** The owner
-  adds each one by email under *User Management* in the app's settings.
+- **At most 5 Spotify accounts can use the app, including its owner.**
+  The owner adds each one by email under *User Management* in the app's settings.
   Sharing your Client ID with a friend only works once they're on that
   list.
 - **Shuffle, repeat and playing playlists through Spotify** also need
