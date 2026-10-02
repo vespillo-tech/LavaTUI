@@ -6,6 +6,7 @@ mod cli;
 mod clock;
 mod config;
 mod dock;
+mod glyphs;
 mod graphics;
 mod lyrics;
 // Partly used so far: the music widget (lava-75z.2) reads it; play_uri&co are

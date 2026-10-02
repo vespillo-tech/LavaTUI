@@ -89,6 +89,8 @@ impl<R: Runner> Backend for Spotify<R> {
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             volume: true,
+            uris: true,
+            contexts: true,
             ..Capabilities::NONE
         }
     }
@@ -330,6 +332,7 @@ pub fn parse(out: &str, now: Instant, known: Option<&Arc<Track>>) -> Snapshot {
         },
         12.. => Some(Arc::new(Track {
             id: fields[6].to_owned(),
+            uri: super::spotify_track_uri(fields[6]),
             duration: millis(fields[7].trim().parse().unwrap_or(0)),
             artwork_url: fields[8].to_owned(),
             artist: fields[9].to_owned(),

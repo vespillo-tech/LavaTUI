@@ -82,29 +82,29 @@
  spotify set…  esc back
 
   ▸ status  not set up
+    before you start
     1  make a spotify…
     2  add this address
     3  paste the clien…
-    4  connect
 
 
 ── spotify setup, a bad client id ──
  spotify set…  esc back
 
     status  not set up
+    before you start
     1  make a spotify…
     2  add this address
   ▸ 3  paste the clien…
-    4  connect
 
  ‹ my-client-secret▏ ›
 ── spotify setup, connected ──
  spotify set…  esc back
 
   ▸ status   connected
+    before you start
     1  make a spotify…
     2  add this address
     3  paste the clien…
-    4  connect
 
 

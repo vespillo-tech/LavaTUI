@@ -301,6 +301,9 @@ pub struct PlayerState {
     pub device: Option<String>,
     /// URI of what's playing, if anything.
     pub item_uri: Option<String>,
+    /// Its name: how a player that names no URI (Windows) is matched to
+    /// it.
+    pub item_name: Option<String>,
     /// URI of the playlist / album it plays in, if any.
     pub context_uri: Option<String>,
     /// Spotify won't toggle shuffle here (`actions.disallows`: a lone
@@ -333,6 +336,8 @@ struct RawActions {
 #[derive(Debug, Deserialize)]
 struct RawUri {
     uri: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
 }
 
 impl From<RawPlayer> for PlayerState {
@@ -346,6 +351,7 @@ impl From<RawPlayer> for PlayerState {
             repeat: Repeat::parse(&p.repeat_state),
             is_playing: p.is_playing,
             device: p.device.map(|d| d.name).filter(|n| !n.is_empty()),
+            item_name: p.item.as_ref().and_then(|i| i.name.clone()),
             item_uri: p.item.and_then(|i| i.uri),
             context_uri: p.context.and_then(|c| c.uri),
         }

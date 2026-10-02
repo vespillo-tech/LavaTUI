@@ -89,7 +89,8 @@ pub struct WebPlayer {
     /// The refusal was about scopes: logging in again fixes it.
     pub needs_login: bool,
     asked_at: Option<Instant>,
-    /// The track playing when the state was last asked for.
+    /// The desktop player's track (its own id) when the state was last
+    /// asked for.
     asked_for: Option<String>,
     in_flight: bool,
 }
@@ -138,6 +139,10 @@ pub struct Library {
     pub login_error: Option<String>,
     pub me: Option<User>,
     me_asked: bool,
+    /// Spotify refused the logged-in account (not on the app's allowlist,
+    /// or the app's owner has no Premium): its message. Not asked again
+    /// until the next login.
+    pub refused: Option<String>,
     pub playlists: Listing<Playlist>,
     pub open: Option<OpenPlaylist>,
     /// The playing track's URI and whether it's liked.
@@ -186,6 +191,7 @@ impl Library {
             login_error: None,
             me: None,
             me_asked: false,
+            refused: None,
             playlists: Listing::default(),
             open: None,
             liked: None,
@@ -262,6 +268,7 @@ impl Library {
         self.wants.clear();
         self.me = None;
         self.me_asked = false;
+        self.refused = None;
         self.playlists = Listing::default();
         self.open = None;
         self.liked = None;
@@ -326,9 +333,17 @@ impl Library {
     }
 
     /// Once a frame: connect while `on`, drain the worker's events, and ask
-    /// for what the widget needs (who I am, whether `track` is liked, the
-    /// player's shuffle / repeat). Returns toasts to show (the last wins).
-    pub fn sync(&mut self, on: bool, now: Instant, track: Option<&str>) -> Vec<String> {
+    /// for what the widget needs (who I am, whether `uri`, the playing
+    /// Spotify track, is liked, the player's state again when `track`, the
+    /// desktop player's own id for it, changes). Returns toasts to show
+    /// (the last wins).
+    pub fn sync(
+        &mut self,
+        on: bool,
+        now: Instant,
+        track: Option<&str>,
+        uri: Option<&str>,
+    ) -> Vec<String> {
         if !on {
             if self.web.is_some() {
                 self.disconnect();
@@ -354,8 +369,7 @@ impl Library {
             self.me_asked = true;
             self.request(Request::Me, Want::Me);
         }
-        let track = track.filter(|t| t.starts_with("spotify:track:"));
-        if let Some(uri) = track
+        if let Some(uri) = uri
             && self.liked_asked.as_deref() != Some(uri)
         {
             self.liked_asked = Some(uri.to_owned());
@@ -423,6 +437,14 @@ impl Library {
         }
         match (want, result) {
             (Want::Me, Ok(Reply::User(me))) => self.me = Some(me),
+            // Every request would be refused: say so once, and how to fix
+            // it, rather than asking again and again.
+            (Want::Me, Err(Error::Forbidden(why))) => {
+                self.refused = Some(why);
+                return Some(
+                    "Spotify refused this account · settings (,) › spotify says why".into(),
+                );
+            }
             (Want::Me, _) => self.me_asked = false,
             (Want::Playlists, Ok(Reply::Playlists(lists))) => {
                 self.playlists = Listing {
@@ -520,6 +542,16 @@ impl Library {
     }
 }
 
+/// Two names for the same track: the same words, case aside.
+fn same_name(a: &str, b: &str) -> bool {
+    let words = |s: &str| {
+        s.split_whitespace()
+            .map(str::to_lowercase)
+            .collect::<Vec<_>>()
+    };
+    !a.trim().is_empty() && words(a) == words(b)
+}
+
 /// A 403 about the account (no Premium, a login without the playback
 /// scopes) rather than the moment ("Restriction violated").
 fn refuses_account(why: &str) -> bool {
@@ -599,10 +631,12 @@ impl Model {
             .as_ref()
             .and_then(|s| s.track.as_ref())
             .map(|t| t.id.clone());
+        let uri = self.playing_uri();
         let toasts = self.library.sync(
             self.music_on() || self.spotify_setup_open(),
             self.now,
             track.as_deref(),
+            uri.as_deref(),
         );
         if let Some(last) = toasts.into_iter().last() {
             self.toast(last);
@@ -621,14 +655,15 @@ impl Model {
     }
 
     /// Shuffle / repeat from the Web API, where the desktop app's own
-    /// controls can't change them.
+    /// controls can't change them, and only while the Web API's player is
+    /// the one shown (lava-1xk.27): another player keeps its own modes.
     pub(super) fn patch_modes(&mut self) {
-        let state = self.library.modes();
+        let state = self.web_modes();
         let modes = state.map(|p| (p.shuffle, p.repeat != Repeat::Off));
         self.music.web_caps = state.map_or(Capabilities::NONE, |p| Capabilities {
             shuffle: !p.shuffle_blocked,
             repeat: !p.repeat_blocked,
-            volume: false,
+            ..Capabilities::NONE
         });
         if let (Some((shuffle, repeat)), Some(snap)) = (modes, &mut self.music.snapshot) {
             snap.shuffle = shuffle;
@@ -636,14 +671,50 @@ impl Model {
         }
     }
 
-    /// The playing track's URI, if it's a Spotify track.
-    fn playing_uri(&self) -> Option<String> {
+    /// The Web API's player state when it is about what the music widget
+    /// shows (lava-1xk.24, lava-1xk.27): the same Spotify track by URI,
+    /// or, for a player that names no URI (Windows' media controls), the
+    /// Spotify app playing a track of the same name. Another player, or
+    /// Spotify playing something else on another device, is not it.
+    fn web_player(&self) -> Option<&PlayerState> {
+        if !self.library.logged_in() {
+            return None;
+        }
+        let state = self.library.player.state.as_ref()?;
         let snap = self.music.snapshot.as_ref()?;
         let track = snap.track.as_ref()?;
-        track
-            .id
-            .starts_with("spotify:track:")
-            .then(|| track.id.clone())
+        let item = state.item_uri.as_deref()?;
+        let same = match &track.uri {
+            Some(uri) => uri == item,
+            None => {
+                snap.is_spotify()
+                    && state
+                        .item_name
+                        .as_deref()
+                        .is_some_and(|name| same_name(name, &track.name))
+            }
+        };
+        same.then_some(state)
+    }
+
+    /// [`Self::web_player`] when shuffle / repeat can go through it
+    /// (Spotify said yes to this account).
+    pub(super) fn web_modes(&self) -> Option<&PlayerState> {
+        self.library.modes()?;
+        self.web_player()
+    }
+
+    /// The playing track's Spotify URI: what the player says, else (on
+    /// Windows) what the Web API's matching player says. `None` for local
+    /// files, ads, episodes and other players: like and add-to-playlist
+    /// say there's nothing to act on.
+    pub(super) fn playing_uri(&self) -> Option<String> {
+        let track = self.music.snapshot.as_ref()?.track.as_ref()?;
+        if let Some(uri) = &track.uri {
+            return Some(uri.clone());
+        }
+        let item = self.web_player()?.item_uri.as_deref()?;
+        item.starts_with("spotify:track:").then(|| item.to_owned())
     }
 
     /// Whether the playing track is liked (for the heart), once known.
@@ -651,8 +722,13 @@ impl Model {
         self.library.liked(&self.playing_uri()?)
     }
 
-    /// A library key with no Client ID (or music off) says why.
+    /// A library key with no Client ID (or music off) says why; one that
+    /// Spotify refused opens the setup, which says how to fix it.
     fn library_ready(&mut self) -> bool {
+        if self.library.refused.is_some() {
+            self.open_settings_at(super::settings_screen::Page::Spotify, true);
+            return false;
+        }
         if self.library.account() == Account::Unavailable {
             if !self.music_on() {
                 self.toast("music is off · a to show it");
@@ -720,7 +796,8 @@ impl Model {
             Request::Unlike { uris }
         };
         self.library.request(request, Want::Like { uri, on });
-        self.toast(if on { "♥ liked" } else { "♡ unliked" });
+        let g = self.glyphs();
+        self.toast(if on { g.liked_toast } else { g.unliked_toast });
     }
 
     fn logged_in_or_say(&mut self) -> bool {
@@ -840,6 +917,9 @@ impl Model {
             Account::Unavailable => return "no Spotify Client ID".into(),
             Account::LoggedOut => return "not logged in · Enter to log in".into(),
             Account::LoggingIn => return "finish logging in in your browser…".into(),
+            Account::LoggedIn if lib.refused.is_some() => {
+                return "Spotify refused this account · settings (,) › spotify says why".into();
+            }
             Account::LoggedIn => {}
         }
         if self.hits(kind).is_some() && self.list_total(kind) > 0 {
@@ -1101,8 +1181,9 @@ impl Model {
 
     /// Play `context` (a playlist) from `track` in it: through the Web
     /// API's player when it's there (Premium), else the desktop app
-    /// (lava-75z.18: on macOS it plays the track in its playlist too; the
-    /// other players play the track alone).
+    /// (lava-75z.18: on macOS it plays the track in its playlist too, on
+    /// Linux the track alone; Windows' media controls can't be told what
+    /// to play, lava-1xk.25).
     fn play_context(&mut self, context: &str, track: Option<&str>, name: &str) {
         let playing = Playing {
             context: context.to_owned(),
@@ -1121,14 +1202,34 @@ impl Model {
         self.play_here(&playing);
     }
 
-    /// The desktop app plays it.
+    /// The desktop app plays it, or the toast says truthfully why not.
     fn play_here(&mut self, playing: &Playing) {
         let now = self.now;
+        let caps = self.music.source_capabilities();
+        let available = self
+            .music
+            .snapshot
+            .as_ref()
+            .is_some_and(|s| s.status.is_available());
+        if available && !caps.uris {
+            let player = &self.library.player;
+            self.toast(if player.needs_login {
+                "log in to Spotify again to play from here (i twice, then i)"
+            } else if player.allowed == Some(false) {
+                "playing from here needs Spotify Premium"
+            } else {
+                "press play in Spotify first, then pick it again"
+            });
+            return;
+        }
         let played = match &playing.track {
             Some(track) => self.music.play_in_context(track, &playing.context, now),
             None => self.music.play_uri(&playing.context, now),
         };
         match played {
+            Ok(()) if playing.track.is_some() && !caps.contexts => {
+                self.toast(format!("playing {} · just this song", playing.name))
+            }
             Ok(()) => self.toast(format!("playing {}", playing.name)),
             Err(why) => self.toast(why),
         }

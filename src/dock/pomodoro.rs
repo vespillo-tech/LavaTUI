@@ -71,8 +71,10 @@ impl DockWidget for Pomodoro {
             width: w,
             ..area
         };
+        let g = model.glyphs();
         PomodoroWidget::new(&model.pomodoro, model.now)
             .style(pomodoro_style(model))
+            .marks(g.running, g.paused)
             .render(rect, buf);
     }
 
@@ -88,10 +90,11 @@ impl DockWidget for Pomodoro {
     /// `▸ 24:58` (focus), `▸ break 4:58`, `‖` when paused; nothing idle.
     fn chip(&self, model: &Model) -> Option<ChipText> {
         let p = &model.pomodoro;
+        let g = model.glyphs();
         let (glyph, ink) = match p.status() {
-            Status::Running if p.phase().is_break() => ('▸', Role::WaxHot),
-            Status::Running => ('▸', Role::Accent),
-            Status::Paused => ('‖', Role::Text),
+            Status::Running if p.phase().is_break() => (g.running, Role::WaxHot),
+            Status::Running => (g.running, Role::Accent),
+            Status::Paused => (g.paused, Role::Text),
             Status::Idle => return None,
         };
         let remaining = format_remaining(p.remaining(model.now));

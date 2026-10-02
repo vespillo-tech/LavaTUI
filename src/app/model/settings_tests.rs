@@ -309,3 +309,16 @@ fn pasting_elsewhere_does_nothing() {
     assert!(m.settings_screen.field.is_empty());
     assert!(!m.settings_screen.editing);
 }
+
+/// Who can use the Spotify library, and what to do when Spotify says no,
+/// read in full in the help lines (lava-1xk.26): nothing is cut at 80×24.
+#[test]
+fn spotify_eligibility_and_refusal_fit_whole() {
+    use super::settings_screen::{ELIGIBILITY, REFUSED};
+    use crate::ui::settings::wrap_sentences;
+    for text in [ELIGIBILITY, REFUSED] {
+        let words = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert_eq!(words(&wrap_sentences(text, 56, 3).join(" ")), words(text));
+    }
+    assert!(ELIGIBILITY.contains("Premium") && ELIGIBILITY.contains("5 people"));
+}

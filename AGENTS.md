@@ -246,6 +246,12 @@ numbers); `docs/design.md` is the layout/visual contract.
                 `background-opacity` < 1 + `background-opacity-cells`;
                 reads its config files and `config-file` includes once at
                 start; `Model::translucent_cells` → `LampOptions.translucent`).
+                Also `safe_glyphs` (Ghostex / zmx hosts, `LAVATUI_GLYPHS=
+                safe|rich`).
+- `glyphs.rs` — every symbol beyond ASCII / Latin-1 / `▶ … ━ ─` / blocks
+                that widgets and chrome draw (`♪ ♥ ♡ ⇄ ↻ ◂◂ ▸▸ ‖ ≡`,
+                list pointer, pomodoro marks), as `RICH` and `SAFE`;
+                `Model::glyphs()` picks one. New symbols go here.
 - `timing.rs` — pure loop timing: `FixedStep` (accumulator, no per-frame
                 cap: sim time tracks real time × speed at any fps; only a
                 > 1.5 s `STALL` is cut short; `alpha()` for interpolation),
