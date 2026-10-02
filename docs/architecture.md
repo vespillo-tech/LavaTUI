@@ -90,8 +90,11 @@ sent once when the cover appears, moves or changes size. LavaTUI asks the
 terminal once at start whether it really supports what its environment
 promises, and draws the cover in text cells until it says yes. Inside
 tmux, screen, zellij or Ghostex it doesn't try. Elsewhere covers are text
-cells: sextants (2×3 pixels a cell), quadrants (2×2) or half blocks
-(1×2), with the best two colours per cell. `LAVATUI_GRAPHICS` overrides
+cells: sextants (2×3 pixels a cell) or quadrants (2×2), with the best
+two colours per cell. The `pixelated` and `chunky` cover quality is pixel
+art (about 16 and 8 flat squares across): a small PNG made with the sharp
+copy on the art worker where pictures are shown, else square blocks of
+whole and half cells. `LAVATUI_GRAPHICS` overrides
 the choice. `tools/kitty_check.py` and `tools/inline_check.py` show the
 exact bytes sent.
 

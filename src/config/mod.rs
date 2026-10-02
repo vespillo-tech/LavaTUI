@@ -769,7 +769,7 @@ mod tests {
         let p = Settings::parse("[art]\ndetail = \"pixels\"\nsize = \"fill\"\n").unwrap();
         assert_eq!(
             (p.settings.art.detail, p.settings.art.size),
-            (Detail::Pixels, CoverSize::Fill)
+            (Detail::Sharp, CoverSize::Fill)
         );
         assert!(p.ignored.is_empty() && p.unknown.is_empty());
         let p = Settings::parse("[art]\ndetail = \"sixel\"\nsize = \"small\"\n").unwrap();

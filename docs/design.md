@@ -624,7 +624,7 @@ Inset by the side margin (§1.3) on each side.
   immediately; toasts never stack.
 * Plain words, no implementation terms: `beside the lamp` / `on the
   lamp` (not side panel / lava), `timer` (not pomodoro), `enlarge to see`
-  (not no room), `cover quality · auto · medium`.
+  (not no room), `cover quality · auto · sharp`.
 * **The guide line** shares the row: while a mode owns the keys and must
   say so (§4.8), its line sits there whenever no toast does.
 
@@ -1129,32 +1129,45 @@ out.
 
 **Detail** (`art.detail`, `O` cycles it). On screen (toasts, settings)
 it's the **cover quality**, named by how fine the picture is: `auto`,
-`photo` (pixels), `fine` (sextant), `medium` (quadrant), `coarse`
-(halfblock); the config keeps the technical values and also accepts
-these names. The toast says what it comes to here, e.g. `cover quality ·
-auto · medium`, `cover quality · fine · medium` where sextants can't be
-drawn:
+`sharp`, `pixelated`, `chunky`. Each is its own look in every terminal
+(lava-bq0: the old `photo` / `fine` / `medium` / `coarse` were the same
+photo in a terminal with pictures, and the same one colour a cell where
+cell backgrounds are see-through). The toast says what it comes to
+here, e.g. `cover quality · auto · sharp`:
 
-| detail | looks | needs |
+| detail | with pictures | in text cells (256 colours+) |
 |---|---|---|
-| `pixels` | the real picture, at the terminal's resolution | a pixel protocol: kitty graphics with Unicode placeholders (kitty, Ghostty), iTerm2 inline images (iTerm2, WezTerm, mintty, Rio) or sixel (foot, mlterm, Konsole ≥ 22.04, Contour); any colour depth but none |
-| `sextant` | 2 × 3 pixels a cell, two colours each (U+1FB00..1FB3B) | 256 colours+, a terminal that draws Unicode 13 sextants |
-| `quadrant` | 2 × 2 pixels a cell (`▘▝▀▖▌▞▛▗▚▐▜▄▙▟█`) | 256 colours+ |
-| `halfblock` | 1 × 2 pixels a cell (`▀`, exact colours) | 256 colours+ |
-| `auto` (default) | pixels where the terminal has a protocol (kitty first, then iTerm2, then sixel); else sextants in WezTerm, foot, Windows Terminal, kitty / Ghostty; else quadrants | |
+| `sharp` | the real picture, at the terminal's resolution | the finest text: sextants (2 × 3 pixels a cell, two colours each, U+1FB00..1FB3B) where the terminal draws them, else quadrants (2 × 2, `▘▝▀▖▌▞▛▗▚▐▜▄▙▟█`) |
+| `pixelated` | pixel art: 16 × 16 flat squares | flat square blocks, about 16 across: k columns × k half rows (`▀`, exact colours), k whole |
+| `chunky` | pixel art: 8 × 8 flat squares | the same, about 8 across, always bigger blocks than `pixelated` |
+| `auto` (default) | `sharp` | `sharp` |
 
-Sextants (`fine`, and the pixel fallback) are used only in terminals
+Pictures need a pixel protocol: kitty graphics with Unicode placeholders
+(kitty, Ghostty), iTerm2 inline images (iTerm2, WezTerm, mintty, Rio) or
+sixel (foot, mlterm, Konsole ≥ 22.04, Contour); any colour depth but
+none. Pixel art is made with the sharp copy, on the art worker
+(`Art::pixel_art`, each block a box-filtered mean, drawn ~400 px square
+so the terminal's scaling keeps edges crisp; sixel scales it nearest).
+In text cells a block is `round(cols / n)` columns wide, so blocks are
+all one size, and where cell backgrounds are see-through (`translucent`) the side
+is even: whole cells, one colour each. The config keeps the names above;
+older ones load as the nearest look: `pixels` / `photo` / `sextant` /
+`fine` → `sharp`, `quadrant` / `medium` → `pixelated`, `halfblock` /
+`coarse` → `chunky`.
+
+Sextants (`sharp` in text) are used only in terminals
 known to draw them, and **never through a multiplexer** (tmux, screen,
 zellij, zmx) or with any `GHOSTEX_*` variable set, whatever
 `TERM_PROGRAM` was inherited: Ghostex's built-in terminal draws them as
-`?`. There `fine` draws `medium`. A test writes real frames through the
+`?`. There `sharp` draws quadrants. A test writes real frames through the
 crossterm backend under a Ghostex environment and finds no U+1FB00–1FB3B
 and no U+10EEEE.
 
 Quadrants and sextants try every split of the cell's pixels into two
 groups (8 / 32) and keep the one whose two means lose least: one the
 glyph's ink, the other its background. The cells are worked out once per
-track, size, detail and depth and kept. Without a way to show a picture
+track, size, detail and depth and kept (pictures: once per track, size
+and detail sent). Without a way to show a picture
 (16 colours without pixels, `NO_COLOR`) the widget is one calm line
 (wrapped like music's), `♪ covers need 256 colours`; with no track,
 `♪ nothing playing`; with no cover, `♪ no cover`.
@@ -1163,8 +1176,8 @@ track, size, detail and depth and kept. Without a way to show a picture
 (`TERM` `xterm-kitty` / `xterm-ghostty`, `TERM_PROGRAM` `ghostty` /
 `kitty`, `KITTY_WINDOW_ID`, `GHOSTTY_RESOURCES_DIR`; never inside tmux or
 screen, and not WezTerm or Konsole, which lack Unicode placeholders), so
-there's no blocking terminal query. `art.detail = "pixels"` where none
-was found (or confirmed) is the best text cells, never a guess.
+there's no blocking terminal query. Where none was found (or confirmed)
+every detail is drawn in text cells, never a guess.
 
 **Verified before use** (lava-1xk.18). The environment can lie:
 Ghostex's built-in terminal sets `TERM_PROGRAM=ghostty` but runs sessions
@@ -1183,7 +1196,7 @@ strings over. Kitty: `OK` → pixels; an error, the fence first, or nothing
 within 1.5 s → no. iTerm2 / sixel: a name not known to speak the
 protocol → no; no name → the environment is believed. Until then the
 cover is drawn in text cells; a no, while a cover is shown in `auto` /
-`pixels`, toasts `no photo in this terminal · cover quality fine`. The cover is sent as a PNG (`a=T,U=1,f=100,q=2`) with
+`sharp`, toasts `no photos in this terminal · covers drawn in text`. The cover is sent as a PNG (`a=T,U=1,f=100,q=2`) with
 a *virtual* placement of exactly the cover's cells (`c`, `r`), in 4096-byte
 base64 chunks, at most 96 KB a frame, after the frame's cells and inside
 its synchronized update; meanwhile the best text cells show. From the
@@ -1722,9 +1735,9 @@ than jumping.
    `esc close`. No title case, no exclamation marks, no emoji.
 8. **Plain Unicode only.** Block elements, box drawing, braille and
    geometric shapes that ship in every common monospace font. No Nerd
-   Font glyphs required. (The one exception is opt-in: the cover's
-   `sextant` detail, Unicode 13, which `auto` picks only in terminals
-   that draw sextants themselves.)
+   Font glyphs required. (The one exception: a `sharp` cover in text
+   cells uses sextants, Unicode 13, only in terminals that draw them
+   themselves.)
 9. **Colour degrades, structure doesn't.** Every screen reads correctly
    in 16 colours and in NO_COLOR.
 10. **Two text weights:** normal and `dim`. Bold appears only in the
@@ -1782,7 +1795,7 @@ cover = "off"
 anchor = { clock = "center", pomodoro = "center", music = "top-left", lyrics = "bottom", cover = "top-right" }
 
 [art]
-detail = "auto"          # auto | pixels | sextant | quadrant | halfblock (§4.6 Cover; also photo | fine | medium | coarse)
+detail = "auto"          # auto | sharp | pixelated | chunky (§4.6 Cover; older names load, see there)
 size = "medium"          # small | medium | large | fill
 inline = true            # the music card's small cover, while the cover widget is off
 

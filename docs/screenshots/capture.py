@@ -26,10 +26,12 @@ The live sets below read the real player instead:
 `live` (the now-playing widget, beside the lamp and on the lava) and
 `lyrics` (the lyrics widget at three sizes, on the lava over several
 styles and in the side panel; it looks the playing track up on
-lrclib.net) and `cover` (the cover widget in each text-cell detail, beside
-the lamp and on the lava) are never part of "all": they show whatever
-Spotify is playing, so they're for checking the widgets, not for
-committing. They land in $LAVATUI_SHOT_OUT (default: the temp dir).
+lrclib.net) are never part of "all": they show whatever Spotify is
+playing, so they're for checking the widgets, not for committing. They
+land in $LAVATUI_SHOT_OUT (default: the temp dir). `cover` (the cover
+widget in each cover quality, beside the lamp and on the lava, with
+opaque and see-through cell backgrounds, plus `cover-qualities.png`
+side by side) uses `--demo` covers and lands there too.
 
 pyte can't show kitty graphics, so the terminal's own variables that would
 make `art.detail = "auto"` pick pixels (Ghostty's, kitty's) are dropped:
@@ -334,21 +336,24 @@ LYRICS["lyrics-with-music-200x50"] = Shot(
     200, 50, '[lamp];style="topo";[theme];palette="abyss";[dock];music="overlay";lyrics="overlay"', frames=600
 )
 COVER = {
-    f"cover-{place}-{detail}": Shot(
+    f"cover-{place}-{detail}{cells}": Shot(
         120, 36,
-        f'[lamp];style="{style}";[theme];palette="{pal}";[dock];music="{place}";cover="{place}";[art];detail="{detail}"',
-        frames=420,
+        f'[lamp];style="{style}";[theme];palette="{pal}";[dock];music="{place}";cover="{place}";'
+        f'[art];detail="{detail}";size="large";[display];cells="{cells or "opaque"}"',
+        args="--seed 2 --demo", frames=420,
     )
-    for detail in ["sextant", "quadrant", "halfblock"]
+    for detail in ["sharp", "pixelated", "chunky"]
     for (place, style, pal) in [("side", "solid", "lava"), ("overlay", "braille", "abyss")]
+    # "-translucent": as Ghostty draws see-through cell backgrounds.
+    for cells in ["", "translucent"]
 }
 COVER |= {
-    "cover-fill-200x50": Shot(200, 50, '[lamp];style="solid";[dock];cover="side";[art];size="fill";detail="sextant"', frames=420),
-    "cover-small-80x24": Shot(80, 24, '[lamp];style="solid";[dock];cover="overlay";[art];size="small"', frames=420),
-    "cover-inline-120x36": Shot(120, 36, '[lamp];style="solid";[dock];music="side";[art];detail="quadrant"', frames=420),
-    "cover-256-120x36": Shot(120, 36, '[lamp];style="solid";[dock];cover="side";[art];detail="sextant"', args="--seed 2 --color 256", frames=420),
-    "cover-16-80x24": Shot(80, 24, '[lamp];style="ascii";[dock];cover="side"', args="--seed 2 --color 16", frames=420),
-    "cover-tiny-30x10": Shot(30, 10, '[lamp];style="solid";[dock];cover="overlay"', frames=420),
+    "cover-fill-200x50": Shot(200, 50, '[lamp];style="solid";[dock];cover="side";[art];size="fill";detail="sharp"', args="--seed 2 --demo", frames=420),
+    "cover-small-80x24": Shot(80, 24, '[lamp];style="solid";[dock];cover="overlay";[art];size="small"', args="--seed 2 --demo", frames=420),
+    "cover-inline-120x36": Shot(120, 36, '[lamp];style="solid";[dock];music="side";[art];detail="pixelated"', args="--seed 2 --demo", frames=420),
+    "cover-256-120x36": Shot(120, 36, '[lamp];style="solid";[dock];cover="side";[art];detail="chunky"', args="--seed 2 --demo --color 256", frames=420),
+    "cover-16-80x24": Shot(80, 24, '[lamp];style="ascii";[dock];cover="side"', args="--seed 2 --demo --color 16", frames=420),
+    "cover-tiny-30x10": Shot(30, 10, '[lamp];style="solid";[dock];cover="overlay"', args="--seed 2 --demo", frames=420),
 }
 # (`\\x2c` is `,`: the key list is comma-separated.)
 # Every page of the settings screen at two sizes (`capture.py
@@ -417,6 +422,12 @@ def main(names):
             print(out, os.path.getsize(out))
     if "styles" in want:
         montage(os.path.join(HERE, "styles.png"), 5, [(s, f"{tmp}/style-{s}.png") for s in STYLES])
+    if "cover" in want:
+        live = os.environ.get("LAVATUI_SHOT_OUT", tempfile.gettempdir())
+        montage(os.path.join(live, "cover-qualities.png"), 3, [
+            (f"{d}{' (see-through cells)' if c else ''}", f"{live}/cover-side-{d}{c}.png")
+            for c in ["", "translucent"] for d in ["sharp", "pixelated", "chunky"]
+        ])
     if "palettes" in want:
         montage(os.path.join(HERE, "palettes.png"), 8, [(p, f"{tmp}/palette-{p}.png") for p in PALETTES])
 

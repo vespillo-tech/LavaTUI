@@ -1249,7 +1249,7 @@ mod music {
             let bad: Vec<char> = out.chars().filter(|&c| forbidden(c)).collect();
             assert!(bad.is_empty(), "{detail:?}: {} forbidden glyphs", bad.len());
         }
-        assert!(bytes(native, Detail::Sextant).chars().any(forbidden));
+        assert!(bytes(native, Detail::Sharp).chars().any(forbidden));
     }
 
     #[test]
@@ -1318,6 +1318,49 @@ mod music {
                 .starts_with("\x1b_Ga=d,d=I,i=")
         );
         assert!(!m.kitty.busy());
+    }
+
+    /// lava-bq0: in a terminal with pictures, pixelated and chunky are
+    /// pictures too, their own (pixel art made with the sharp copy), sent
+    /// once each like any other.
+    #[test]
+    fn pixel_art_is_sent_as_its_own_picture() {
+        let (mut m, t0) = model_with(Session::default(), temp_config("cover-pixel-art"), 120, 36);
+        m.caps = Caps {
+            pixels: Some(crate::graphics::Protocol::Kitty),
+            sextants: true,
+        };
+        with_hires(&mut m, &fake(t0));
+        m.update(Action::Place("cover"), t0);
+        let sent = |m: &mut Model| {
+            tick(m, t0);
+            let mut out = Vec::new();
+            m.kitty.write(&mut out).unwrap();
+            String::from_utf8(out).unwrap()
+        };
+        assert!(sent(&mut m).contains(";QUJD\x1b\\"), "the sharp picture");
+        for (detail, png) in [(Detail::Pixelated, "QUJD16"), (Detail::Chunky, "QUJD8")] {
+            m.settings.art.detail = detail;
+            let out = sent(&mut m);
+            assert!(
+                out.contains(&format!(";{png}\x1b\\")),
+                "{detail:?}: {out:?}"
+            );
+            assert!(sent(&mut m).contains("a=d,d=I"), "the old one goes");
+            assert!(sent(&mut m).is_empty(), "and nothing more");
+        }
+        // While it's on its way: the same grain in text cells.
+        m.settings.art.detail = Detail::Pixelated;
+        tick(&mut m, t0);
+        let p = *m.layout.placed(COVER_W).unwrap();
+        let mut buf = ratatui::buffer::Buffer::empty(m.layout.area);
+        let look = crate::dock::Look {
+            backdrop: crate::dock::Backdrop::Panel,
+            align: ratatui::layout::Alignment::Left,
+        };
+        Cover.draw(&m, p.form, p.rect, look, &mut buf);
+        let glyph = buf[(p.rect.x, p.rect.y)].symbol().to_owned();
+        assert!(glyph == "█" || glyph == "▀", "{glyph:?}");
     }
 
     #[test]
@@ -1408,7 +1451,10 @@ mod music {
         );
         m.terminal_replies(&["]11;rgb:0/0/0".into(), "_Gi=31;OK".into()]);
         assert!(m.probe.is_none());
-        assert_eq!(m.pictures(), Drawn::Pixels(Protocol::Kitty));
+        assert_eq!(
+            m.pictures(),
+            Drawn::Pixels(Protocol::Kitty, crate::dock::cover::Grain::Sharp)
+        );
         assert!(m.toast.is_none());
         // The sharp copy is asked for now (the test loader can't fetch it:
         // a fresh one has it).
@@ -1426,7 +1472,7 @@ mod music {
         );
         assert_eq!(
             m.toast.as_ref().unwrap().text,
-            "no photo in this terminal · cover quality fine"
+            "no photos in this terminal · covers drawn in text"
         );
         tick(&mut m, t0);
         assert!(!m.kitty.busy(), "nothing sent");
@@ -1454,11 +1500,10 @@ mod music {
         assert_eq!(
             seen,
             [
-                "cover quality · photo · medium",
-                "cover quality · fine · medium",
-                "cover quality · medium",
-                "cover quality · coarse",
-                "cover quality · auto · medium",
+                "cover quality · sharp",
+                "cover quality · pixelated",
+                "cover quality · chunky",
+                "cover quality · auto · sharp",
             ]
         );
         assert_eq!(m.settings.art.detail, Detail::Auto);

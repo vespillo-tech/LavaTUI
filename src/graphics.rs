@@ -179,13 +179,16 @@ fn override_from(var: &impl Fn(&str) -> Option<String>) -> Option<Option<Protoco
     }
 }
 
-/// A picture as transmitted: the source and the cells it fills. Another
-/// size is another transmission (the terminal scales to the cells).
+/// A picture as transmitted: the source, the cells it fills and how
+/// coarse it is. Another size is another transmission (the terminal scales
+/// to the cells).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Key {
     pub source: String,
     pub cols: u16,
     pub rows: u16,
+    /// Pixel art this many blocks across, or (`None`) the sharp picture.
+    pub blocks: Option<u16>,
 }
 
 /// Our first image id, once any is used (for [`cleanup`] on any way out,
@@ -372,6 +375,7 @@ mod tests {
             source: "https://i.example/a".into(),
             cols,
             rows: cols / 2,
+            blocks: None,
         }
     }
 
