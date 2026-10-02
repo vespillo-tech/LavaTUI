@@ -31,8 +31,8 @@ use ratatui::layout::Rect;
 use std::path::Path;
 
 pub use model::{
-    Account, Fetch, Item, Kind, ListKind, ListView, LocalTime, Model, Overlay, Page, Picker,
-    PickerKind, Row, SettingsView, TOAST_FADE, TOAST_TIME, Toast,
+    Account, Adding, Fetch, Item, Kind, ListKind, ListView, LocalTime, Model, Overlay, Page,
+    Picker, PickerKind, Row, SettingsView, Stage, TOAST_FADE, TOAST_TIME, Toast,
 };
 
 use crate::clock::ClockTime;

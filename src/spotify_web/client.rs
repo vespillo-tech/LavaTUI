@@ -14,7 +14,7 @@ use super::http::{Body, Http, Method, Request, Response};
 use super::store::{TokenStore, Tokens};
 use super::types::{
     Page, PlayerState, Playlist, RawPage, RawPlayer, RawPlaylist, RawPlaylistItem, RawSearch,
-    RawSnapshot, Repeat, Track, User,
+    RawSnapshot, RawUriItem, Repeat, Track, Uris, User,
 };
 use super::{ACCOUNTS_BASE, API_BASE, REDIRECT_URI};
 
@@ -34,6 +34,9 @@ const MAX_PAGES: u32 = 50;
 const LIBRARY_CHUNK: usize = 40;
 /// Add-to-playlist takes at most 100 URIs per call.
 const PLAYLIST_CHUNK: usize = 100;
+/// What [`Client::playlist_uris`] asks for: each item's URI (under `item`
+/// since Feb 2026, `track` before) and the paging.
+const URI_FIELDS: &str = "items(item(uri),track(uri)),next,total";
 /// Search's `limit` maximum for development-mode apps (Feb 2026).
 pub const SEARCH_MAX: u32 = 10;
 
@@ -307,6 +310,17 @@ impl<H: Http> Client<H> {
             form::encode(playlist_id)
         ))?;
         Ok(page.map(RawPlaylistItem::into_track))
+    }
+
+    /// One page of a playlist's item URIs from `offset` and nothing else
+    /// (`fields`), to tell whether a song is in it already.
+    pub fn playlist_uris(&mut self, playlist_id: &str, offset: u32) -> Result<Uris, Error> {
+        let page: RawPage<RawUriItem> = self.get(&format!(
+            "/playlists/{}/items?limit={PAGE}&offset={offset}&additional_types=track,episode&fields={}",
+            form::encode(playlist_id),
+            form::encode(URI_FIELDS),
+        ))?;
+        Ok(page.into_uris(offset))
     }
 
     /// Appends `uris` to the playlist; returns the new snapshot id.

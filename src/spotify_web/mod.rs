@@ -50,7 +50,7 @@ use std::time::Duration;
 
 pub use crate::config::LoginStore;
 pub use error::Error;
-pub use types::{Page, PlayerState, Playlist, Repeat, Track, User};
+pub use types::{Page, PlayerState, Playlist, Repeat, Track, Uris, User};
 
 use client::Client;
 use http::Http;
@@ -99,6 +99,10 @@ pub enum Request {
     /// One page (50) of a playlist from `offset` → [`Reply::Tracks`]. Only
     /// playlists the user owns or collaborates on (else `Forbidden`).
     PlaylistTracks { playlist_id: String, offset: u32 },
+    /// Only the item URIs of one page of a playlist from `offset`, to tell
+    /// whether it has a song already → [`Reply::Uris`]. Same rules as
+    /// `PlaylistTracks`.
+    PlaylistUris { playlist_id: String, offset: u32 },
     /// A new playlist owned by the user → [`Reply::Playlist`].
     CreatePlaylist { name: String, public: bool },
     /// Append to a playlist → [`Reply::Snapshot`].
@@ -142,6 +146,7 @@ pub enum Reply {
     Playlists(Vec<Playlist>),
     Playlist(Playlist),
     Tracks(Page<Track>),
+    Uris(Uris),
     TrackList(Vec<Track>),
     Contains(Vec<bool>),
     /// The playlist's new snapshot id.
@@ -501,6 +506,10 @@ fn handle<H: Http>(client: &mut Client<H>, request: Request) -> Result<Reply, Er
             playlist_id,
             offset,
         } => Reply::Tracks(client.playlist_tracks(&playlist_id, offset)?),
+        Request::PlaylistUris {
+            playlist_id,
+            offset,
+        } => Reply::Uris(client.playlist_uris(&playlist_id, offset)?),
         Request::CreatePlaylist { name, public } => {
             Reply::Playlist(client.create_playlist(&name, public)?)
         }

@@ -24,6 +24,14 @@ What changed in each version of LavaTUI, in plain words.
   sizes turn the cover into pixel art with bigger and bigger squares, in
   every terminal. Before, the choices often looked the same. Your old
   choice carries over.
+- Adding a song to a playlist that already has it now asks first:
+  "already in Lamplight Mix · add it again?" Press `Enter` to add it
+  again, or `Esc` to pick another playlist. In the add list, playlists
+  that have the song show a `✓`. If LavaTUI can't check, it adds the song
+  as before and says it couldn't check.
+- Lyrics beside the lamp never cut off the line being sung: long lines
+  wrap onto more rows, nearby lines are shortened after a whole word, and
+  on big screens the panel widens to fit them.
 
 ## 1.2.0 — 2026-10-02 — first public release
 

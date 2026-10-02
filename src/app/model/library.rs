@@ -14,14 +14,22 @@
 //! for permission, so it never happens just for starting the app
 //! (lava-1xk.38). Until then `spotify.logged_in` (not a secret) says
 //! whether there is one; the key that needed it runs again once it's read.
+//!
+//! Adding a song to a playlist that has it already asks first
+//! (lava-75z.24). Spotify can't say which playlists hold a song, so the
+//! add picker reads its playlists' songs (URIs only, a page at a time, one
+//! request in flight, a budget per opening, the chosen playlist first) and
+//! keeps them per playlist while its snapshot id stays the same. A check
+//! that fails or stalls never loses the add: it goes ahead, and says so.
 
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use super::{Model, Overlay};
 use crate::media::Capabilities;
 use crate::spotify_web::{
     Error, Event, LoginStore, PlayerState, Playlist, Repeat, Reply, Request, RequestId, Track,
-    User, Web,
+    Uris, User, Web,
 };
 use crate::ui::keymap::{Action, PlayerKey};
 use crate::ui::picker::{self, Hit, Placement};
@@ -44,6 +52,12 @@ const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 /// A key waiting for the saved login is dropped after this (the user may
 /// still be looking at macOS's question, or have said no).
 pub(super) const PENDING_FOR: Duration = Duration::from_secs(30);
+/// Pages of playlist songs the add picker reads ahead per opening, so the
+/// check is usually done before `⏎` (50 songs a page).
+const READ_AHEAD_PAGES: u32 = 40;
+/// A check that hasn't moved on for this long is given up: the song is
+/// added anyway.
+pub(super) const CHECK_STALL: Duration = Duration::from_secs(5);
 /// Said just before the first Keychain read of a session.
 pub const KEYCHAIN_HEADS_UP: &str =
     "macOS may ask to let LavaTUI use your saved Spotify login · choose Always Allow";
@@ -142,7 +156,17 @@ enum Want {
         on: bool,
     },
     Add {
+        playlist_id: String,
+        uri: String,
         name: String,
+        /// Added without knowing whether it was there already.
+        unchecked: bool,
+    },
+    /// A page of a playlist's songs, read from `offset` at `snapshot`.
+    Uris {
+        playlist_id: String,
+        snapshot: String,
+        offset: u32,
     },
     Player,
     Mode,
@@ -187,6 +211,59 @@ pub struct Library {
     fallback: Option<Playing>,
     /// What the open list is filtered by (lava-75z.17).
     pub find: Find,
+    /// What's known of the songs in the playlists, by playlist id.
+    contents: HashMap<String, Contents>,
+    /// A page of songs is being read (one at a time).
+    reading: bool,
+    /// Spotify asked us to slow down: no reading ahead until then.
+    read_after: Option<Instant>,
+    /// Pages the add picker may still read ahead.
+    read_budget: u32,
+    /// An add waiting for the check or for the user.
+    pub adding: Option<Adding>,
+}
+
+/// The songs of one playlist read so far, as of its `snapshot` id.
+#[derive(Debug, Default)]
+struct Contents {
+    snapshot: String,
+    uris: HashSet<String>,
+    /// Where the next page starts; `None` once every page is read.
+    next: Option<u32>,
+    /// Spotify wouldn't say: not asked again until the snapshot changes.
+    failed: bool,
+}
+
+impl Contents {
+    fn new(snapshot: &str) -> Self {
+        Self {
+            snapshot: snapshot.to_owned(),
+            next: Some(0),
+            ..Self::default()
+        }
+    }
+}
+
+/// `⏎` in the add picker, before the song is added.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Adding {
+    pub playlist_id: String,
+    pub name: String,
+    pub uri: String,
+    pub stage: Stage,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage {
+    /// Reading the playlist's songs; the last page came `since`. Shows
+    /// how far it got when the playlist is long.
+    Checking {
+        since: Instant,
+        read: u32,
+        total: u32,
+    },
+    /// It's there already: add it again?
+    Confirm,
 }
 
 /// Type-to-filter in the library overlay: `/`, then what's typed keeps
@@ -240,6 +317,11 @@ impl Library {
             logout_armed: None,
             fallback: None,
             find: Find::default(),
+            contents: HashMap::new(),
+            reading: false,
+            read_after: None,
+            read_budget: 0,
+            adding: None,
         }
     }
 
@@ -352,6 +434,10 @@ impl Library {
         self.liked_retry = None;
         self.player = WebPlayer::default();
         self.logout_armed = None;
+        self.contents.clear();
+        self.reading = false;
+        self.read_after = None;
+        self.adding = None;
     }
 
     /// Where the login stands, as shown: a saved login not read yet counts
@@ -373,7 +459,11 @@ impl Library {
 
     /// Requests in flight or a login pending: worth looking again soon.
     pub fn busy(&self) -> bool {
-        !self.wants.is_empty() || self.login_url.is_some()
+        let checking = self
+            .adding
+            .as_ref()
+            .is_some_and(|a| matches!(a.stage, Stage::Checking { .. }));
+        !self.wants.is_empty() || self.login_url.is_some() || checking
     }
 
     fn request(&mut self, request: Request, want: Want) {
@@ -400,6 +490,176 @@ impl Library {
             .as_ref()
             .filter(|(u, _)| u == uri)
             .map(|&(_, on)| on)
+    }
+
+    /// Whether `playlist` has `uri`, once known: `None` while its songs
+    /// are still being read, or couldn't be.
+    pub fn has(&self, playlist: &Playlist, uri: &str) -> Option<bool> {
+        let c = self
+            .contents
+            .get(&playlist.id)
+            .filter(|c| c.snapshot == playlist.snapshot_id)?;
+        if c.uris.contains(uri) {
+            Some(true)
+        } else {
+            (c.next.is_none() && !c.failed).then_some(false)
+        }
+    }
+
+    /// Read the next page of the first of `order` (playlist indices,
+    /// most wanted first) not yet read through. `chosen`, the playlist an
+    /// add waits on, goes first and needs no budget. One page at a time,
+    /// none while the playlists are being read again (their snapshot ids
+    /// may change) or Spotify asked us to wait.
+    fn read_ahead(&mut self, chosen: Option<&str>, order: &[usize], now: Instant) {
+        if self.reading || self.playlists.loading || self.read_after.is_some_and(|at| now < at) {
+            return;
+        }
+        let chosen = chosen.and_then(|id| self.playlists.items.iter().position(|p| p.id == id));
+        let budget = self.read_budget > 0;
+        let next = chosen
+            .into_iter()
+            .chain(order.iter().copied().filter(|_| budget));
+        for i in next {
+            let Some(p) = self.playlists.items.get(i) else {
+                continue;
+            };
+            let c = self
+                .contents
+                .entry(p.id.clone())
+                .or_insert_with(|| Contents::new(&p.snapshot_id));
+            if c.snapshot != p.snapshot_id {
+                *c = Contents::new(&p.snapshot_id);
+            }
+            let Some(offset) = c.next.filter(|_| !c.failed) else {
+                continue;
+            };
+            if Some(i) != chosen {
+                self.read_budget -= 1;
+            }
+            let (playlist_id, snapshot) = (p.id.clone(), p.snapshot_id.clone());
+            let request = Request::PlaylistUris {
+                playlist_id: playlist_id.clone(),
+                offset,
+            };
+            self.reading = true;
+            let want = Want::Uris {
+                playlist_id,
+                snapshot,
+                offset,
+            };
+            self.request(request, want);
+            return;
+        }
+    }
+
+    /// A page of songs (or why not).
+    fn read(
+        &mut self,
+        playlist_id: &str,
+        snapshot: &str,
+        offset: u32,
+        result: Result<Reply, Error>,
+        now: Instant,
+    ) {
+        self.reading = false;
+        let Some(c) = self
+            .contents
+            .get_mut(playlist_id)
+            .filter(|c| c.snapshot == snapshot && c.next == Some(offset))
+        else {
+            return;
+        };
+        let read = match result {
+            Ok(Reply::Uris(Uris { uris, next, total })) => {
+                c.uris.extend(uris);
+                // A page that doesn't move on would never end.
+                c.next = next.filter(|&n| n > offset);
+                Some((c.next.unwrap_or(total), total))
+            }
+            // Asked again once the wait is over (an add waiting on it
+            // goes ahead when the check stalls).
+            Err(Error::RateLimited { retry_after }) => {
+                self.read_after = Some(now + retry_after);
+                None
+            }
+            _ => {
+                c.failed = true;
+                None
+            }
+        };
+        let next = c.next.filter(|_| !c.failed);
+        let chosen = match &mut self.adding {
+            Some(adding) if adding.playlist_id == playlist_id => {
+                if let (Some((read, total)), Stage::Checking { .. }) = (read, adding.stage) {
+                    adding.stage = Stage::Checking {
+                        since: now,
+                        read,
+                        total,
+                    };
+                }
+                true
+            }
+            _ => false,
+        };
+        // On to the next page at once, while it's still wanted.
+        if let Some(offset) = next
+            && (chosen || self.read_budget > 0)
+            && self.read_after.is_none_or(|at| now >= at)
+        {
+            if !chosen {
+                self.read_budget -= 1;
+            }
+            self.reading = true;
+            let request = Request::PlaylistUris {
+                playlist_id: playlist_id.to_owned(),
+                offset,
+            };
+            let want = Want::Uris {
+                playlist_id: playlist_id.to_owned(),
+                snapshot: snapshot.to_owned(),
+                offset,
+            };
+            self.request(request, want);
+        }
+    }
+
+    /// The song is in the playlist now: the playlist's new `snapshot` id
+    /// keeps what's known of it.
+    fn added(&mut self, playlist_id: &str, uri: String, snapshot: String) {
+        let Some(p) = self
+            .playlists
+            .items
+            .iter_mut()
+            .find(|p| p.id == playlist_id)
+        else {
+            return;
+        };
+        let old = std::mem::replace(&mut p.snapshot_id, snapshot.clone());
+        p.total += 1;
+        if let Some(c) = self.contents.get_mut(playlist_id) {
+            if c.snapshot == old {
+                c.snapshot = snapshot;
+                c.uris.insert(uri);
+            } else {
+                self.contents.remove(playlist_id);
+            }
+        }
+    }
+
+    /// Add `uri` to the playlist now.
+    fn add(&mut self, playlist_id: String, name: String, uri: String, unchecked: bool) {
+        let request = Request::AddToPlaylist {
+            playlist_id: playlist_id.clone(),
+            uris: vec![uri.clone()],
+        };
+        let want = Want::Add {
+            playlist_id,
+            uri,
+            name,
+            unchecked,
+        };
+        self.request(request, want);
     }
 
     /// The playlists the user can add to (owned or collaborative), by
@@ -538,6 +798,9 @@ impl Library {
             if want == Want::Player {
                 self.player.in_flight = false;
             }
+            if let Want::Uris { .. } = want {
+                self.reading = false;
+            }
             return None;
         }
         match (want, result) {
@@ -552,6 +815,12 @@ impl Library {
             }
             (Want::Me, _) => self.me_asked = false,
             (Want::Playlists, Ok(Reply::Playlists(lists))) => {
+                // What was read of a playlist that changed since is stale.
+                self.contents.retain(|id, c| {
+                    lists
+                        .iter()
+                        .any(|p| p.id == *id && p.snapshot_id == c.snapshot)
+                });
                 self.playlists = Listing {
                     items: lists,
                     loaded: true,
@@ -604,8 +873,33 @@ impl Library {
                 }
                 return Some(e.to_string());
             }
-            (Want::Add { name }, Ok(_)) => return Some(format!("added to {name}")),
+            (
+                Want::Add {
+                    playlist_id,
+                    uri,
+                    name,
+                    unchecked,
+                },
+                Ok(reply),
+            ) => {
+                if let Reply::Snapshot(snapshot) = reply {
+                    self.added(&playlist_id, uri, snapshot);
+                }
+                return Some(if unchecked {
+                    format!("added to {name} · couldn't check it first")
+                } else {
+                    format!("added to {name}")
+                });
+            }
             (Want::Add { .. }, Err(e)) => return Some(e.to_string()),
+            (
+                Want::Uris {
+                    playlist_id,
+                    snapshot,
+                    offset,
+                },
+                result,
+            ) => self.read(&playlist_id, &snapshot, offset, result, now),
             (Want::Player, result) => {
                 let p = &mut self.player;
                 p.in_flight = false;
@@ -824,8 +1118,102 @@ impl Model {
             self.overlay = Overlay::Library(self.follow_list(view));
             self.load_more(&view);
         }
+        self.check_adding();
         self.patch_modes();
         self.replay_pending();
+    }
+
+    /// The add picker reads its playlists' songs ahead, and an add waiting
+    /// on that check goes on: to the question when the song is there, else
+    /// straight in (also when the check failed or stalled: never lost).
+    fn check_adding(&mut self) {
+        let view = match self.overlay {
+            Overlay::Library(view) if view.kind == ListKind::AddTo => view,
+            _ => {
+                self.library.adding = None;
+                self.library.read_budget = 0;
+                return;
+            }
+        };
+        let now = self.now;
+        // The cursor's playlist first, then the rest in order.
+        let editable = self.library.editable();
+        let at = self
+            .item_index(ListKind::AddTo, view.cursor)
+            .and_then(|i| editable.get(i).copied());
+        let order: Vec<usize> = at.into_iter().chain(editable).collect();
+        let lib = &mut self.library;
+        let chosen = lib.adding.as_ref().map(|a| a.playlist_id.clone());
+        lib.read_ahead(chosen.as_deref(), &order, now);
+
+        let Some(adding) = &lib.adding else {
+            return;
+        };
+        let Stage::Checking { since, .. } = adding.stage else {
+            return;
+        };
+        let playlist = lib
+            .playlists
+            .items
+            .iter()
+            .find(|p| p.id == adding.playlist_id);
+        let has = playlist
+            .filter(|_| !lib.playlists.loading)
+            .and_then(|p| lib.has(p, &adding.uri));
+        let failed = playlist.is_none_or(|p| {
+            lib.contents
+                .get(&p.id)
+                .is_some_and(|c| c.snapshot == p.snapshot_id && c.failed)
+        });
+        match has {
+            Some(true) => {
+                if let Some(a) = &mut lib.adding {
+                    a.stage = Stage::Confirm;
+                }
+            }
+            Some(false) => self.finish_adding(false),
+            None if failed || now - since >= CHECK_STALL => self.finish_adding(true),
+            None => {}
+        }
+    }
+
+    /// Add the waiting song now, and close the picker.
+    fn finish_adding(&mut self, unchecked: bool) {
+        if let Some(a) = self.library.adding.take() {
+            self.library.add(a.playlist_id, a.name, a.uri, unchecked);
+            self.overlay = Overlay::None;
+        }
+    }
+
+    /// Keys while an add waits: `⏎` adds (again, or without waiting for
+    /// the check), `esc` goes back to the list, `q` closes it. Everything
+    /// else waits. Returns whether the action was its own.
+    fn adding_action(&mut self, view: ListView, action: Action) -> bool {
+        match action {
+            Action::Keep => {
+                // Asked and answered: it's not unchecked.
+                self.finish_adding(false);
+                return true;
+            }
+            Action::Back | Action::ClearFind => self.library.adding = None,
+            Action::Close => {
+                self.library.adding = None;
+                self.overlay = Overlay::None;
+                return true;
+            }
+            Action::Up
+            | Action::Down
+            | Action::Page(_)
+            | Action::Edge(_)
+            | Action::Find
+            | Action::Type(_)
+            | Action::Erase
+            | Action::PlayAll
+            | Action::Click { .. } => {}
+            _ => return false,
+        }
+        self.overlay = Overlay::Library(view);
+        true
     }
 
     /// Read the saved login, first saying that macOS may ask about it;
@@ -1056,6 +1444,10 @@ impl Model {
         self.refresh_playlists();
         self.last_click = None;
         self.library.find = Find::default();
+        self.library.adding = None;
+        if kind == ListKind::AddTo {
+            self.library.read_budget = READ_AHEAD_PAGES;
+        }
         self.overlay = Overlay::Library(self.follow_list(ListView::new(kind)));
     }
 
@@ -1125,8 +1517,15 @@ impl Model {
                 Some(playlist_row(p, !open))
             }
             ListKind::AddTo => {
-                let at = *lib.editable().get(i)?;
-                Some(playlist_row(&lib.playlists.items[at], false))
+                let p = &lib.playlists.items[*lib.editable().get(i)?];
+                let mut row = playlist_row(p, false);
+                // A quiet mark on the playlists that have the song already.
+                if let Some(uri) = self.playing_uri()
+                    && lib.has(p, &uri) == Some(true)
+                {
+                    row.detail = format!("{} {}", self.glyphs().has, row.detail);
+                }
+                Some(row)
             }
             ListKind::Tracks => {
                 let t = lib.open.as_ref()?.tracks.items.get(i)?;
@@ -1194,6 +1593,9 @@ impl Model {
     /// Keys and clicks while the library overlay is open. Returns whether
     /// the action was its own.
     pub(super) fn library_action(&mut self, mut view: ListView, action: Action) -> bool {
+        if self.library.adding.is_some() {
+            return self.adding_action(view, action);
+        }
         let n = self.list_len(view.kind);
         let rows = self.list_rows(&view);
         match action {
@@ -1380,13 +1782,19 @@ impl Model {
                     return true;
                 };
                 let p = &self.library.playlists.items[at];
-                let (id, name) = (p.id.clone(), p.name.clone());
-                let request = Request::AddToPlaylist {
-                    playlist_id: id,
-                    uris: vec![uri],
-                };
-                self.library.request(request, Want::Add { name });
-                self.overlay = Overlay::None;
+                // Asks first if it's there already (`check_adding`).
+                self.library.adding = Some(Adding {
+                    playlist_id: p.id.clone(),
+                    name: p.name.clone(),
+                    uri,
+                    stage: Stage::Checking {
+                        since: self.now,
+                        read: 0,
+                        total: p.total,
+                    },
+                });
+                self.overlay = Overlay::Library(view);
+                self.check_adding();
             }
         }
         true

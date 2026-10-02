@@ -39,7 +39,7 @@ use crate::ui::keymap::InputMode;
 use crate::ui::layout::{self, DockItem, Layout, LayoutInput, SizeTier};
 
 pub use caches::SavedFiles;
-pub use library::{Account, Library, ListKind, ListView};
+pub use library::{Account, Adding, Library, ListKind, ListView, Stage};
 pub use lyrics::{Fetch, LyricsState};
 pub use music::Music;
 pub use pickers::{Picker, PickerKind};

@@ -262,6 +262,16 @@ fn live_account() {
             page.items.len(),
             page.total,
         );
+        // The duplicate check's URIs-only read sees the same songs.
+        let Reply::Uris(uris) = live.ask(Request::PlaylistUris {
+            playlist_id: owned.id.clone(),
+            offset: 0,
+        }) else {
+            panic!()
+        };
+        let all: Vec<&str> = page.items.iter().map(|t| t.uri.as_str()).collect();
+        assert_eq!(uris.uris, all);
+        assert_eq!(uris.total, page.total);
         sample = page
             .items
             .into_iter()

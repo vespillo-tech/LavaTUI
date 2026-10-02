@@ -7,8 +7,8 @@ use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use super::{
-    Error, Event, LoginStore, Page, PlayerState, Playlist, Reply, Request, RequestId, Track, User,
-    Web,
+    Error, Event, LoginStore, Page, PlayerState, Playlist, Reply, Request, RequestId, Track, Uris,
+    User, Web,
 };
 
 pub struct FakeState {
@@ -38,6 +38,10 @@ pub struct FakeState {
     pub hold: bool,
     /// The next request fails with this.
     pub fail: Option<Error>,
+    /// Every `PlaylistUris` fails with this (the duplicate check).
+    pub fail_uris: Option<Error>,
+    /// Adds so far: each gives the playlist a new snapshot id.
+    adds: u32,
     held: Vec<(RequestId, Request)>,
     events: VecDeque<Event>,
     next_id: RequestId,
@@ -61,6 +65,8 @@ impl Default for FakeState {
             requests: Vec::new(),
             hold: false,
             fail: None,
+            fail_uris: None,
+            adds: 0,
             held: Vec::new(),
             events: VecDeque::new(),
             next_id: 0,
@@ -167,11 +173,37 @@ fn answer(s: &mut FakeState, request: Request) -> Result<Reply, Error> {
                 has_more: to < all.len(),
             })
         }
-        Request::AddToPlaylist { playlist_id, uris } => {
-            let list = s
+        Request::PlaylistUris {
+            playlist_id,
+            offset,
+        } => {
+            if let Some(e) = &s.fail_uris {
+                return Err(e.clone());
+            }
+            let all = s
                 .tracks
-                .get_mut(&playlist_id)
+                .get(&playlist_id)
                 .ok_or_else(|| Error::Forbidden("not yours".into()))?;
+            let from = (offset as usize).min(all.len());
+            let to = (from + PAGE).min(all.len());
+            Reply::Uris(Uris {
+                uris: all[from..to].iter().map(|t| t.uri.clone()).collect(),
+                next: (to < all.len()).then_some(to as u32),
+                total: all.len() as u32,
+            })
+        }
+        Request::AddToPlaylist { playlist_id, uris } => {
+            if !s.tracks.contains_key(&playlist_id) {
+                return Err(Error::Forbidden("not yours".into()));
+            }
+            s.adds += 1;
+            let snapshot = format!("snap{}", s.adds);
+            let n = uris.len() as u32;
+            if let Some(p) = s.playlists.iter_mut().find(|p| p.id == playlist_id) {
+                p.snapshot_id.clone_from(&snapshot);
+                p.total += n;
+            }
+            let list = s.tracks.entry(playlist_id).or_default();
             for uri in uris {
                 list.push(Track {
                     id: uri.rsplit(':').next().map(str::to_owned),
@@ -184,7 +216,7 @@ fn answer(s: &mut FakeState, request: Request) -> Result<Reply, Error> {
                     image_url: None,
                 });
             }
-            Reply::Snapshot("snap".into())
+            Reply::Snapshot(snapshot)
         }
         Request::LibraryContains { uris } => {
             Reply::Contains(uris.iter().map(|u| s.liked.contains(u)).collect())
