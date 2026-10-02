@@ -61,7 +61,7 @@ cache and data go where each OS expects them. Only now playing differs:
 | Players | the Spotify desktop app | any MPRIS player, Spotify first | any app in the media flyout, Spotify first |
 | Play/pause, next/previous, seek | ✓ | ✓ | ✓ |
 | Volume | ✓ | ✓ if the player has it | – (SMTC has no volume) |
-| Shuffle / repeat | through the Web API only (Spotify's AppleScript setters do nothing) | ✓ if the player honours them | ✓ if the app honours them |
+| Shuffle / repeat | through the Web API only (Spotify's AppleScript setters do nothing) | ✓ if the player honours them (Spotify: through your account) | ✓ if the app honours them |
 | Cover art | ✓ | ✓ (`https` art URLs, so Spotify) | ✓ (the session's thumbnail) |
 | Like / add the playing song (library setup) | ✓ | ✓ Spotify songs | ✓ Spotify songs, once your account's player reports the same song |
 | Play from the playlist browser | ✓, the rest of the playlist follows | with Premium and Spotify playing: ✓; otherwise just that song | with Premium and Spotify playing: ✓; otherwise it says so |
@@ -70,10 +70,13 @@ cache and data go where each OS expects them. Only now playing differs:
 
 Linux players vary: Spotify has long reported its position as 0 over
 MPRIS (the bar then counts on from where it was first seen) and ignored
-shuffle and repeat. Anything a player leaves out falls back quietly.
-Windows' media controls don't say which Spotify song is playing, so there
-the app asks Spotify's servers what your account is playing and uses it
-only when it's the same song. They also can't be told what to play, so
+shuffle and repeat. If a player ignores shuffle or repeat, the app
+notices, says so and stops offering them; for Spotify, logging in to
+your account (with Premium) makes them work. Anything a player leaves
+out falls back quietly. Windows' media controls don't say which Spotify
+song is playing, so there the app asks Spotify's servers what your
+account is playing and uses it only when it's clearly the same song: the
+same title and artist, and the same length or album. They also can't be told what to play, so
 the playlist browser plays through Spotify's servers there, which needs
 Premium and Spotify open on a device.
 

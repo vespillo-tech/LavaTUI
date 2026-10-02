@@ -8,11 +8,13 @@ state for every method and writable property the way a real player does.
     fake_mpris.py                      # org.mpris.MediaPlayer2.fakeplayer
     fake_mpris.py --name vlc           # another bus name
     fake_mpris.py --spotify            # as Spotify on Linux behaves
+    fake_mpris.py --spotify --honour-modes  # ... but Shuffle / LoopStatus work
     fake_mpris.py --no-trackid         # no mpris:trackid, as some browsers
 
 --spotify takes the name org.mpris.MediaPlayer2.spotify and copies the
 Spotify client's known quirks: Position always reads 0, and setting
-Shuffle / LoopStatus is accepted but does nothing.
+Shuffle / LoopStatus is accepted but does nothing (unless --honour-modes,
+for a client that does honour them).
 
 Every call is printed to stdout as one line ("call PlayPause",
 "set Volume 0.42", ...), flushed, so a test can follow along. The player
@@ -49,8 +51,10 @@ def log(line):
 class Player:
     """The player's state, shared by both interfaces."""
 
-    def __init__(self, spotify, trackid=True):
+    def __init__(self, spotify, trackid=True, honour_modes=False):
         self.spotify = spotify
+        # Whether setting Shuffle / LoopStatus does anything.
+        self.honour_modes = honour_modes or not spotify
         self.trackid = trackid
         self.index = 0
         self.status = "Playing"
@@ -251,7 +255,7 @@ class PlayerIface(ServiceInterface):
     @LoopStatus.setter
     def LoopStatus(self, value: "s"):
         log(f"set LoopStatus {value}")
-        if self.p.spotify:
+        if not self.p.honour_modes:
             return  # Spotify on Linux: accepted, ignored.
         if value in ("None", "Track", "Playlist"):
             self.p.loop = value
@@ -272,7 +276,7 @@ class PlayerIface(ServiceInterface):
     @Shuffle.setter
     def Shuffle(self, value: "b"):
         log(f"set Shuffle {value}")
-        if self.p.spotify:
+        if not self.p.honour_modes:
             return  # Spotify on Linux: accepted, ignored.
         self.p.shuffle = value
         self.changed("Shuffle")
@@ -335,12 +339,17 @@ async def main():
     parser.add_argument("--spotify", action="store_true", help="act as Spotify")
     parser.add_argument("--paused", action="store_true", help="start paused")
     parser.add_argument(
+        "--honour-modes",
+        action="store_true",
+        help="with --spotify: setting Shuffle / LoopStatus works",
+    )
+    parser.add_argument(
         "--no-trackid", action="store_true", help="leave out mpris:trackid (as some browsers do)"
     )
     args = parser.parse_args()
     name = "spotify" if args.spotify else args.name
 
-    player = Player(args.spotify, trackid=not args.no_trackid)
+    player = Player(args.spotify, trackid=not args.no_trackid, honour_modes=args.honour_modes)
     if args.paused:
         player.status = "Paused"  # exactly at the start offset
     quit_event = asyncio.Event()

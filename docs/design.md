@@ -1030,7 +1030,14 @@ it they're neither shown nor offered, unless the Web API is logged in
 and Spotify lets it change them (Premium, a device playing; lava-75z.12):
 then `x` / `r` go through `PUT /me/player/shuffle|repeat`, the state is
 read from `GET /me/player` (on each track change and every 30 s), and a
-refusal hides them again until the next login. On the lava the forms
+refusal hides them again until the next login. When the Web API's
+state is what's shown, `x` / `r` always go there, even if the player
+offers its own. MPRIS players are taken at their word until a change
+doesn't show within 1.5 s (Spotify on Linux accepts and ignores both,
+lava-75z.21): then that player stops offering them and a toast says
+`Spotify ignored that` and what works (logging in). On Windows (no
+URI) the Web API's track counts only when title, artists and length or
+album all agree, in a state read since the track began (lava-1xk.35). On the lava the forms
 line up by the anchor (centred lines under a centred cover).
 
 **Controls row** (the card's fourth row, the card forms only). Left:

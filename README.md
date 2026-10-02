@@ -255,7 +255,9 @@ and `o` for a large album cover.
 - **On Windows:** most apps that show up in the Windows media controls,
   Spotify first.
 
-You can play, pause, skip, seek and change the volume. You also get the
+You can play, pause, skip, seek and change the volume. Some players
+ignore shuffle and repeat. LavaTUI notices, tells you, and stops
+offering them. You also get the
 album cover and lyrics, all with no account and no setup. LavaTUI never
 opens your music app for you. It only shows a player that is already
 running.
@@ -279,7 +281,11 @@ from Spotify first:
   owner.** The owner adds each person by email in the app's settings,
   under *User Management*.
 - **Shuffle, repeat and playing a whole playlist** also need Premium on
-  your own account, with Spotify playing on one of your devices.
+  your own account, with Spotify playing on one of your devices. (On a
+  Mac, and with Spotify on Linux, shuffle and repeat only work this way.)
+- **On Windows,** LavaTUI asks Spotify which song your account is
+  playing. It uses the answer only when the title and artist match, and
+  the length or album too.
 
 To start, press `,` and choose *music & lyrics*, then *spotify*. The
 app walks you through each step. More detail is in
@@ -374,6 +380,7 @@ Each settings page has a reset line. Or delete `config.toml` (see
 | Music | the Spotify app | most players | most players (untested) |
 | Album covers | ✓ | ✓ | ✓ (untested) |
 | Volume control | ✓ | most players | – |
+| Shuffle and repeat | with Spotify login and Premium | most players; Spotify with login and Premium | most players |
 | Spotify library | ✓ | ✓ | ✓ (untested) |
 
 Windows music support is new and hasn't been tried on a real Windows
