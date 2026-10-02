@@ -1,7 +1,7 @@
 //! `--demo` (hidden): a made-up player for screenshots and the README
 //! demo, so no real song, cover or lyric ever lands in a committed image.
 //!
-//! Three invented tracks by invented artists, each with an original cover
+//! Three invented tracks by invented artists, sharing one original cover
 //! embedded here (handed to the art worker through [`art::stash`], so nothing
 //! is downloaded) and invented synced lyrics served by a canned LRCLIB
 //! ([`Canned`]: nothing goes to lrclib.net and nothing is cached). The
@@ -32,7 +32,7 @@ const SONGS: &[Song] = &[
         artist: "The Paraffins",
         album: "Heat Rises",
         secs: 214,
-        cover: include_bytes!("../assets/demo/heat-rises-bloom.jpg"),
+        cover: include_bytes!("../assets/demo/suspended-melt.jpg"),
         words: &[
             "Down at the bottom where the warm light grows",
             "A little wax is waking, and it slowly goes",
@@ -55,7 +55,7 @@ const SONGS: &[Song] = &[
         artist: "The Paraffins",
         album: "Heat Rises",
         secs: 187,
-        cover: include_bytes!("../assets/demo/heat-rises-moons.jpg"),
+        cover: include_bytes!("../assets/demo/suspended-melt.jpg"),
         words: &[
             "Two slow shapes in the purple glow",
             "Drifting closer, moving slow",
@@ -73,7 +73,7 @@ const SONGS: &[Song] = &[
         artist: "Wax and Wane",
         album: "Lamplight",
         secs: 402,
-        cover: include_bytes!("../assets/demo/lamplight-window.jpg"),
+        cover: include_bytes!("../assets/demo/suspended-melt.jpg"),
         words: &[
             "Late at night the room is blue",
             "And the lamp is humming through",
