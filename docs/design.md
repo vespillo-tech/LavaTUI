@@ -915,28 +915,44 @@ never reads `thu#1#oct` over ascii, matrix, braille or halftone. Text is
 bold; `dim` lines aren't. Nothing is drawn around the text: no veil, box
 or halo.
 
-*Adaptive contrast.* Legibility comes from the ink alone, chosen per
-**word**: glyphs joined along a line, and block glyphs up and down too,
-so a clock digit is one word and is never two-tone. A word keeps its own
-role ink (`text`, `accent`, `dim`) while that reads at least 3 : 1
-(WCAG contrast; or as well as the ink reads on the palette's plain
-liquid, if that's less, so paper's 2.85 : 1 `dim` stays `dim` on its
-own liquid) against everything behind it, measured on what the eye
-sees there (a glyph style's own glyph counts half). Otherwise it takes
-whichever of the palette's light and dark inks (`text` and `bg`, the
-lighter first; white and black where they are the terminal's defaults)
-has the better *worst* contrast over the word: dark over bright wax,
-light over the liquid. A text word straddling pale wax and dark liquid
-can't suit both, so a letter of it that would still read below 1.8 : 1
-takes the better ink on its own (big digits never split: they read at
-any contrast). Hysteresis keeps it calm: an ink the word (or letter) had
-last frame counts 1.25× better, so it flips once as wax drifts under it,
-never back and forth frame to frame. In 256 colours the same rule runs
-on the indices' standard RGB; with no colour, or colours that are the
-terminal's defaults (16 colours, the `ansi` palette), contrast can't be
-measured and words keep their own ink, bold. Album-art pixels are drawn
-as they are. Cost: ≈ 50 ns a glyph cell (a clock and pomodoro: tens of
-µs a frame).
+*Adaptive contrast* (v1.5, lava-1xk.31). Legibility comes from the ink
+alone, chosen per **glyph** against the colour actually displayed right
+behind it: the cell's background for text (it replaces the lamp's
+glyph), the lamp's pixels around a big-digit stroke. With see-through
+cell backgrounds (Ghostty's `background-opacity` with
+`background-opacity-cells`, read from its config; 0.75 assumed for
+`display.cells = "translucent"`) a background is measured as it shows,
+at that opacity over a dark desktop (captures: lava's liquid `#23160C`
+shows as `#19130D`), while glyphs stay opaque; so mid wax behind text
+counts darker there than on an opaque terminal. A glyph keeps its own
+role ink (`text`, `accent`, `dim`) while that reads at least 4.5 : 1
+(WCAG AA; 3 : 1 for big digits), or, for a quiet ink that reads less on
+the palette's plain liquid (lava's `dim`, 3.6 : 1), 0.9 of that, never
+below 3 : 1 (paper's 2.85 : 1 `dim` reads dark instead). Otherwise it
+takes the better of the palette's light and dark inks (`text` and `bg`,
+the lighter first; white and black where they are the terminal's
+defaults): dark over bright wax, light over the liquid; the two cross at
+≈ 3.8 : 1 on lava. Secondary lines stay unbolded either way, so they
+still read as secondary. Nothing else decides a glyph's ink, so it
+changes only when what's behind *it* changes, never a whole word or
+line at once. Words stay coherent only where it costs nothing: a glyph
+that reads about as well in light as in dark (within 1.15×, both
+≥ 3.3 : 1) follows the glyph before it, and a big clock digit takes the
+ink most of its cells chose wherever that still reads ≥ 3 : 1 (one that
+straddles pale wax and dark liquid splits). Calm, per glyph (by cell and
+character): the ink it had last frame counts 1.15× better against the
+other of light / dark, its own ink comes back only at 1.08× its bar, and
+a change shows once it's wanted two frames running (a backdrop line
+sweeping under a glyph doesn't make it blink), at once if the ink it
+has reads below 3 : 1. Each stack on the lava keeps its own memory. So
+every glyph reads ≥ 3 : 1 in every frame, and text ≥ 4.5 : 1 unless
+it's quiet or sits where light and dark cross. In 256 colours the same
+rule runs on the indices' standard RGB; with no colour, or colours that
+are the terminal's defaults (16 colours, the `ansi` palette), contrast
+can't be measured and glyphs keep their own ink, bold. Album-art pixels
+are drawn as they are. The repro: `cargo test --release -- --ignored
+--nocapture contrast_trace` (seeded, 30 fps frames; `STYLE`,
+`PALETTE`, `SEED`, `CELLS`, `CSV`).
 
 Picked from pty captures of all nine styles and eight palettes at
 80 × 24 and 160 × 40. Earlier rejected alternatives still hold: a halo

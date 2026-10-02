@@ -14,6 +14,8 @@
 
 pub mod cards;
 pub(crate) mod chrome;
+#[cfg(test)]
+mod contrast_trace;
 mod dock;
 pub mod help;
 pub mod keymap;

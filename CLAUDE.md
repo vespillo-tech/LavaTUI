@@ -179,7 +179,9 @@ numbers); `docs/design.md` is the layout/visual contract.
                 backgrounds see-through with opaque glyphs (Ghostty with
                 `background-opacity` < 1 + `background-opacity-cells`;
                 reads its config files and `config-file` includes once at
-                start; `Model::translucent_cells` → `LampOptions.translucent`).
+                start; `Model::translucent_cells` → `LampOptions.translucent`;
+                `Model::cell_opacity`: its `background-opacity`, which
+                floating text's contrast measures backgrounds through).
 - `timing.rs` — pure loop timing: `FixedStep` (accumulator, no per-frame
                 cap: sim time tracks real time × speed at any fps; only a
                 > 1.5 s `STALL` is cut short; `alpha()` for interpolation),
@@ -376,7 +378,9 @@ numbers); `docs/design.md` is the layout/visual contract.
                 overlay. `mod.rs` draws back to front; `dock.rs` (panel, widgets on the
                 lava, floating by default — `dock.backing = "none"`:
                 glyphs only, each cell keeping the lamp's colours, ink
-                per word by contrast with hysteresis — or on the soft
+                per glyph by contrast with what's displayed behind it,
+                per-glyph hysteresis; `contrast_trace` (ignored test) is
+                the seeded repro — or on the soft
                 backing, `"soft"`: veiled 82 % to liquid, truecolor
                 only — and the chip), `chrome.rs` (status
                 bar + hint fitting, HUD, toasts), `help/` (`sheet.rs`: the

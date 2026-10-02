@@ -154,9 +154,9 @@ pub struct Model {
     /// The pixel protocol the environment promises, being checked with the
     /// terminal (the app writes its query once at start).
     pub probe: Option<Probe>,
-    /// Ghostty's config makes cell backgrounds see-through (read once at
-    /// start, for `display.cells = "auto"`).
-    pub ghostty_translucent: bool,
+    /// The window's opacity when Ghostty's config makes cell backgrounds
+    /// see-through (read once at start, for `display.cells = "auto"`).
+    pub ghostty_opacity: Option<f32>,
     /// Draw only glyphs every terminal font has (read once at start;
     /// `dock::music`'s controls).
     pub safe_glyphs: bool,
@@ -261,7 +261,7 @@ impl Model {
             music: Music::default(),
             caps,
             probe: unconfirmed.map(|p| Probe::new(p, now)),
-            ghostty_translucent: crate::cells::detect(),
+            ghostty_opacity: crate::cells::detect(),
             safe_glyphs: crate::cells::safe_glyphs(),
             kitty: Kitty::default(),
             inline: Inline::default(),
@@ -706,14 +706,26 @@ pub fn speed_toast(speed: SimSpeed) -> String {
     format!("speed ×{}", speed.factor())
 }
 
+/// The opacity assumed for see-through cell backgrounds nothing measured.
+pub const ASSUMED_OPACITY: f32 = 0.75;
+
 impl Model {
     /// Whether the lamp draws for see-through cell backgrounds
     /// (`display.cells`; see `render::cell::half_block`).
     pub fn translucent_cells(&self) -> bool {
+        self.cell_opacity().is_some()
+    }
+
+    /// With see-through cell backgrounds, how opaque they are: Ghostty's
+    /// `background-opacity`, or [`ASSUMED_OPACITY`] when
+    /// `display.cells = "translucent"` says so but nothing tells how much.
+    /// What a background shows as is worked out over a dark desktop
+    /// (`Theme::shown_luminance`), for floating text's contrast.
+    pub fn cell_opacity(&self) -> Option<f32> {
         match self.settings.display.cells {
-            CellsChoice::Auto => self.ghostty_translucent,
-            CellsChoice::Opaque => false,
-            CellsChoice::Translucent => true,
+            CellsChoice::Auto => self.ghostty_opacity,
+            CellsChoice::Opaque => None,
+            CellsChoice::Translucent => Some(self.ghostty_opacity.unwrap_or(ASSUMED_OPACITY)),
         }
     }
 }

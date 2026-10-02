@@ -399,6 +399,15 @@ impl Theme {
         seen(c).map(luminance)
     }
 
+    /// As [`Theme::luminance`], for a cell *background* on a terminal
+    /// that shows backgrounds at `opacity` (glyphs stay opaque): the
+    /// colour over a dark desktop, measured from Ghostty captures at
+    /// 0.75 (the lava liquid `#23160C` shows as `#19130D`).
+    pub fn shown_luminance(&self, c: Color, opacity: Option<f32>) -> Option<f32> {
+        let rgb = seen(c)?;
+        Some(luminance(opacity.map_or(rgb, |a| rgb.scale(a))))
+    }
+
     /// What a cell split into `a` and `b` halves looks like from afar:
     /// their mean in truecolor, else `b`.
     pub fn mean(&self, a: Color, b: Color) -> Color {
