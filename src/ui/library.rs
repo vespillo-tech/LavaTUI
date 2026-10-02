@@ -162,7 +162,7 @@ pub fn draw(buf: &mut Buffer, area: Rect, layout: &Layout, view: &ListView, mode
         let y = list.y + row as u16;
         let selected = i == view.cursor;
         let (marker, name_style) = match (selected, item.quiet) {
-            (true, _) => ("▸ ", accent),
+            (true, _) => (model.glyphs().pointer, accent),
             (false, true) => ("  ", dim),
             (false, false) => ("  ", text),
         };

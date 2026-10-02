@@ -32,6 +32,41 @@ fn temp_config(name: &str) -> PathBuf {
 /// app, the demo account plugged in, and the player keys on.
 fn rig(name: &str, account: &FakeWeb) -> (Model, Instant, FakeSource) {
     let t0 = Instant::now();
+    let track = Track {
+        id: PLAYING.into(),
+        uri: Some(PLAYING.into()),
+        name: "Slow Rise 0".into(),
+        artist: "Wax & Wane".into(),
+        album: "Lamplight".into(),
+        duration: Duration::from_secs(200),
+        artwork_url: String::new(),
+    };
+    rig_on(
+        name,
+        account,
+        desktop("Spotify", track, t0),
+        Capabilities::ALL,
+    )
+}
+
+/// The desktop player `player` playing `track` (as its backend reports it).
+fn desktop(player: &str, track: Track, t0: Instant) -> Snapshot {
+    Snapshot {
+        player: Some(player.into()),
+        track: Some(Arc::new(track)),
+        volume: 50,
+        ..Snapshot::new(Play::Playing, t0)
+    }
+}
+
+/// [`rig`] on any desktop player `snapshot`, its controls `caps`.
+fn rig_on(
+    name: &str,
+    account: &FakeWeb,
+    snapshot: Snapshot,
+    caps: Capabilities,
+) -> (Model, Instant, FakeSource) {
+    let t0 = snapshot.sampled_at;
     let mut m = Model::new(
         &Session::default(),
         Store::new(Some(temp_config(name))),
@@ -42,22 +77,8 @@ fn rig(name: &str, account: &FakeWeb) -> (Model, Instant, FakeSource) {
         t0,
     );
     m.welcome = false;
-    let source = FakeSource::new(
-        Snapshot {
-            player: Some("Spotify".into()),
-            track: Some(Arc::new(Track {
-                id: PLAYING.into(),
-                name: "Slow Rise 0".into(),
-                artist: "Wax & Wane".into(),
-                album: "Lamplight".into(),
-                duration: Duration::from_secs(200),
-                artwork_url: String::new(),
-            })),
-            volume: 50,
-            ..Snapshot::new(Play::Playing, t0)
-        },
-        Vec::new(),
-    );
+    let source = FakeSource::new(snapshot, Vec::new());
+    source.set_capabilities(caps);
     let s = source.clone();
     m.music.connect_with(
         move || Box::new(s.clone()),
@@ -286,6 +307,7 @@ fn premium(shuffle: bool) -> PlayerState {
         is_playing: true,
         device: Some("Mac".into()),
         item_uri: Some(PLAYING.into()),
+        item_name: Some("Slow Rise 0".into()),
         context_uri: None,
         shuffle_blocked: false,
         repeat_blocked: false,
@@ -575,4 +597,302 @@ fn clicks_pick_filtered_rows() {
         Some(&Command::PlayUri("spotify:playlist:dw".into())),
         "a double click plays the one match"
     );
+}
+
+/// Made up, Spotify-shaped (22 base-62 characters).
+const FAKE_ID: &str = "0LavaTuiFakeTrack00001";
+
+fn settle(m: &mut Model, at: Instant) {
+    for _ in 0..4 {
+        tick(m, at);
+    }
+}
+
+/// What Windows' media controls report: no volume, nothing to play URIs
+/// with, and a track known only by its words.
+const SMTC: Capabilities = Capabilities {
+    volume: false,
+    uris: false,
+    contexts: false,
+    ..Capabilities::ALL
+};
+
+fn smtc_track(name: &str) -> Track {
+    crate::media::smtc::track(name, "Wax & Wane", "Lamplight", Duration::from_secs(200)).unwrap()
+}
+
+/// The Web API's player on some device, playing `uri` called `name`.
+fn web_playing(uri: &str, name: &str) -> PlayerState {
+    PlayerState {
+        item_uri: Some(uri.into()),
+        item_name: Some(name.into()),
+        ..premium(false)
+    }
+}
+
+#[test]
+fn linux_spotify_tracks_can_be_liked_and_added_and_still_seek() {
+    use crate::media::mpris::{self, Meta};
+    let text = |s: &str| Meta::Text(s.into());
+    // As Spotify on Linux reports it: an object path, and the link.
+    let metadata = [
+        (
+            "mpris:trackid",
+            text(&format!("/com/spotify/track/{FAKE_ID}")),
+        ),
+        ("mpris:length", Meta::Int(200_000_000)),
+        ("xesam:title", text("Slow Rise")),
+        ("xesam:artist", Meta::List(vec![text("The Paraffins")])),
+        ("xesam:album", text("Heat Rises")),
+        (
+            "xesam:url",
+            text(&format!("https://open.spotify.com/track/{FAKE_ID}")),
+        ),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_owned(), v))
+    .collect();
+    let track = mpris::track(&metadata).unwrap();
+    let uri = format!("spotify:track:{FAKE_ID}");
+    let account = demo();
+    let t0 = Instant::now();
+    let caps = Capabilities {
+        contexts: false,
+        ..Capabilities::ALL
+    };
+    let (mut m, t0, source) = rig_on("mpris-like", &account, desktop("Spotify", track, t0), caps);
+    settle(&mut m, t0);
+    assert_eq!(m.liked(), Some(false), "asked about {uri}");
+    key(&mut m, t0, P::Like);
+    assert!(account.state().liked.contains(&uri));
+
+    key(&mut m, t0, P::AddToPlaylist);
+    m.update(Action::Keep, t0);
+    tick(&mut m, t0);
+    assert_eq!(toast(&m), "added to Lamplight Mix");
+    assert!(account.state().tracks["mix"].iter().any(|t| t.uri == uri));
+
+    // Seeking still names the track by its object path.
+    let snap = m.music.snapshot.clone().unwrap();
+    assert_eq!(
+        mpris::plan(&Command::Seek(Duration::from_secs(9)), Some(&snap), t0),
+        mpris::Call::SetPosition(format!("/com/spotify/track/{FAKE_ID}"), 9_000_000)
+    );
+
+    // A track in its playlist plays alone on Linux, and the toast says so.
+    key(&mut m, t0, P::Playlists);
+    m.update(Action::Keep, t0);
+    m.update(Action::Keep, t0);
+    assert_eq!(
+        source.sent().last(),
+        Some(&Command::PlayInContext {
+            track: "spotify:track:t0".into(),
+            context: "spotify:playlist:mix".into(),
+        })
+    );
+    assert_eq!(toast(&m), "playing Slow Rise 0 · just this song");
+}
+
+#[test]
+fn windows_spotify_is_matched_through_the_web_player() {
+    let account = demo();
+    account.state().player = Ok(Some(web_playing(PLAYING, "Slow Rise 0")));
+    let t0 = Instant::now();
+    let snap = desktop("Spotify", smtc_track("Slow Rise 0"), t0);
+    let (mut m, t0, _) = rig_on("smtc-like", &account, snap, SMTC);
+    settle(&mut m, t0);
+    assert_eq!(m.liked(), Some(false));
+    key(&mut m, t0, P::Like);
+    assert!(account.state().liked.contains(PLAYING));
+    key(&mut m, t0, P::AddToPlaylist);
+    assert!(matches!(m.overlay, Overlay::Library(_)), "{}", toast(&m));
+    m.update(Action::Keep, t0);
+    tick(&mut m, t0);
+    assert_eq!(toast(&m), "added to Lamplight Mix");
+
+    // Spotify plays something else elsewhere: this track is not it.
+    account.state().player = Ok(Some(web_playing("spotify:track:other", "Another Song")));
+    let later = t0 + Duration::from_secs(31);
+    settle(&mut m, later);
+    assert_eq!(m.liked(), None);
+    key(&mut m, later, P::Like);
+    assert_eq!(toast(&m), "nothing to like");
+    key(&mut m, later, P::AddToPlaylist);
+    assert_eq!(toast(&m), "nothing playing to add");
+}
+
+#[test]
+fn other_players_local_files_and_ads_are_never_given_a_spotify_uri() {
+    let local = "spotify:local:Wax+%26+Wane:Lamplight:Slow+Rise+0:200";
+    for (player, id, web) in [
+        // Another app playing a song of the same name as the account's.
+        ("Vlc", "Slow Rise 0\u{1f}Wax & Wane\u{1f}Lamplight", PLAYING),
+        // Spotify's local file and ad (macOS ids).
+        ("Spotify", local, local),
+        ("Spotify", "spotify:ad:000000012c4a1bd4", local),
+    ] {
+        let account = demo();
+        account.state().player = Ok(Some(web_playing(web, "Slow Rise 0")));
+        let track = Track {
+            id: id.into(),
+            uri: None,
+            ..smtc_track("Slow Rise 0")
+        };
+        let t0 = Instant::now();
+        let (mut m, t0, _) = rig_on("no-uri", &account, desktop(player, track, t0), SMTC);
+        settle(&mut m, t0);
+        assert_eq!(m.liked(), None, "{player} {id}");
+        key(&mut m, t0, P::Like);
+        assert_eq!(toast(&m), "nothing to like", "{player} {id}");
+        assert!(account.state().liked.is_empty());
+        assert!(
+            !account
+                .state()
+                .requests
+                .iter()
+                .any(|r| matches!(r, Request::LibraryContains { .. })),
+            "{player} {id}"
+        );
+    }
+}
+
+#[test]
+fn windows_library_playback_says_truthfully_when_it_cant() {
+    let account = demo();
+    let t0 = Instant::now();
+    let mut snap = desktop("Spotify", smtc_track("Slow Rise 0"), t0);
+    snap.status = Play::Paused;
+    let (mut m, t0, source) = rig_on("smtc-play", &account, snap, SMTC);
+    settle(&mut m, t0);
+    let open_dw = |m: &mut Model| {
+        key(m, t0, P::Playlists);
+        m.update(Action::Edge(false), t0);
+        m.update(Action::Down, t0);
+        m.update(Action::Down, t0);
+        m.update(Action::Keep, t0);
+    };
+    // No device playing: nothing to play it with yet.
+    open_dw(&mut m);
+    assert_eq!(toast(&m), "press play in Spotify first, then pick it again");
+    assert!(source.sent().is_empty(), "{:?}", source.sent());
+    let status = |m: &Model| m.music.snapshot.as_ref().unwrap().status.clone();
+    assert_eq!(status(&m), Play::Paused, "not shown as playing");
+    m.update(Action::Close, t0);
+
+    // A device plays: the Web API plays it.
+    account.state().player = Ok(Some(premium(false)));
+    let later = t0 + Duration::from_secs(31);
+    settle(&mut m, later);
+    open_dw(&mut m);
+    let play = Request::Play {
+        context_uri: "spotify:playlist:dw".into(),
+        offset_uri: None,
+    };
+    assert!(account.state().requests.contains(&play));
+    assert_eq!(toast(&m), "playing Discover Weekly");
+
+    // Spotify refuses (no Premium): no fallback that does nothing.
+    account.state().fail = Some(Error::Forbidden("Premium required".into()));
+    m.update(Action::Keep, t0);
+    tick(&mut m, t0);
+    assert_eq!(toast(&m), "playing from here needs Spotify Premium");
+    assert!(source.sent().is_empty(), "{:?}", source.sent());
+    assert_eq!(status(&m), Play::Paused);
+}
+
+#[test]
+fn web_modes_belong_only_to_the_player_they_describe() {
+    // VLC on the desktop while the account plays (shuffled) elsewhere.
+    let account = demo();
+    account.state().player = Ok(Some(premium(true)));
+    let vlc = Track {
+        id: "/org/videolan/vlc/playlist/7".into(),
+        uri: None,
+        ..smtc_track("Slow Rise 0")
+    };
+    let t0 = Instant::now();
+    let (mut m, t0, source) = rig_on(
+        "modes-vlc",
+        &account,
+        desktop("VLC media player", vlc.clone(), t0),
+        Capabilities::ALL,
+    );
+    settle(&mut m, t0);
+    assert_eq!(m.music.web_caps, Capabilities::NONE);
+    assert!(!m.music.snapshot.as_ref().unwrap().shuffle, "VLC's own");
+    key(&mut m, t0, P::Shuffle);
+    assert_eq!(source.sent(), [Command::SetShuffle(true)]);
+    let web_shuffle = |a: &FakeWeb| {
+        a.state()
+            .requests
+            .iter()
+            .any(|r| matches!(r, Request::SetShuffle(_)))
+    };
+    assert!(!web_shuffle(&account), "nothing went to the account");
+    // A player without its own shuffle says so; the account is untouched.
+    source.set_capabilities(Capabilities::NONE);
+    key(&mut m, t0, P::Shuffle);
+    assert!(toast(&m).contains("can't shuffle"), "{}", toast(&m));
+    assert!(!web_shuffle(&account));
+
+    // Switching to Spotify playing that track: the Web modes apply...
+    let spotify = Track {
+        id: PLAYING.into(),
+        uri: Some(PLAYING.into()),
+        ..vlc.clone()
+    };
+    source.set(desktop("Spotify", spotify, t0));
+    settle(&mut m, t0);
+    assert!(m.music.web_caps.shuffle);
+    assert!(m.music.snapshot.as_ref().unwrap().shuffle);
+    key(&mut m, t0, P::Shuffle);
+    assert!(web_shuffle(&account));
+    // ...and back to VLC, they're gone at once.
+    source.set(desktop("VLC media player", vlc, t0));
+    tick(&mut m, t0);
+    assert_eq!(m.music.web_caps, Capabilities::NONE);
+    assert!(!m.music.snapshot.as_ref().unwrap().shuffle);
+}
+
+#[test]
+fn a_refused_account_is_told_how_to_fix_it_once() {
+    // Logged in, but not on the app's allowlist: every request is a 403.
+    let account = demo();
+    account.state().fail = Some(Error::Forbidden(
+        "Check settings on developer.spotify.com/dashboard, the user may not be registered.".into(),
+    ));
+    let (mut m, t0, _) = rig("refused", &account);
+    settle(&mut m, t0);
+    assert!(m.library.refused.is_some());
+    assert!(
+        m.list_message(ListKind::Playlists)
+            .starts_with("Spotify refused this account"),
+        "no endless loading…"
+    );
+    let asked = |a: &FakeWeb| {
+        a.state()
+            .requests
+            .iter()
+            .filter(|r| **r == Request::Me)
+            .count()
+    };
+    let before = asked(&account);
+    settle(&mut m, t0 + Duration::from_secs(1));
+    assert_eq!(asked(&account), before, "not asked again and again");
+    // A library key opens the setup, whose first row says why.
+    key(&mut m, t0, P::Playlists);
+    let view = m.settings_view().expect("the setup");
+    assert_eq!(view.page, crate::app::Page::Spotify);
+    let rows = m.settings_rows(crate::app::Page::Spotify);
+    assert_eq!(rows[0].value, "refused");
+    assert!(
+        rows[0].about.contains("User Management"),
+        "{}",
+        rows[0].about
+    );
+    // Logging in again starts afresh.
+    account.state().fail = None;
+    m.library.logout();
+    settle(&mut m, t0);
+    assert!(m.library.refused.is_none());
 }

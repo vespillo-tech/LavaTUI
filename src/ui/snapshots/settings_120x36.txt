@@ -308,16 +308,16 @@
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                    spotify setup                             │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    look             ▸ status                     not set up  │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    clock & timer      1  make a spotify app    open website  │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    widgets            2  add this address              copy  │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│  ▸ music & lyrics     3  paste the client id     paste here  │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    controls           4  connect                    connect  │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    window             spotify app                  checking  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    clock & timer      before you start       Premium needed  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    widgets            1  make a spotify app    open website  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│  ▸ music & lyrics     2  add this address              copy  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    controls           3  paste the client id     paste here  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    window             4  connect                    connect  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                       spotify app                  checking  │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│ Play, pause and skip work with the Spotify app on its own.   │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│ Playlists and likes need a one-time setup, about two         │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│ minutes: follow steps 1 to 4.                                │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│ Play, pause, skip, covers and lyrics work with no setup.     │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│ Playlists and likes need your own free Spotify developer     │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│ app: steps 1 to 4, about two minutes.                        │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
@@ -345,15 +345,15 @@
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                    spotify setup                             │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    look               status                     not set up  │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    clock & timer      1  make a spotify app    open website  │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    widgets            2  add this address              copy  │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│  ▸ music & lyrics   ▸ 3  paste the client id  …ient-secret▏  │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    controls           4  connect                    connect  │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    window             spotify app                  checking  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    clock & timer      before you start       Premium needed  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    widgets            1  make a spotify app    open website  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│  ▸ music & lyrics     2  add this address              copy  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    controls         ▸ 3  paste the client id  …ient-secret▏  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    window             4  connect                    connect  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                       spotify app                  checking  │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│ That isn't a Client ID: it only has the digits 0-9 and the   │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│ letters a-f.                                                 │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
@@ -382,16 +382,16 @@
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                    spotify setup                             │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    look             ▸ status                      connected  │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    clock & timer      1  make a spotify app    open website  │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    widgets            2  add this address              copy  │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│  ▸ music & lyrics     3  paste the client id  012345…abcdef  │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    controls           4  connect                  connected  │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    window             spotify app                  checking  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    clock & timer      before you start       Premium needed  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    widgets            1  make a spotify app    open website  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│  ▸ music & lyrics     2  add this address              copy  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    controls           3  paste the client id  012345…abcdef  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    window             4  connect                  connected  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                       spotify app                  checking  │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│ Play, pause and skip work with the Spotify app on its own.   │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│ Playlists and likes need a one-time setup, about two         │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│ minutes: follow steps 1 to 4.                                │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│ Play, pause, skip, covers and lyrics work with no setup.     │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│ Playlists and likes need your own free Spotify developer     │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│ app: steps 1 to 4, about two minutes.                        │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │

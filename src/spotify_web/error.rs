@@ -48,6 +48,12 @@ impl fmt::Display for Error {
                 "Spotify rate limit, try again in {}s",
                 retry_after.as_secs().max(1)
             ),
+            // A development-mode app's user who isn't on its allowlist.
+            Error::Forbidden(msg) if msg.to_ascii_lowercase().contains("registered") => f
+                .write_str(
+                    "Spotify refused this account: add it under User Management in your \
+                     Spotify app's settings",
+                ),
             Error::Forbidden(msg) => write!(f, "Spotify refused: {msg}"),
             Error::NotFound(msg) => write!(f, "not found on Spotify: {msg}"),
             Error::Api { status, message } => write!(f, "Spotify error {status}: {message}"),
@@ -141,6 +147,14 @@ mod tests {
                 status: 502,
                 message: "m".into()
             }
+        );
+        let stranger = Error::Forbidden(
+            "Check settings on developer.spotify.com/dashboard, the user may not be registered."
+                .into(),
+        );
+        assert!(
+            stranger.to_string().contains("User Management"),
+            "{stranger}"
         );
         assert!(Error::LoginExpired.needs_login());
         assert!(!Error::Offline("x".into()).needs_login());

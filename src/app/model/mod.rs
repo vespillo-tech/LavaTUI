@@ -160,7 +160,7 @@ pub struct Model {
     /// "auto"`).
     pub detected_cells: Cells,
     /// Draw only glyphs every terminal font has (read once at start;
-    /// `dock::music`'s controls).
+    /// [`Model::glyphs`]).
     pub safe_glyphs: bool,
     /// The cover as a real picture: what the terminal holds and what's on
     /// its way (bytes the loop writes after each frame).
@@ -709,6 +709,15 @@ pub fn speed_toast(speed: SimSpeed) -> String {
 }
 
 impl Model {
+    /// The symbols widgets and chrome draw with ([`crate::glyphs`]).
+    pub fn glyphs(&self) -> &'static crate::glyphs::Glyphs {
+        if self.safe_glyphs {
+            &crate::glyphs::SAFE
+        } else {
+            &crate::glyphs::RICH
+        }
+    }
+
     /// How cells are drawn (`display.cells`).
     pub fn cells(&self) -> Cells {
         match self.settings.display.cells {

@@ -63,7 +63,8 @@ pub enum Show {
 }
 
 fn show(model: &Model) -> Show {
-    let message = |text: &str| Show::Message(text.into());
+    // With its `♪`, when the glyphs have one.
+    let message = |text: &str| Show::Message(format!("{}{text}", model.glyphs().note));
     let Some(snap) = model.music.snapshot.as_ref() else {
         return message("…");
     };
@@ -94,7 +95,7 @@ pub fn lyrics_forms(show: &Show, place: Place) -> Vec<WidgetForm> {
                 Place::Overlay => MESSAGE_W.1,
                 _ => MESSAGE_W.0,
             };
-            let lines = wrap(&message_text(text), w);
+            let lines = wrap(text, w);
             let w = lines.iter().map(|l| width(l)).max().unwrap_or(1).max(1);
             vec![WidgetForm::fixed(w, lines.len() as u16, V_MESSAGE)]
         }
@@ -120,10 +121,6 @@ pub fn lyrics_forms(show: &Show, place: Place) -> Vec<WidgetForm> {
             forms
         }
     }
-}
-
-fn message_text(text: &str) -> String {
-    format!("♪ {text}")
 }
 
 impl DockWidget for Lyrics {
@@ -165,7 +162,7 @@ impl DockWidget for Lyrics {
         match (form.variant & 0xff00, show(model)) {
             (V_MESSAGE, Show::Message(text)) => {
                 let dim = model.theme.text(Role::Dim);
-                for (i, line) in wrap(&message_text(&text), area.width).iter().enumerate() {
+                for (i, line) in wrap(&text, area.width).iter().enumerate() {
                     pen.text(i as u16, line, dim);
                 }
             }
@@ -190,8 +187,11 @@ impl DockWidget for Lyrics {
             .cursor?
             .current(synced)
             .map_or("", |l| l.text.as_str());
-        Some(ChipText {
-            text: fit(format!("♪ {line}").trim_end(), CHIP_MAX),
+        let text = format!("{}{line}", model.glyphs().note);
+        let text = text.trim_end();
+        // A gap with no note to show: no chip.
+        (!text.is_empty()).then(|| ChipText {
+            text: fit(text, CHIP_MAX),
             ink: Role::Text,
         })
     }
@@ -379,11 +379,11 @@ mod tests {
     #[test]
     fn messages_are_one_calm_form() {
         for place in [Place::Side, Place::Overlay] {
-            let forms = lyrics_forms(&Show::Message("no lyrics for this track".into()), place);
+            let forms = lyrics_forms(&Show::Message("♪ no lyrics for this track".into()), place);
             assert_eq!(forms.len(), 1);
             assert!(forms[0].size.width <= 30);
         }
-        let short = lyrics_forms(&Show::Message("instrumental".into()), Place::Overlay);
+        let short = lyrics_forms(&Show::Message("♪ instrumental".into()), Place::Overlay);
         assert_eq!(short[0].size, Size::new(14, 1));
     }
 }

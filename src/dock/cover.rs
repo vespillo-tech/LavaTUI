@@ -249,7 +249,15 @@ pub enum Show {
     Message(String),
 }
 
+/// [`what`], its message with its `♪` when the glyphs have one.
 fn show(model: &Model) -> Show {
+    match what(model) {
+        Show::Message(text) => Show::Message(format!("{}{text}", model.glyphs().note)),
+        picture => picture,
+    }
+}
+
+fn what(model: &Model) -> Show {
     if model.pictures() == Drawn::None {
         return Show::Message("covers need 256 colours".into());
     }
@@ -293,13 +301,13 @@ pub fn cover_forms(show: &Show, place: Place, size: CoverSize, aspect: f64) -> V
     }
 }
 
-/// `♪ text`, wrapped for `place`.
+/// `text`, wrapped for `place`.
 fn message(text: &str, place: Place) -> Vec<String> {
     let w = match place {
         Place::Overlay => MESSAGE_W.1,
         _ => MESSAGE_W.0,
     };
-    wrap(&format!("♪ {text}"), w)
+    wrap(text, w)
 }
 
 /// Where the picture goes in a placed cover form (its own size, lined up
@@ -441,7 +449,7 @@ pub(super) fn draw_cover(model: &Model, r: Rect, buf: &mut Buffer) {
 }
 
 /// A quiet tile where the cover will be: `bg` tinted toward `dim`, a dim
-/// `♪` in the middle.
+/// `♪` in the middle (when the glyphs have one).
 fn placeholder(model: &Model, r: Rect, buf: &mut Buffer) {
     let theme = &model.theme;
     let tile = theme
@@ -452,9 +460,10 @@ fn placeholder(model: &Model, r: Rect, buf: &mut Buffer) {
         buf[pos].set_char(' ').set_bg(tile);
     }
     let (cx, cy) = (r.x + r.width / 2, r.y + r.height / 2);
-    if r.contains((cx, cy).into()) {
+    let note = model.glyphs().note.trim();
+    if r.contains((cx, cy).into()) && !note.is_empty() {
         buf[(cx, cy)]
-            .set_char('♪')
+            .set_symbol(note)
             .set_fg(theme.role(Role::Dim))
             .set_bg(tile);
     }
@@ -574,7 +583,7 @@ mod tests {
         let tall = cover_forms(&Show::Picture, Place::Overlay, CoverSize::Medium, 2.4);
         assert_eq!(tall[0].size.height, 10);
         let msg = cover_forms(
-            &Show::Message("no cover".into()),
+            &Show::Message("♪ no cover".into()),
             Place::Side,
             CoverSize::Fill,
             2.0,
@@ -582,7 +591,7 @@ mod tests {
         assert_eq!(msg.len(), 1);
         assert_eq!((msg[0].size.width, msg[0].size.height), (10, 1));
         // Longer ones wrap to fit the panel's narrowest.
-        let long = Show::Message("covers need 256 colours".into());
+        let long = Show::Message("♪ covers need 256 colours".into());
         let side = cover_forms(&long, Place::Side, CoverSize::Fill, 2.0);
         assert!(
             side[0].size.width <= 20 && side[0].size.height == 2,

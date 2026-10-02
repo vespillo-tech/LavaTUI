@@ -85,14 +85,16 @@ in minimal mode:
   and cached (`$XDG_CACHE_HOME/lavatui/art`) in the background. On Linux
   and Windows it shows any player (Spotify first); see
   [Platform support](#platform-support).
-- **Your Spotify library** (a one-time setup the app walks you through:
-  press `,`, then *music & lyrics* → *spotify*): log in
-  once (`A` then `i`, in the browser), then browse your playlists (`b`),
+- **Your Spotify library** (optional): browse your playlists (`b`),
   open the ones you own or share and play any track in them, add the
   playing track to a playlist (`a`), and like or unlike it (`s`; a `♥` in
-  the widget). With Premium, shuffle and repeat (`x` / `r`) work too,
-  through the Web API. All of it runs on a worker thread; the lamp never
-  waits for Spotify.
+  the widget). With Premium, shuffle and repeat (`x` / `r`) work too.
+  This needs a one-time setup (a free Spotify developer app of your own;
+  the app walks you through it: press `,`, then *music & lyrics* →
+  *spotify*), and **the account that makes that app needs Premium**. See
+  [Spotify library: before you start](#spotify-library-before-you-start).
+  Now playing, the music controls, the cover and lyrics need none of it.
+  All of it runs on a worker thread; the lamp never waits for Spotify.
 - **Album cover** (`o`, off by default): the playing track's cover as a
   widget of its own, beside the lamp or on the lava (top right by
   default), small / medium / large / as big as fits (`art.size`). In
@@ -263,8 +265,9 @@ small window it waits, showing just `? help · q quit`, until there's room.
   show, the controls show it in a small card.
 - **In the playlist browser:** `j`/`k` move, `enter` (or `l`) opens a
   playlist you own or share (others: plays it) or plays a track in it
-  (then the rest of the playlist follows, Premium or not), `p` plays the
-  whole playlist, `g`/`G` and page up/down jump, `esc` (or `h`) goes
+  (the rest of the playlist follows with Premium, and on macOS without;
+  see [Platform support](#platform-support) for Linux and Windows), `p`
+  plays the whole playlist, `g`/`G` and page up/down jump, `esc` (or `h`) goes
   back, `q` closes. The add-to-playlist picker lists only playlists you
   can add to; `enter` adds.
 - **Finding a playlist or song:** press `/` in the browser and type part
@@ -311,12 +314,21 @@ playing differs:
 | Volume | ✓ | ✓ if the player has it | – (SMTC has no volume: no readout, the keys say so) |
 | Shuffle / repeat | – (no-ops in Spotify 1.2) | ✓ if the player honours them | ✓ if the app honours them |
 | Cover art | ✓ | ✓ (`https` art URLs, so Spotify) | ✓ (the session's thumbnail; untested on real Windows) |
+| Like / add the playing song (library setup) | ✓ | ✓ Spotify songs | ✓ Spotify songs, once your account's player reports the same song (a moment after it changes) |
+| Play from the playlist browser | ✓, the rest of the playlist follows | with Premium and Spotify playing: ✓; otherwise just that song | with Premium and Spotify playing: ✓; otherwise it says so |
 | Launches the player? | never | never | never |
 | Permission | macOS asks once (Automation) | none | none |
 
 Linux players vary: Spotify has long reported its position as 0 over
 MPRIS (the bar then counts from where it was first seen) and ignored
 shuffle and repeat. Anything a player leaves out falls back quietly.
+Like and add work only for Spotify songs: local files, ads and other
+players have nothing for Spotify to save, and the app says so. Windows'
+media controls don't say which Spotify song is playing, so there the app
+asks Spotify's servers what your account is playing and uses it only when
+it is the same song. They also can't be told what to play, so the
+playlist browser plays through Spotify's servers there, which needs
+Premium and Spotify open and playing on a device.
 
 ## Configuration
 
@@ -401,6 +413,47 @@ Music needs nothing set up: it talks to the Spotify desktop app. The
 first time, macOS asks whether your terminal may control Spotify; if you
 said no, the widget tells you where to change it (System Settings ›
 Privacy & Security › Automation).
+
+### Spotify library: before you start
+
+Now playing, the music controls, the cover and lyrics work without any
+of this. Your playlists, likes and "add to playlist" need a one-time
+setup, and Spotify only allows it for some accounts. Check these first
+(Spotify's rules, checked on 2026-10-01):
+
+- **You make your own free Spotify developer app** and give LavaTUI its
+  Client ID. No secret and no password: just the ID. The app walks you
+  through it in about two minutes: press `,`, then *music & lyrics* →
+  *spotify*.
+- **The Spotify account that makes the developer app needs Premium.** If
+  that Premium ends, the library stops working for everyone who uses the
+  app.
+- **At most 5 Spotify accounts can use the app, including its owner.**
+  The owner adds each one by email under *User Management* in the app's settings.
+  Sharing your Client ID with a friend only works once they're on that
+  list.
+- **Shuffle, repeat and playing playlists through Spotify** also need
+  Premium on your own account, and Spotify playing on one of your
+  devices.
+
+If something goes wrong:
+
+- **You can log in, but then see "Spotify refused this account".** The
+  account isn't on the app's list, or the app's owner has no Premium.
+  Fix that on the Spotify dashboard, then in *spotify* setup press
+  `enter` twice on *connect* to disconnect, and once more to connect.
+- **The login page says the redirect address is wrong.** The address in
+  step 2 must be exactly `http://127.0.0.1:8731/callback`.
+- **"Spotify login expired" or "log in to Spotify again".** A login
+  lasts six months, and one made before shuffle and repeat existed can't
+  use them. Log in afresh: `A`, then `i` (if you're still logged in,
+  `i` twice logs out first).
+
+Spotify's pages on this:
+[quota modes](https://developer.spotify.com/documentation/web-api/concepts/quota-modes),
+[the February 2026 changes](https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide),
+[the July 2026 changes](https://developer.spotify.com/documentation/web-api/references/changes/july-2026).
+More detail for developers: [docs/spotify.md](docs/spotify.md).
 
 Lyrics are **off until you place them** (`y`): with the widget on, the
 title, artist, album and length of each track you play are sent to

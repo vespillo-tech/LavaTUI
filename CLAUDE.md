@@ -186,6 +186,12 @@ numbers); `docs/design.md` is the layout/visual contract.
                 Ghostex / zmx, `cells::hosted`;
                 `ui::draw` ends with `render::fill_from_background`, which
                 turns blocks so their top edge is the cell background).
+                Also `safe_glyphs` (Ghostex / zmx hosts, `LAVATUI_GLYPHS=
+                safe|rich`).
+- `glyphs.rs` — every symbol beyond ASCII / Latin-1 / `▶ … ━ ─` / blocks
+                that widgets and chrome draw (`♪ ♥ ♡ ⇄ ↻ ◂◂ ▸▸ ‖ ≡`,
+                list pointer, pomodoro marks), as `RICH` and `SAFE`;
+                `Model::glyphs()` picks one. New symbols go here.
 - `timing.rs` — pure loop timing: `FixedStep` (accumulator, no per-frame
                 cap: sim time tracks real time × speed at any fps; only a
                 > 1.5 s `STALL` is cut short; `alpha()` for interpolation),

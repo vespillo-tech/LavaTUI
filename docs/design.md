@@ -1312,8 +1312,11 @@ keys do; `ui/settings.rs` places and draws it.
   `⏎`; the wheel moves. Status bar hints: `↑↓ move  ⏎ open  esc close`,
   in a page `↑↓ move  ←→ change  ⏎ choose  esc back`.
 * **Spotify setup** (*music & lyrics* → *spotify*, and what a library
-  key opens while there's no Client ID): `status`, then four numbered
-  steps: `1 make a spotify app` opens developer.spotify.com/dashboard in
+  key opens while there's no Client ID, or while Spotify refuses the
+  logged-in account): `status` (`refused`, with what to fix, when
+  Spotify refused the account), `before you start` (`Premium needed`:
+  the app owner's Premium and the 5-person allowlist, read before step
+  1), then four numbered steps: `1 make a spotify app` opens developer.spotify.com/dashboard in
   the browser (off the input path), `2 add this address` copies the
   redirect URI with OSC 52 (the explanation shows it too, to type),
   `3 paste the client id` is a text field (`⏎` to type, or just paste:
