@@ -4,9 +4,10 @@
 #   tools/linux/run.sh                  # native arch: build, tests, MPRIS, pty
 #   tools/linux/run.sh --amd64          # linux/amd64 (emulated on Apple silicon)
 #   tools/linux/run.sh [--amd64] shell  # a shell in the box, session bus up
-#   tools/linux/run.sh [--amd64] <step>...  # build | test | mpris | pty
+#   tools/linux/run.sh [--amd64] <step>...  # build | lint | test | mpris | pty
 #
-# Steps: build (cargo build --release), test (cargo test, the full suite),
+# Steps: build (cargo build --release), lint (fmt + clippy, Linux-only code
+# included), test (cargo test, the full suite),
 # mpris (the ignored MPRIS integration tests against tools/linux/fake_mpris.py
 # on a private session bus), pty (lavatui in a pty with the music widget
 # placed, driven by tools/linux/pty_check.py, against the fake as itself and
@@ -24,7 +25,7 @@ fi
 tag="lavatui-linux:${platform#linux/}"
 vol="lavatui-linux-${platform#linux/}"
 steps=("$@")
-[[ ${#steps[@]} -eq 0 ]] && steps=(build test mpris pty)
+[[ ${#steps[@]} -eq 0 ]] && steps=(build lint test mpris pty)
 
 docker build --platform "$platform" -t "$tag" "$here"
 
@@ -39,6 +40,7 @@ for step in "$@"; do
     echo "=== $step ($(uname -m)) ==="
     case $step in
         build) cargo build --release --locked ;;
+        lint) cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings ;;
         test) cargo test --locked ;;
         mpris) cargo test --locked mpris::live -- --ignored --test-threads=1 --nocapture ;;
         pty) cargo build --release --locked
