@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use sha2::{Digest, Sha256};
 
@@ -53,6 +53,11 @@ pub const CACHE_LIMITS: Limits = Limits {
 /// Bigger downloads are refused (Spotify's 640 px covers are ~100 KB).
 const MAX_BYTES: u64 = 8 * 1024 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(10);
+/// Waits before each retry of a download that failed (a newer cover
+/// interrupts them).
+pub const RETRY_AFTER: [Duration; 2] = [Duration::from_secs(1), Duration::from_secs(4)];
+/// After those, how long until the cover still wanted is asked for again.
+pub const ASK_AGAIN: Duration = Duration::from_secs(30);
 /// The scheme of covers handed over as bytes ([`stash`]).
 pub const THUMB_SCHEME: &str = "lavatui-thumb:";
 /// Stashed covers kept (the playing one and a few before it).
@@ -246,8 +251,36 @@ impl Fetch for Ureq {
 /// What the worker is asked for: a URL, and whether the sharp copy too.
 type Request = (String, bool);
 
-/// The cover the worker last finished, by request.
-type Latest = Arc<Mutex<Option<(Request, ArtState)>>>;
+/// How a download that failed is tried again (lava-75z.22: a network blip
+/// as a song began used to leave it without a cover until the next one).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Retry {
+    /// Waits before each retry, on the worker.
+    pub after: Vec<Duration>,
+    /// After those, how long until [`ArtLoader::want`] asks again for the
+    /// cover still wanted (and again, as long as it fails).
+    pub again: Duration,
+}
+
+impl Default for Retry {
+    fn default() -> Self {
+        Self {
+            after: RETRY_AFTER.to_vec(),
+            again: ASK_AGAIN,
+        }
+    }
+}
+
+/// The cover the worker last finished.
+#[derive(Debug)]
+struct Done {
+    request: Request,
+    state: ArtState,
+    /// When its download failed (worth asking again), if it did.
+    failed_at: Option<Instant>,
+}
+
+type Latest = Arc<Mutex<Option<Done>>>;
 
 /// Handle to the art worker. Dropping it stops the worker once it has
 /// finished the cover in hand.
@@ -256,6 +289,7 @@ pub struct ArtLoader {
     latest: Latest,
     wanted: Option<Request>,
     hires: bool,
+    again: Duration,
 }
 
 impl ArtLoader {
@@ -265,13 +299,19 @@ impl ArtLoader {
     }
 
     pub fn spawn<F: Fetch>(fetch: F, cache: Option<PathBuf>) -> Self {
+        Self::spawn_with(fetch, cache, Retry::default())
+    }
+
+    pub fn spawn_with<F: Fetch>(fetch: F, cache: Option<PathBuf>, retry: Retry) -> Self {
         let latest = Latest::default();
         let (tx, rx) = mpsc::channel();
+        let again = retry.again;
         let worker = Worker {
             fetch,
             cache,
             requests: rx,
             latest: Arc::clone(&latest),
+            retry_after: retry.after,
         };
         let spawned = thread::Builder::new()
             .name("lavatui-art".into())
@@ -284,6 +324,7 @@ impl ArtLoader {
             latest,
             wanted: None,
             hires: false,
+            again,
         }
     }
 
@@ -295,12 +336,14 @@ impl ArtLoader {
         let request = (url.to_owned(), hires);
         Self {
             requests: None,
-            latest: Arc::new(Mutex::new(Some((
-                request.clone(),
-                ArtState::Ready(Arc::new(art)),
-            )))),
+            latest: Arc::new(Mutex::new(Some(Done {
+                request: request.clone(),
+                state: ArtState::Ready(Arc::new(art)),
+                failed_at: None,
+            }))),
             wanted: Some(request),
             hires,
+            again: ASK_AGAIN,
         }
     }
 
@@ -312,22 +355,40 @@ impl ArtLoader {
     }
 
     /// Ask for the cover at `url` (a no-op if it's the one already asked
-    /// for). Anything but `https` is never fetched; stashed covers
+    /// for, unless its download failed a while ago: see [`Retry`]).
+    /// Anything but `https` is never fetched; stashed covers
     /// (`lavatui-thumb:`) are decoded from memory.
     pub fn want(&mut self, url: &str) {
         let request = (url.to_owned(), self.hires);
         if self.wanted.as_ref() == Some(&request) {
+            let mut latest = lock(&self.latest);
+            let due = latest.as_mut().filter(|done| {
+                done.request == request
+                    && done.failed_at.is_some_and(|at| at.elapsed() >= self.again)
+            });
+            if let Some(done) = due {
+                // Still shown as missing until the worker says otherwise.
+                done.failed_at = None;
+                drop(latest);
+                self.send(request);
+            }
             return;
         }
         self.wanted = Some(request.clone());
-        let sent = (url.starts_with("https://") || url.starts_with(THUMB_SCHEME))
-            && self
-                .requests
-                .as_ref()
-                .is_some_and(|tx| tx.send(request.clone()).is_ok());
-        if !sent {
-            *lock(&self.latest) = Some((request, ArtState::Missing));
+        let fetchable = url.starts_with("https://") || url.starts_with(THUMB_SCHEME);
+        if !(fetchable && self.send(request.clone())) {
+            *lock(&self.latest) = Some(Done {
+                request,
+                state: ArtState::Missing,
+                failed_at: None,
+            });
         }
+    }
+
+    fn send(&self, request: Request) -> bool {
+        self.requests
+            .as_ref()
+            .is_some_and(|tx| tx.send(request).is_ok())
     }
 
     /// The cover last asked for, as far as it has got.
@@ -336,7 +397,7 @@ impl ArtLoader {
             return ArtState::Loading;
         };
         match &*lock(&self.latest) {
-            Some((request, state)) if request == wanted => state.clone(),
+            Some(done) if done.request == *wanted => done.state.clone(),
             _ => ArtState::Loading,
         }
     }
@@ -356,24 +417,81 @@ struct Worker<F> {
     cache: Option<PathBuf>,
     requests: Receiver<Request>,
     latest: Latest,
+    retry_after: Vec<Duration>,
+}
+
+/// Why a cover couldn't be had.
+enum Failure {
+    /// The download failed: worth trying again.
+    Fetch(String),
+    /// A picture that won't decode, a stashed one that's gone: final.
+    Bad,
 }
 
 impl<F: Fetch> Worker<F> {
     fn run(mut self) {
-        while let Ok(first) = self.requests.recv() {
+        let Ok(mut next) = self.requests.recv() else {
+            return;
+        };
+        loop {
             // Skipped through tracks quickly: only the last one matters.
-            let request = self.requests.try_iter().last().unwrap_or(first);
-            let state = match self.load(&request.0, request.1) {
-                Some(art) => ArtState::Ready(Arc::new(art)),
-                None => ArtState::Missing,
-            };
-            *lock(&self.latest) = Some((request, state));
+            let request = self.requests.try_iter().last().unwrap_or(next);
+            match self.attempt(&request) {
+                Ok((state, failed_at)) => {
+                    *lock(&self.latest) = Some(Done {
+                        request,
+                        state,
+                        failed_at,
+                    });
+                }
+                // A newer cover came while waiting to retry: that one now.
+                Err(newer) => {
+                    next = newer;
+                    continue;
+                }
+            }
+            match self.requests.recv() {
+                Ok(request) => next = request,
+                Err(_) => return,
+            }
         }
     }
 
-    fn load(&mut self, url: &str, hires: bool) -> Option<Art> {
+    /// Load `request`, retrying a failed download after each wait in
+    /// `retry_after`; or the newer request that came meanwhile.
+    fn attempt(&mut self, request: &Request) -> Result<(ArtState, Option<Instant>), Request> {
+        let mut tries = 0;
+        loop {
+            let why = match self.load(&request.0, request.1) {
+                Ok(art) => return Ok((ArtState::Ready(Arc::new(art)), None)),
+                Err(Failure::Bad) => return Ok((ArtState::Missing, None)),
+                Err(Failure::Fetch(why)) => why,
+            };
+            let Some(&wait) = self.retry_after.get(tries) else {
+                crate::diag::note(|| {
+                    format!(
+                        "art: cover {} not downloaded after {} tries: {why}",
+                        crate::diag::tag(&request.0),
+                        tries + 1
+                    )
+                });
+                return Ok((ArtState::Missing, Some(Instant::now())));
+            };
+            tries += 1;
+            match self.requests.recv_timeout(wait) {
+                Ok(newer) => return Err(newer),
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Ok((ArtState::Missing, None));
+                }
+            }
+        }
+    }
+
+    fn load(&mut self, url: &str, hires: bool) -> Result<Art, Failure> {
         if url.starts_with(THUMB_SCHEME) {
-            return Art::decode(&stashed(url)?, hires).ok();
+            let bytes = stashed(url).ok_or(Failure::Bad)?;
+            return Art::decode(&bytes, hires).map_err(|_| Failure::Bad);
         }
         let path = self.cache.as_ref().map(|dir| dir.join(file_name(url)));
         if let Some((p, art)) = path.as_ref().and_then(|p| {
@@ -381,15 +499,15 @@ impl<F: Fetch> Worker<F> {
             Some((p, Art::decode(&bytes, hires).ok()?))
         }) {
             disk_cache::touch(p, SystemTime::now());
-            return Some(art);
+            return Ok(art);
         }
-        let bytes = self.fetch.get(url).ok()?;
-        let art = Art::decode(&bytes, hires).ok()?;
+        let bytes = self.fetch.get(url).map_err(Failure::Fetch)?;
+        let art = Art::decode(&bytes, hires).map_err(|_| Failure::Bad)?;
         if let (Some(dir), Some(path)) = (&self.cache, &path) {
             let _ = fs::create_dir_all(dir).and_then(|()| write_atomic(path, &bytes));
             disk_cache::prune(dir, CACHE_EXT, CACHE_LIMITS, SystemTime::now());
         }
-        Some(art)
+        Ok(art)
     }
 }
 
@@ -521,13 +639,139 @@ mod tests {
         let file = dir.0.join(file_name("https://i.example/a"));
         let long_ago = UNIX_EPOCH + Duration::from_secs(1_000_000_000);
         disk_cache::touch(&file, long_ago);
-        let mut offline = ArtLoader::spawn(Served(Arc::new(Mutex::new(0)), 0), Some(dir.0.clone()));
+        let mut offline = ArtLoader::spawn_with(
+            Served(Arc::new(Mutex::new(0)), 0),
+            Some(dir.0.clone()),
+            fast_retry(),
+        );
         offline.want("https://i.example/a");
         assert!(matches!(wait(&offline), ArtState::Ready(_)));
         let used = fs::metadata(&file).unwrap().modified().unwrap();
         assert!(used > long_ago);
         offline.want("https://i.example/broken");
         assert_eq!(wait(&offline), ArtState::Missing);
+    }
+
+    fn fast_retry() -> Retry {
+        Retry {
+            after: vec![Duration::from_millis(5)],
+            again: Duration::from_millis(30),
+        }
+    }
+
+    /// Fails the first `fails` downloads, then serves a PNG; counts them.
+    struct Flaky {
+        fails: u32,
+        count: Arc<Mutex<u32>>,
+    }
+
+    impl Fetch for Flaky {
+        fn get(&mut self, _: &str) -> Result<Vec<u8>, String> {
+            let mut n = self.count.lock().unwrap();
+            *n += 1;
+            if *n <= self.fails {
+                return Err("network down".into());
+            }
+            Ok(png(8, 8))
+        }
+    }
+
+    fn flaky(fails: u32) -> (ArtLoader, Arc<Mutex<u32>>) {
+        let count = Arc::new(Mutex::new(0));
+        let fetch = Flaky {
+            fails,
+            count: Arc::clone(&count),
+        };
+        (ArtLoader::spawn_with(fetch, None, fast_retry()), count)
+    }
+
+    /// lava-75z.22: a download that fails once (a network blip as the song
+    /// starts) is retried on the worker, and the cover comes.
+    #[test]
+    fn a_failed_download_is_retried() {
+        let (mut loader, count) = flaky(1);
+        loader.want("https://i.example/a");
+        assert!(matches!(wait(&loader), ArtState::Ready(_)));
+        assert_eq!(*count.lock().unwrap(), 2);
+    }
+
+    /// When the retries fail too, the cover is missing for now, and asked
+    /// for again (once) after `again` while it's still the one wanted.
+    #[test]
+    fn a_cover_still_missing_is_asked_for_again_later() {
+        let count = Arc::new(Mutex::new(0));
+        let fetch = Flaky {
+            fails: 2,
+            count: Arc::clone(&count),
+        };
+        let retry = Retry {
+            again: Duration::from_millis(300),
+            ..fast_retry()
+        };
+        let mut loader = ArtLoader::spawn_with(fetch, None, retry);
+        loader.want("https://i.example/a");
+        assert_eq!(wait(&loader), ArtState::Missing);
+        assert_eq!(*count.lock().unwrap(), 2);
+        // Too soon: nothing new.
+        loader.want("https://i.example/a");
+        thread::sleep(Duration::from_millis(20));
+        assert_eq!(*count.lock().unwrap(), 2);
+        thread::sleep(Duration::from_millis(350));
+        // Each frame asks; one request goes.
+        for _ in 0..5 {
+            loader.want("https://i.example/a");
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !matches!(loader.get(), ArtState::Ready(_)) {
+            assert!(Instant::now() < deadline, "never came");
+            thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(*count.lock().unwrap(), 3);
+    }
+
+    /// A cover that won't decode isn't fetched again and again.
+    #[test]
+    fn a_bad_picture_is_not_retried() {
+        struct Junk(Arc<Mutex<u32>>);
+        impl Fetch for Junk {
+            fn get(&mut self, _: &str) -> Result<Vec<u8>, String> {
+                *self.0.lock().unwrap() += 1;
+                Ok(b"not an image".to_vec())
+            }
+        }
+        let count = Arc::new(Mutex::new(0));
+        let mut loader = ArtLoader::spawn_with(Junk(Arc::clone(&count)), None, fast_retry());
+        loader.want("https://i.example/a");
+        assert_eq!(wait(&loader), ArtState::Missing);
+        thread::sleep(Duration::from_millis(50));
+        loader.want("https://i.example/a");
+        thread::sleep(Duration::from_millis(20));
+        assert_eq!(*count.lock().unwrap(), 1);
+    }
+
+    /// A newer cover wanted while one waits to retry goes first, and the
+    /// old one's answer never shows.
+    #[test]
+    fn a_newer_cover_interrupts_a_retry_wait() {
+        let count = Arc::new(Mutex::new(0));
+        let fetch = Flaky {
+            fails: 1,
+            count: Arc::clone(&count),
+        };
+        let retry = Retry {
+            after: vec![Duration::from_secs(30)],
+            again: Duration::from_secs(30),
+        };
+        let mut loader = ArtLoader::spawn_with(fetch, None, retry);
+        loader.want("https://i.example/a");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while *count.lock().unwrap() == 0 {
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(2));
+        }
+        loader.want("https://i.example/b");
+        assert!(matches!(wait(&loader), ArtState::Ready(_)));
+        assert_eq!(*count.lock().unwrap(), 2);
     }
 
     #[test]

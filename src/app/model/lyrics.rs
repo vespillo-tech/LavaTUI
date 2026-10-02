@@ -19,6 +19,10 @@ use crate::media::{Snapshot, Status};
 
 /// How long a new line takes to brighten (and the old one to dim).
 pub const FADE: Duration = Duration::from_millis(320);
+/// While LRCLIB is out of reach, the playing track is asked about again
+/// this often (lava-75z.22: a network blip as a song began used to leave
+/// it on "lyrics offline" to the end).
+pub const ASK_AGAIN: Duration = Duration::from_secs(30);
 
 type Start = Box<dyn Fn() -> Option<LyricsService>>;
 
@@ -38,6 +42,8 @@ pub struct LyricsState {
     start: Start,
     /// The track the lyrics are for (the last one asked about).
     track: Option<lyrics::Track>,
+    /// When it was last asked about.
+    asked_at: Option<Instant>,
     pub found: Option<Fetch>,
     syncer: Syncer,
     /// Where playback is in synced lyrics, this frame.
@@ -55,6 +61,7 @@ impl Default for LyricsState {
             service: None,
             start: Box::new(|| LyricsService::start().ok()),
             track: None,
+            asked_at: None,
             found: None,
             syncer: Syncer::default(),
             cursor: None,
@@ -74,6 +81,7 @@ impl LyricsState {
 
     fn forget(&mut self) {
         self.track = None;
+        self.asked_at = None;
         self.found = None;
         self.cursor = None;
         self.changed = None;
@@ -130,6 +138,20 @@ impl LyricsState {
                 None => Fetch::Offline,
             });
             self.track = Some(key);
+            self.asked_at = Some(now);
+        } else if self.found == Some(Fetch::Offline)
+            && self
+                .asked_at
+                .is_none_or(|at| now.saturating_duration_since(at) >= ASK_AGAIN)
+        {
+            // "lyrics offline" stays up until the answer replaces it.
+            if self.service.is_none() {
+                self.service = (self.start)();
+            }
+            if let Some(service) = &mut self.service {
+                service.request(key);
+            }
+            self.asked_at = Some(now);
         }
         if let Some(response) = self.service.as_mut().and_then(LyricsService::poll) {
             self.found = Some(match response.answer {

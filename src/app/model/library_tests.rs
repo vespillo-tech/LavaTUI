@@ -1267,3 +1267,71 @@ fn a_key_waiting_for_the_login_gives_up_after_a_while() {
     tick(&mut m, t0 + PENDING_FOR + Duration::from_secs(2));
     assert!(!account.state().liked.contains(PLAYING));
 }
+
+/// The player keys the music card's controls stand for, as clicked.
+fn buttons(m: &Model) -> Vec<P> {
+    let area = m.layout.area;
+    let mut found = Vec::new();
+    for row in area.top()..area.bottom() {
+        for col in area.left()..area.right() {
+            if let Some(k) = m.music_hit(col, row)
+                && !found.contains(&k)
+            {
+                found.push(k);
+            }
+        }
+    }
+    found
+}
+
+/// lava-75z.22: a failed "is it liked?" (offline, a rate limit) used to be
+/// asked again on the very next frame, over and over, which kept a rate
+/// limit going; and the `+` waited on its answer. Now it waits (Spotify's
+/// `Retry-After` when longer), and `+` shows for any Spotify song.
+#[test]
+fn a_failed_liked_lookup_waits_and_add_stays() {
+    let account = demo();
+    let (mut m, t0, source) = rig("liked-retry", &account);
+    m.settings.input.mouse = true;
+    m.update(Action::Back, t0);
+    tick(&mut m, t0);
+    assert_eq!(m.liked(), Some(false));
+    let asked = |a: &FakeWeb| {
+        a.state()
+            .requests
+            .iter()
+            .filter(|r| matches!(r, Request::LibraryContains { .. }))
+            .count()
+    };
+    let before = asked(&account);
+
+    // The next song's lookup is rate limited.
+    account.state().fail = Some(Error::RateLimited {
+        retry_after: Duration::from_secs(20),
+    });
+    let next = Track {
+        id: "spotify:track:t1".into(),
+        uri: Some("spotify:track:t1".into()),
+        name: "Slow Rise 1".into(),
+        ..Track::default()
+    };
+    source.set(desktop("Spotify", next, t0));
+    for frame in 0..30 {
+        tick(&mut m, t0 + Duration::from_millis(16 * frame));
+    }
+    assert_eq!(asked(&account), before + 1, "not asked every frame");
+    assert_eq!(m.liked(), None, "no heart while unknown");
+    let shown = buttons(&m);
+    assert!(shown.contains(&P::AddToPlaylist), "{shown:?}");
+    assert!(!shown.contains(&P::Like), "{shown:?}");
+
+    // Not before Spotify said to wait; then asked again, and the heart is
+    // back.
+    tick(&mut m, t0 + Duration::from_secs(10));
+    assert_eq!(asked(&account), before + 1);
+    tick(&mut m, t0 + Duration::from_secs(21));
+    assert_eq!(asked(&account), before + 2);
+    tick(&mut m, t0 + Duration::from_secs(21));
+    assert_eq!(m.liked(), Some(false));
+    assert!(buttons(&m).contains(&P::Like));
+}

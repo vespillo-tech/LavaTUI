@@ -372,7 +372,9 @@ fn card_controls(model: &Model, snap: &Snapshot, r: Rect) -> Vec<Control> {
         ];
     }
     let mut right: Vec<(Button, String, Role)> = Vec::new();
-    let spotify_track = model.liked().is_some();
+    // A Spotify song can be added to a playlist whether or not "is it
+    // liked?" has answered yet (or failed: lava-75z.22).
+    let spotify_track = model.playing_uri().is_some();
     match model.library.account() {
         Account::LoggedIn => {
             if let Some((text, ink)) = heart(model).filter(|(_, ink)| mouse || *ink == Role::Accent)

@@ -80,6 +80,22 @@ same title and artist, and the same length or album. They also can't be told wha
 the playlist browser plays through Spotify's servers there, which needs
 Premium and Spotify open on a device.
 
+When something goes wrong for a moment, it comes back by itself. A
+player that misses an answer or two (Spotify can take a second over a
+track change) keeps what's shown and is asked again at once; only a
+third miss in a row shows the problem. A song first read with details
+missing is read again for a few seconds. A cover download that fails is
+retried after 1 s and 4 s, then every 30 s while the song plays; lyrics
+that couldn't be fetched are asked for again every 30 s; a failed "is
+this song liked?" waits 5 s (or as long as Spotify asks) before asking
+again. Songs LRCLIB has no lyrics for say so, and are asked about again
+the next day.
+
+For problems that come and go, `LAVATUI_MEDIA_LOG=<file>` writes one line
+per event to that file: a missed player answer, a song read without some
+details, a cover or lyrics lookup that failed, a library lookup that
+failed. Songs appear only as a short hash, never by name.
+
 ## Pictures in the terminal
 
 The album cover is a real picture where the terminal can show one:

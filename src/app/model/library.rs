@@ -28,6 +28,10 @@ use crate::ui::picker::{self, Hit, Placement};
 
 /// How often the player state is read again while nothing changes.
 const PLAYER_EVERY: Duration = Duration::from_secs(30);
+/// A failed "is it liked?" is asked again after this (or Spotify's
+/// `Retry-After`, if longer): not every frame, which kept a rate limit
+/// going and the heart and `+` away (lava-75z.22).
+const LIKED_RETRY: Duration = Duration::from_secs(5);
 /// The second `i` within this logs out.
 const LOGOUT_WINDOW: Duration = Duration::from_secs(2);
 /// Events handled per frame at most (the rest wait for the next one).
@@ -175,6 +179,8 @@ pub struct Library {
     /// The playing track's URI and whether it's liked.
     pub liked: Option<(String, bool)>,
     liked_asked: Option<String>,
+    /// When to ask about `liked_asked` again, after its lookup failed.
+    liked_retry: Option<Instant>,
     pub player: WebPlayer,
     logout_armed: Option<Instant>,
     /// A refused context play: the desktop app should play it instead.
@@ -229,6 +235,7 @@ impl Library {
             open: None,
             liked: None,
             liked_asked: None,
+            liked_retry: None,
             player: WebPlayer::default(),
             logout_armed: None,
             fallback: None,
@@ -342,6 +349,7 @@ impl Library {
         self.open = None;
         self.liked = None;
         self.liked_asked = None;
+        self.liked_retry = None;
         self.player = WebPlayer::default();
         self.logout_armed = None;
     }
@@ -442,10 +450,12 @@ impl Library {
             self.me_asked = true;
             self.request(Request::Me, Want::Me);
         }
+        let retry = self.liked_retry.is_some_and(|at| now >= at);
         if let Some(uri) = uri
-            && self.liked_asked.as_deref() != Some(uri)
+            && (self.liked_asked.as_deref() != Some(uri) || retry)
         {
             self.liked_asked = Some(uri.to_owned());
+            self.liked_retry = None;
             let uris = vec![uri.to_owned()];
             self.request(
                 Request::LibraryContains { uris },
@@ -574,7 +584,19 @@ impl Library {
             (Want::Liked(uri), Ok(Reply::Contains(found))) => {
                 self.liked = Some((uri, found.first().copied().unwrap_or(false)));
             }
-            (Want::Liked(_), _) => self.liked_asked = None,
+            (Want::Liked(uri), Err(e)) => {
+                crate::diag::note(|| {
+                    format!("library: is {} liked? failed: {e}", crate::diag::tag(&uri))
+                });
+                if self.liked_asked.as_deref() == Some(&uri) {
+                    let wait = match e {
+                        Error::RateLimited { retry_after } => retry_after.max(LIKED_RETRY),
+                        _ => LIKED_RETRY,
+                    };
+                    self.liked_retry = Some(now + wait);
+                }
+            }
+            (Want::Liked(_), Ok(_)) => self.liked_retry = Some(now + LIKED_RETRY),
             (Want::Like { .. }, Ok(_)) => {}
             (Want::Like { uri, on }, Err(e)) => {
                 if self.liked.as_ref().is_some_and(|(u, _)| *u == uri) {
@@ -901,7 +923,7 @@ impl Model {
     /// Windows) what the Web API's matching player says. `None` for local
     /// files, ads, episodes and other players: like and add-to-playlist
     /// say there's nothing to act on.
-    pub(super) fn playing_uri(&self) -> Option<String> {
+    pub(crate) fn playing_uri(&self) -> Option<String> {
         let track = self.music.snapshot.as_ref()?.track.as_ref()?;
         if let Some(uri) = &track.uri {
             return Some(uri.clone());

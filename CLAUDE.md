@@ -425,6 +425,10 @@ the layout/visual contract.
                 `clear`. `app/model/caches.rs` (`SavedFiles`): the
                 settings row `saved lyrics & covers` measures / clears
                 them on its own thread (no folders under `cfg(test)`).
+- `diag.rs`   — opt-in media diagnostics: `LAVATUI_MEDIA_LOG=<file>`;
+                `diag::note(|| line)` from any thread (a channel to a
+                writer thread; off: one atomic load), `diag::tag` hashes
+                ids so no song names land in the log.
 - `ui/`       — the only terminal-facing code. `layout.rs`: the pure
                 `layout(area, &LayoutInput) -> Layout` of design §1 (the lamp
                 rect; `panel` = `Stack` of side widgets in the best of

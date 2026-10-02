@@ -6,6 +6,7 @@ mod cli;
 mod clock;
 mod config;
 mod demo;
+mod diag;
 mod disk_cache;
 mod dock;
 mod glyphs;

@@ -54,9 +54,19 @@ pub struct Spotify<R> {
     runner: R,
     name: Arc<str>,
     /// The last track read in full: its details aren't asked for again
-    /// while it plays.
+    /// while it plays (unless some were missing, see [`REREADS`]).
     known: Option<Arc<Track>>,
+    /// Full reads left for the known track while its details are
+    /// incomplete.
+    rereads: u8,
 }
+
+/// A track that came back with details missing (Spotify still loading them
+/// as it changes track, a read that failed) is read in full again on this
+/// many polls (about as many seconds) before it's taken as it is (local
+/// files and ads lack some for good). Without this, a song's cover and
+/// lyrics stayed missing until the next song (lava-75z.22).
+const REREADS: u8 = 8;
 
 impl<R: Runner> Spotify<R> {
     pub fn new(runner: R) -> Self {
@@ -64,21 +74,46 @@ impl<R: Runner> Spotify<R> {
             runner,
             name: Arc::from("Spotify"),
             known: None,
+            rereads: 0,
         }
     }
 }
 
 impl<R: Runner> Backend for Spotify<R> {
     fn exchange(&mut self, commands: &[Command]) -> Snapshot {
-        let known = self.known.as_ref().map_or("", |track| track.id.as_str());
-        let result = self.runner.run(&request(commands, known), TIMEOUT);
+        let reread = self.rereads > 0 && self.known.as_deref().is_some_and(incomplete);
+        let named = match &self.known {
+            Some(track) if !reread => track.id.as_str(),
+            _ => "",
+        };
+        let result = self.runner.run(&request(commands, named), TIMEOUT);
         let now = Instant::now();
         let mut snapshot = match result {
             Ok(out) => parse(&out, now, self.known.as_ref()),
             Err(err) => Snapshot::new(Status::Unavailable(classify(&err)), now),
         };
-        if snapshot.track.is_some() {
-            self.known.clone_from(&snapshot.track);
+        if let Some(track) = &mut snapshot.track {
+            match &self.known {
+                Some(known) if known.id == track.id => {
+                    if reread {
+                        self.rereads -= 1;
+                        // What the earlier read had and this one lacks stays.
+                        *track = fill_in(track, known);
+                    }
+                }
+                _ => self.rereads = REREADS,
+            }
+            if incomplete(track) && !self.known.as_ref().is_some_and(|k| Arc::ptr_eq(k, track)) {
+                crate::diag::note(|| {
+                    format!(
+                        "spotify: track {} read without {} ({} rereads left)",
+                        crate::diag::tag(&track.id),
+                        missing(track).join(", "),
+                        self.rereads
+                    )
+                });
+            }
+            self.known = Some(Arc::clone(track));
         }
         snapshot.player = Some(Arc::clone(&self.name));
         snapshot
@@ -353,6 +388,45 @@ pub fn parse(out: &str, now: Instant, known: Option<&Arc<Track>>) -> Snapshot {
         repeat: repeat != 0,
         volume: volume.clamp(0, 100) as u8,
     }
+}
+
+/// The details a read of `track` came back without, of those a track
+/// should have: a name, and for a Spotify catalog track its artist, length
+/// and cover too.
+fn missing(track: &Track) -> Vec<&'static str> {
+    let catalog = track.uri.is_some();
+    [
+        ("name", track.name.trim().is_empty()),
+        ("artist", catalog && track.artist.trim().is_empty()),
+        ("length", catalog && track.duration.is_zero()),
+        ("cover", catalog && track.artwork_url.trim().is_empty()),
+    ]
+    .into_iter()
+    .filter_map(|(what, gone)| gone.then_some(what))
+    .collect()
+}
+
+fn incomplete(track: &Track) -> bool {
+    !missing(track).is_empty()
+}
+
+/// `fresh`, with any detail it lacks taken from `old` (the same track read
+/// earlier), so a re-read never loses what an earlier one had.
+fn fill_in(fresh: &Arc<Track>, old: &Track) -> Arc<Track> {
+    let pick = |new: &str, old: &str| if new.trim().is_empty() { old } else { new }.to_owned();
+    Arc::new(Track {
+        id: fresh.id.clone(),
+        uri: fresh.uri.clone(),
+        name: pick(&fresh.name, &old.name),
+        artist: pick(&fresh.artist, &old.artist),
+        album: pick(&fresh.album, &old.album),
+        duration: if fresh.duration.is_zero() {
+            old.duration
+        } else {
+            fresh.duration
+        },
+        artwork_url: pick(&fresh.artwork_url, &old.artwork_url),
+    })
 }
 
 fn millis(ms: i64) -> Duration {
@@ -697,6 +771,109 @@ mod tests {
             "lavatui1\u{1e}spotify:track:0DZXVpUtPUom1VO6h5a0SU"
         );
         assert!(requests[2].ends_with("\u{1e}next"));
+    }
+
+    /// `PLAYING` with its cover and length missing, as Spotify can answer
+    /// right as it changes track.
+    fn half_loaded() -> String {
+        let fields: Vec<&str> = PLAYING.split(SEP).collect();
+        let mut fields: Vec<String> = fields.iter().map(|f| (*f).to_owned()).collect();
+        fields[7] = "0".into();
+        fields[8] = String::new();
+        fields.join(&SEP.to_string())
+    }
+
+    /// lava-75z.22: a track first read with details missing is read in
+    /// full again (not named as known) until they're there, keeping what
+    /// the first read had; then it's known as usual.
+    #[test]
+    fn a_track_read_with_details_missing_is_read_again() {
+        let id_only = "lavatui1\u{1e}playing\u{1e}242000\u{1e}0\u{1e}1\u{1e}100\u{1e}\
+                       spotify:track:0DZXVpUtPUom1VO6h5a0SU";
+        let no_name = half_loaded().replace("\u{1e}Life", "\u{1e}");
+        let mut spotify = Spotify::new(Canned(
+            [
+                Ok(half_loaded()),
+                // A re-read that lost the name keeps the first read's.
+                Ok(no_name),
+                Ok(PLAYING.to_owned()),
+                Ok(id_only.to_owned()),
+            ]
+            .into(),
+            Vec::new(),
+        ));
+        let first = spotify.exchange(&[]).track.unwrap();
+        assert!(first.artwork_url.is_empty() && first.duration.is_zero());
+        let second = spotify.exchange(&[]).track.unwrap();
+        assert_eq!(second.name, "Life");
+        let third = spotify.exchange(&[]).track.unwrap();
+        assert!(third.artwork_url.starts_with("https://i.scdn.co/"));
+        assert_eq!(third.duration, Duration::from_millis(303_440));
+        let fourth = spotify.exchange(&[]).track.unwrap();
+        assert!(Arc::ptr_eq(&third, &fourth));
+        let requests = &spotify.runner.1;
+        // Not named while incomplete, named once complete.
+        assert_eq!(requests[1], "lavatui1\u{1e}");
+        assert_eq!(requests[2], "lavatui1\u{1e}");
+        assert_eq!(
+            requests[3],
+            "lavatui1\u{1e}spotify:track:0DZXVpUtPUom1VO6h5a0SU"
+        );
+    }
+
+    /// Re-reads stop after [`REREADS`]: a track that never has a cover
+    /// costs a few full reads, not one per poll for good. A new track
+    /// starts the count again.
+    #[test]
+    fn rereads_are_bounded_per_track() {
+        let mut spotify = Spotify::new(Canned(VecDeque::new(), Vec::new()));
+        let short = "lavatui1\u{1e}playing\u{1e}242000\u{1e}0\u{1e}1\u{1e}100\u{1e}\
+                     spotify:track:0DZXVpUtPUom1VO6h5a0SU";
+        let polls = usize::from(REREADS) + 3;
+        spotify
+            .runner
+            .0
+            .extend((0..=REREADS).map(|_| Ok(half_loaded())));
+        spotify
+            .runner
+            .0
+            .extend((usize::from(REREADS) + 1..polls).map(|_| Ok(short.to_owned())));
+        for _ in 0..polls {
+            assert!(spotify.exchange(&[]).track.is_some());
+        }
+        let named = |r: &String| r.ends_with("0DZXVpUtPUom1VO6h5a0SU");
+        let requests = &spotify.runner.1;
+        // The first read, then REREADS full re-reads, then named.
+        let full = requests.iter().filter(|r| !named(r)).count();
+        assert_eq!(full, usize::from(REREADS) + 1);
+        assert!(requests[usize::from(REREADS) + 1..].iter().all(named));
+
+        // Another track: read again while it's incomplete too.
+        let other = half_loaded().replace("0DZX", "1ABC");
+        spotify.runner.0.extend([Ok(other.clone()), Ok(other)]);
+        spotify.exchange(&[]);
+        spotify.exchange(&[]);
+        assert_eq!(spotify.runner.1.last().unwrap(), "lavatui1\u{1e}");
+    }
+
+    /// Local files and ads have no cover or Spotify URI for good: only a
+    /// missing name makes them worth reading again.
+    #[test]
+    fn local_files_without_a_cover_are_complete() {
+        let local = Track {
+            id: "spotify:local:a:b:c:200".into(),
+            name: "c".into(),
+            ..Track::default()
+        };
+        assert!(!incomplete(&local));
+        assert!(incomplete(&Track {
+            name: String::new(),
+            ..local
+        }));
+        let parsed = parse(PLAYING, now(), None).track.unwrap();
+        assert!(!incomplete(&parsed));
+        let half = parse(&half_loaded(), now(), None).track.unwrap();
+        assert_eq!(missing(&half), ["length", "cover"]);
     }
 
     // The worker on its thread, through this backend and a fake osascript.
