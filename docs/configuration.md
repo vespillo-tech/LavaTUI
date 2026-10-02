@@ -169,4 +169,4 @@ becomes `solid`, and `minimal.clock = "under"` means `corner`.
 | `LAVATUI_SPOTIFY_TOKEN_FILE` | keep the Spotify login in this file instead of the system password store |
 | `LAVATUI_GRAPHICS` | `kitty`, `iterm`, `sixel` or `none`: how to show album covers as pictures, if your terminal isn't recognised |
 | `LAVATUI_GLYPHS` | `safe` or `rich`: the set of symbols widgets use |
-| `XDG_CONFIG_HOME`, `XDG_CACHE_HOME` | where settings and the cover / lyrics caches go |
+| `XDG_CONFIG_HOME`, `XDG_CACHE_HOME` | where settings and the cover / lyrics caches go (`lavatui/art`, `lavatui/lyrics`; trimmed automatically, cleared from settings › music & lyrics) |

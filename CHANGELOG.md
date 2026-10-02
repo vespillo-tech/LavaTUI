@@ -34,6 +34,8 @@ What changed in each version of LavaTUI, in plain words.
 - Find a playlist or song in the playlist browser: press `/` and type.
 - Play a song from a playlist without Premium on a Mac; the rest of the
   playlist follows.
+- Saved lyrics and covers stay small: old ones are removed on their
+  own. The settings show how much is saved and can clear it all.
 - Like, add and shuffle now follow the song you're actually playing on
   Linux and Windows too, and never act on another player.
 - The mouse is on by default: click the music buttons and the progress
