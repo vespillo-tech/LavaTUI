@@ -200,7 +200,8 @@ the wax right there. Blobs near the spot warm up over about a second
 and float up. Click the pool of wax at the bottom and a new blob grows
 from that spot. Hold the button and drag to warm a whole path. This only
 heats one spot for a moment; `[` and `]` change the heat of the whole
-lamp.
+lamp. Your terminal has to pass mouse clicks on to programs; most do
+(see [Terminals](#terminals)).
 
 **Clock and timer**
 
@@ -381,6 +382,18 @@ notes:
   LavaTUI draws the wax so it doesn't show stripes. It reads your
   Ghostty settings to know when.
 - **Ghostex** also gets the stripe fix on its own.
+- **The mouse** (clicking the wax and the music buttons) works in almost
+  every terminal: Ghostty, kitty, WezTerm, iTerm2, Terminal on a Mac,
+  Alacritty, GNOME Terminal, Konsole, the VS Code terminal, Ghostex and
+  Windows Terminal. It doesn't work in these:
+  - **tmux**, unless you turn its mouse on: add `set -g mouse on` to
+    `~/.tmux.conf`.
+  - **GNU screen**: clicks may not get through.
+  - **Linux without a desktop**, on the plain text screen: no mouse at
+    all.
+
+  Everything the mouse does also has a key, so you lose nothing: `]`
+  heats the whole lamp, and `A` turns on the music keys.
 
 ## Questions and fixes
 
@@ -398,6 +411,12 @@ Hold `Shift` while you drag (`Option` in Terminal and iTerm2 on a Mac).
 Or tell LavaTUI to ignore the mouse: press `,` to open LavaTUI's
 settings, go to the *controls* page and switch off *mouse*. This only
 affects LavaTUI. Your computer's mouse keeps working as normal.
+
+**Clicking the lamp does nothing.**
+Check that the mouse is on: press `,` to open the settings, go to the
+*controls* page and switch on *mouse*. In tmux, add `set -g mouse on`
+to `~/.tmux.conf`. Some terminals don't pass clicks on at all (see
+[Terminals](#terminals)); there, use the keys instead.
 
 **The music card says Spotify isn't open.**
 Just open your music app and start a song, and the card will pick it up
