@@ -163,6 +163,9 @@ mod fallback_tests {
 #[cfg(test)]
 mod backend_tests {
     use super::*;
+    use ratatui::backend::{Backend, ClearType, WindowSize};
+    use ratatui::buffer::Cell;
+    use ratatui::layout::{Position, Size};
     use ratatui::{TerminalOptions, Viewport, layout::Rect};
 
     /// Batching must preserve every colour change over successive lamp
@@ -172,7 +175,6 @@ mod backend_tests {
         use crate::render::{LampOptions, LampState, LampView, StyleId};
         use crate::sim::{Field, World};
         use crate::theme::{ColorDepth, Palette, Theme};
-        use ratatui::backend::Backend;
         use ratatui::buffer::Buffer;
         use ratatui::widgets::StatefulWidget;
 
@@ -242,23 +244,74 @@ mod backend_tests {
         let mut out = Output::new(Vec::new(), true);
         out.batch = true;
         let mut terminal = Terminal::with_options(
-            CrosstermBackend::new(out),
+            Sized(CrosstermBackend::new(out), Size::new(5, 2)),
             TerminalOptions {
                 viewport: Viewport::Fixed(Rect::new(0, 0, 4, 2)),
             },
         )
         .unwrap();
-        terminal.backend_mut().writer_mut().begin_frame().unwrap();
+        terminal.backend_mut().0.writer_mut().begin_frame().unwrap();
         terminal.resize(Rect::new(0, 0, 5, 2)).unwrap();
         terminal
             .draw(|frame| frame.render_widget("hello", frame.area()))
             .unwrap();
-        assert!(terminal.backend().writer().writer.is_empty());
-        let stats = terminal.backend_mut().writer_mut().finish_frame().unwrap();
-        let bytes = &terminal.backend().writer().writer;
+        assert!(terminal.backend().0.writer().writer.is_empty());
+        let stats = terminal
+            .backend_mut()
+            .0
+            .writer_mut()
+            .finish_frame()
+            .unwrap();
+        let bytes = &terminal.backend().0.writer().writer;
         assert!(bytes.starts_with(b"\x1b[?2026h"));
         assert!(bytes.ends_with(b"\x1b[?2026l"));
         assert_eq!(stats.writes, 1);
+    }
+
+    /// A backend that says the screen is `.1`: a fixed viewport's resize
+    /// asks the size, and crossterm's answer depends on where the tests
+    /// run (no tty and no `$TERM` in a container: an error; a 0x0 pty).
+    struct Sized<B>(B, Size);
+
+    impl<B: Backend> Backend for Sized<B> {
+        type Error = B::Error;
+
+        fn draw<'a, I>(&mut self, content: I) -> Result<(), B::Error>
+        where
+            I: Iterator<Item = (u16, u16, &'a Cell)>,
+        {
+            self.0.draw(content)
+        }
+        fn hide_cursor(&mut self) -> Result<(), B::Error> {
+            self.0.hide_cursor()
+        }
+        fn show_cursor(&mut self) -> Result<(), B::Error> {
+            self.0.show_cursor()
+        }
+        fn get_cursor_position(&mut self) -> Result<Position, B::Error> {
+            self.0.get_cursor_position()
+        }
+        fn set_cursor_position<P: Into<Position>>(&mut self, at: P) -> Result<(), B::Error> {
+            self.0.set_cursor_position(at)
+        }
+        fn clear(&mut self) -> Result<(), B::Error> {
+            self.0.clear()
+        }
+        fn clear_region(&mut self, clear_type: ClearType) -> Result<(), B::Error> {
+            self.0.clear_region(clear_type)
+        }
+        fn size(&self) -> Result<Size, B::Error> {
+            Ok(self.1)
+        }
+        fn window_size(&mut self) -> Result<WindowSize, B::Error> {
+            Ok(WindowSize {
+                columns_rows: self.1,
+                pixels: Size::new(self.1.width * 8, self.1.height * 16),
+            })
+        }
+        fn flush(&mut self) -> Result<(), B::Error> {
+            Backend::flush(&mut self.0)
+        }
     }
 
     #[derive(Default)]

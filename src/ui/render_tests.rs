@@ -210,7 +210,16 @@ fn scenarios() -> Vec<(&'static str, Setup)> {
             m.toast = None;
         }),
         ("lamp only, music controls, not allowed", |m, t| {
-            music(m, t, Status::Unavailable(Unavailable::PermissionDenied), 1);
+            // macOS's wording, long and the same on every platform (the
+            // real `PermissionDenied` message is per platform).
+            let macos = "Allow control of Spotify: System Settings › Privacy & Security › \
+                         Automation › your terminal › Spotify";
+            music(
+                m,
+                t,
+                Status::Unavailable(Unavailable::Error(macos.into())),
+                1,
+            );
             m.update(Action::ToggleMinimal, t);
             m.update(Action::PlayerKeys, t);
             m.toast = None;

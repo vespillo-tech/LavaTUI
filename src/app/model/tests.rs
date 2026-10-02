@@ -1227,8 +1227,11 @@ mod music {
             tick(&mut m, t0);
             tick(&mut m, t0);
             let backend = ratatui::backend::CrosstermBackend::new(Vec::<u8>::new());
-            let mut terminal = ratatui::Terminal::new(backend).unwrap();
-            terminal.resize(m.layout.area).unwrap();
+            // Fixed: a fullscreen terminal would ask the real one its size.
+            let options = ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Fixed(m.layout.area),
+            };
+            let mut terminal = ratatui::Terminal::with_options(backend, options).unwrap();
             let mut lamp = crate::render::LampState::default();
             terminal
                 .draw(|f| crate::ui::draw(f, &m, &mut lamp))
