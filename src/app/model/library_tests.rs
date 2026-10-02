@@ -853,3 +853,46 @@ fn web_modes_belong_only_to_the_player_they_describe() {
     assert_eq!(m.music.web_caps, Capabilities::NONE);
     assert!(!m.music.snapshot.as_ref().unwrap().shuffle);
 }
+
+#[test]
+fn a_refused_account_is_told_how_to_fix_it_once() {
+    // Logged in, but not on the app's allowlist: every request is a 403.
+    let account = demo();
+    account.state().fail = Some(Error::Forbidden(
+        "Check settings on developer.spotify.com/dashboard, the user may not be registered.".into(),
+    ));
+    let (mut m, t0, _) = rig("refused", &account);
+    settle(&mut m, t0);
+    assert!(m.library.refused.is_some());
+    assert!(
+        m.list_message(ListKind::Playlists)
+            .starts_with("Spotify refused this account"),
+        "no endless loading…"
+    );
+    let asked = |a: &FakeWeb| {
+        a.state()
+            .requests
+            .iter()
+            .filter(|r| **r == Request::Me)
+            .count()
+    };
+    let before = asked(&account);
+    settle(&mut m, t0 + Duration::from_secs(1));
+    assert_eq!(asked(&account), before, "not asked again and again");
+    // A library key opens the setup, whose first row says why.
+    key(&mut m, t0, P::Playlists);
+    let view = m.settings_view().expect("the setup");
+    assert_eq!(view.page, crate::app::Page::Spotify);
+    let rows = m.settings_rows(crate::app::Page::Spotify);
+    assert_eq!(rows[0].value, "refused");
+    assert!(
+        rows[0].about.contains("User Management"),
+        "{}",
+        rows[0].about
+    );
+    // Logging in again starts afresh.
+    account.state().fail = None;
+    m.library.logout();
+    settle(&mut m, t0);
+    assert!(m.library.refused.is_none());
+}

@@ -2,8 +2,27 @@
 
 LavaTUI's library features (playlist browser, add to playlist, like/unlike,
 search, "more like this") talk to the Spotify Web API through
-`src/spotify_web/`. Playback control of the desktop app is separate and
-needs none of this.
+`src/spotify_web/`. Now playing, playback control of the desktop app, the
+cover and lyrics are separate and need none of this.
+
+## Who can use it (check before step 1)
+
+Spotify's development-mode rules (checked 2026-10-01; see the sources
+below):
+
+- You need **your own Spotify developer app**, and LavaTUI needs only its
+  Client ID (PKCE: no Client Secret).
+- **The app's owner needs an active Spotify Premium subscription**, or
+  the app stops working for everyone.
+- The app works for the owner and **up to 5 more users**, each added by
+  email under *User Management*. Anyone else can complete the login, but
+  every API request then returns 403; the app shows "Spotify refused this
+  account" and the setup page says what to fix.
+- Sharing a Client ID only helps people on that list; extra Client IDs
+  (up to 25 per developer) don't raise the limit for one app.
+- The player endpoints (shuffle / repeat, playing a playlist through
+  Spotify) also need Premium on the logged-in account and an active
+  device.
 
 ## Setup (once)
 
@@ -38,6 +57,12 @@ Client ID by paste (and checks it), then logs in. The same steps by hand:
    under **User Management** (development mode allowlist, max 5 users).
    You don't need to add yourself, as the app owner.
 
+Troubleshooting: the login works but lists say "Spotify refused this
+account": the account isn't on the allowlist, or the owner has no
+Premium (fix it on the dashboard, then disconnect and connect again in
+the setup). The consent page complains about the redirect URI: it must be
+exactly the address in step 3.
+
 Logging in opens your browser on Spotify's consent page. After you agree,
 the browser shows a "connected" page and LavaTUI has the login. It is kept
 in the OS credential store (macOS Keychain, Windows Credential Manager,
@@ -52,6 +77,11 @@ screenshots, or a macOS Keychain that asks again after every rebuild.
 
 Sources: developer.spotify.com docs, Web API changelog (Feb + Mar 2026),
 Feb 2026 migration guide, the 2026-06-18 refresh-token blog post.
+Quota modes: <https://developer.spotify.com/documentation/web-api/concepts/quota-modes>;
+Feb 2026 migration guide:
+<https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide>;
+July 2026 changes:
+<https://developer.spotify.com/documentation/web-api/references/changes/july-2026>.
 
 - **Auth**: Authorization Code with PKCE is the recommended flow for apps
   that can't keep a secret. Verifier is 43 to 128 chars of
@@ -72,8 +102,8 @@ Feb 2026 migration guide, the 2026-06-18 refresh-token blog post.
   - **The app owner needs an active Spotify Premium subscription**, or
     the app stops working (since 2026-02-11 for new apps and 2026-03-09
     for existing ones). Users other than the owner don't need Premium for
-    these library endpoints (the player endpoints, which we don't use,
-    are Premium-only).
+    these library endpoints (the player endpoints, used for shuffle /
+    repeat and playing a playlist, are Premium-only).
   - Up to **5 users** per app, each added to the allowlist by hand.
   - Up to 25 Client IDs per developer (raised from 1 in July 2026). The
     quota is counted per account, not per Client ID.
@@ -139,12 +169,25 @@ Network failures are `Error::Offline`, 403 is `Forbidden` and 404 is
 All of it lives in the player keys (`A`, with the music widget placed):
 `i` log in (browser; `i` again cancels; logged in, `i` twice logs out),
 `b` the playlist browser (`/` filters it by name; `⏎` on a track plays
-it in its playlist, through the desktop app when the Web API's player
-isn't available), `a` add the playing track to a playlist, `s`
+it in its playlist through the Web API's player when it's available,
+else through the desktop app: on macOS in its playlist, on Linux the
+track alone (MPRIS has no playlists), and on Windows not at all (the
+media controls can't be told what to play), which the toast says), `a` add the playing track to a playlist, `s`
 like / unlike (the `♥` in the widget), and `x` / `r` shuffle / repeat
 through the Web API when Spotify allows them. With the mouse on, the
 widget's `log in`, `♡`, `+` and `≡` do the same. See docs/design.md §4.4
 and §4.6.
+
+Like and add act on the playing track's Spotify URI (`Track::uri`, kept
+apart from the player's own id, `Track::id`): macOS's AppleScript reports
+it; on Linux it comes from MPRIS `xesam:url` (or an old-style trackid),
+while the MPRIS object path stays the id for seeking; Windows' media
+controls report none, so the model uses the Web API player's item only
+while the Spotify app shows a track of the same name (lava-1xk.24). Local
+files, ads, episodes and other players get no URI: like and add say
+there's nothing to act on. The Web API's shuffle / repeat likewise apply
+only while its player is playing the track shown (lava-1xk.27); another
+player keeps its own modes and keys.
 
 ## Using it from the code
 

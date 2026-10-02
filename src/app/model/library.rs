@@ -139,6 +139,10 @@ pub struct Library {
     pub login_error: Option<String>,
     pub me: Option<User>,
     me_asked: bool,
+    /// Spotify refused the logged-in account (not on the app's allowlist,
+    /// or the app's owner has no Premium): its message. Not asked again
+    /// until the next login.
+    pub refused: Option<String>,
     pub playlists: Listing<Playlist>,
     pub open: Option<OpenPlaylist>,
     /// The playing track's URI and whether it's liked.
@@ -187,6 +191,7 @@ impl Library {
             login_error: None,
             me: None,
             me_asked: false,
+            refused: None,
             playlists: Listing::default(),
             open: None,
             liked: None,
@@ -263,6 +268,7 @@ impl Library {
         self.wants.clear();
         self.me = None;
         self.me_asked = false;
+        self.refused = None;
         self.playlists = Listing::default();
         self.open = None;
         self.liked = None;
@@ -431,6 +437,14 @@ impl Library {
         }
         match (want, result) {
             (Want::Me, Ok(Reply::User(me))) => self.me = Some(me),
+            // Every request would be refused: say so once, and how to fix
+            // it, rather than asking again and again.
+            (Want::Me, Err(Error::Forbidden(why))) => {
+                self.refused = Some(why);
+                return Some(
+                    "Spotify refused this account · settings (,) › spotify says why".into(),
+                );
+            }
             (Want::Me, _) => self.me_asked = false,
             (Want::Playlists, Ok(Reply::Playlists(lists))) => {
                 self.playlists = Listing {
@@ -708,8 +722,13 @@ impl Model {
         self.library.liked(&self.playing_uri()?)
     }
 
-    /// A library key with no Client ID (or music off) says why.
+    /// A library key with no Client ID (or music off) says why; one that
+    /// Spotify refused opens the setup, which says how to fix it.
     fn library_ready(&mut self) -> bool {
+        if self.library.refused.is_some() {
+            self.open_settings_at(super::settings_screen::Page::Spotify, true);
+            return false;
+        }
         if self.library.account() == Account::Unavailable {
             if !self.music_on() {
                 self.toast("music is off · a to show it");
@@ -898,6 +917,9 @@ impl Model {
             Account::Unavailable => return "no Spotify Client ID".into(),
             Account::LoggedOut => return "not logged in · Enter to log in".into(),
             Account::LoggingIn => return "finish logging in in your browser…".into(),
+            Account::LoggedIn if lib.refused.is_some() => {
+                return "Spotify refused this account · settings (,) › spotify says why".into();
+            }
             Account::LoggedIn => {}
         }
         if self.hits(kind).is_some() && self.list_total(kind) > 0 {

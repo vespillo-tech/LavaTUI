@@ -107,8 +107,20 @@ impl Page {
     }
 }
 
-const SPOTIFY_INTRO: &str = "Play, pause and skip work with the Spotify app on its own. \
-    Playlists and likes need a one-time setup, about two minutes: follow steps 1 to 4.";
+const SPOTIFY_INTRO: &str = "Play, pause, skip, covers and lyrics work with no setup. \
+    Playlists and likes need your own free Spotify developer app: steps 1 to 4, about two \
+    minutes.";
+
+/// Who can use the library (Spotify's development-mode rules, checked
+/// 2026-10-01: developer.spotify.com/documentation/web-api/concepts/quota-modes).
+pub(super) const ELIGIBILITY: &str = "The account that makes the Spotify app needs Premium. It works \
+    for that account and up to 5 people added under User Management; Spotify refuses anyone \
+    else.";
+
+/// What to do when Spotify refuses a logged-in account (lava-1xk.26).
+pub(super) const REFUSED: &str = "Spotify refused this account: the app's owner needs \
+    Premium, and others must be added under User Management. Then disconnect and connect \
+    again.";
 
 /// The open settings screen: which page, whether the keys move between
 /// pages or within one, and the cursor.
@@ -156,6 +168,7 @@ pub enum Item {
     Reset(Page),
     // The Spotify setup.
     SetupStatus,
+    Eligibility,
     Dashboard,
     CopyAddress,
     ClientId,
@@ -397,7 +410,14 @@ impl Model {
             Page::Controls => out.push(Mouse),
             Page::Window => out.extend([LampOnly, HintLine, Smoothness, CornerClock]),
             Page::Spotify => {
-                out.extend([SetupStatus, Dashboard, CopyAddress, ClientId, Connect]);
+                out.extend([
+                    SetupStatus,
+                    Eligibility,
+                    Dashboard,
+                    CopyAddress,
+                    ClientId,
+                    Connect,
+                ]);
                 if self.library.account() == Account::LoggingIn {
                     out.push(CopyLoginLink);
                 }
@@ -620,7 +640,17 @@ impl Model {
             Item::SetupStatus => row(
                 "status",
                 self.spotify_status().into(),
-                SPOTIFY_INTRO,
+                if self.library.refused.is_some() {
+                    REFUSED
+                } else {
+                    SPOTIFY_INTRO
+                },
+                Kind::Info,
+            ),
+            Item::Eligibility => row(
+                "before you start",
+                "Premium needed".into(),
+                ELIGIBILITY,
                 Kind::Info,
             ),
             Item::Dashboard => row(
@@ -720,6 +750,14 @@ impl Model {
                 "waiting for browser",
                 "Allow access in your browser, then come back. Press enter to cancel.".into(),
             ),
+            Account::LoggedIn if lib.refused.is_some() => (
+                if self.armed(Item::Connect) {
+                    "press enter again"
+                } else {
+                    "refused"
+                },
+                REFUSED.into(),
+            ),
             Account::LoggedIn => {
                 let name = lib
                     .me
@@ -788,6 +826,9 @@ impl Model {
 
     /// One or two words for where the Spotify setup stands.
     fn spotify_status(&self) -> &'static str {
+        if self.library.refused.is_some() {
+            return "refused";
+        }
         if self.settings.spotify_client_id().is_none() {
             return "not set up";
         }
