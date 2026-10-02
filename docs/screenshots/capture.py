@@ -385,7 +385,6 @@ def main(names):
     def one(item):
         name, shot = item
         out = os.path.join(HERE if name in SHOTS else tmp, name + ".png")
-        if name in LIVE or name in LYRICS or name in LIBRARY or name in COVER or name in SETTINGS_PAGES:
         if name in LIVE or name in LYRICS or name in LIBRARY or name in COVER or name in GUIDE or name in SETTINGS_PAGES:
             live = os.environ.get("LAVATUI_SHOT_OUT", tempfile.gettempdir())
             out = os.path.join(live, name + ".png")
