@@ -283,8 +283,9 @@ impl Model {
                 opener: p.kind.opener(),
                 inline: self.inline_pickers(),
             },
-            Overlay::Library(_) => InputMode::Library {
+            Overlay::Library(view) => InputMode::Library {
                 inline: self.inline_pickers(),
+                typing: view.typing,
             },
         }
     }

@@ -710,15 +710,28 @@ without scrolling from 80×24 up:
   nor collaborates on are dim: Spotify won't list their items to a
   development-mode app, so `⏎` plays them instead of opening them. In a
   playlist (title: its name) `⏎` plays the track in the playlist's
-  context (exactly, through the Web API's player with Premium; else the
-  desktop app plays the track alone), `p` plays the playlist from the
+  context (through the Web API's player with Premium; else the desktop
+  app: on macOS AppleScript's `play track … in context …`, elsewhere the
+  track alone), `p` plays the playlist from the
   top, and pages of 50 load as the cursor nears the end. The add picker
   lists only owned or collaborative playlists. Empty lists say why in one
   dim line: `not logged in · ⏎ to log in`, `loading…`, Spotify's error.
   Keys: `j k ↑ ↓` move, `g G` / page up / down jump, `⏎` / `l` open or
-  choose, `p` play all, `esc` / `h` back (closes at the top), `q`
-  close. Hints: `↑↓ move  ⏎ open  p play  esc close` (`⏎ play  p play
-  all  esc back` in a playlist, `⏎ add  esc close`).
+  choose, `p` play all, `/` find, `esc` / `h` back (closes at the top),
+  `q` close. Hints: `↑↓ move  ⏎ open  p play  / find  esc close` (`⏎
+  play  p play all  / find  esc back` in a playlist, `⏎ add  / find  esc
+  close`).
+  *Find* (`/`, lava-75z.17): every key but `↑ ↓`, page up / down, home /
+  end, `⏎`, backspace and `esc` types; rows whose name (a track's artists
+  too) contain every typed word, any case, stay. The sheet keeps its size
+  (sized for all the rows). What's typed shows as `/ chill▏` with a dim
+  `3 of 77` in the roomy sheet's spare row above the list, on the bottom
+  sheet's bottom border, and before the name in the inline selector.
+  In a playlist the filter loads every page to look through. `⏎`
+  chooses the highlighted match; backspace on nothing or `esc` closes
+  the filter, `esc` keeping the cursor on the row it was on. A playlist
+  opened from a filtered list comes back to it filtered. Hints while
+  typing: `↑↓ move  ⏎ choose  esc clear`.
 
 80×24, captured from the app (`--color none`):
 

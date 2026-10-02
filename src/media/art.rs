@@ -14,6 +14,11 @@
 //! file per URL (named by its SHA-256), the oldest pruned past
 //! [`CACHE_FILES`]. Every cache problem is a miss, and a failed cover is
 //! just no cover: nothing here ever reaches the UI as an error.
+//!
+//! Players that hand out the cover's bytes rather than a URL (Windows'
+//! media controls, lava-75z.16) [`stash`] them on their own worker and put
+//! the `lavatui-thumb:` URL it returns in `Track::artwork_url`; the art
+//! worker decodes stashed covers like downloaded ones, without the disk.
 
 use std::fs;
 use std::io::Write;
@@ -38,6 +43,48 @@ const CACHE_FILES: usize = 256;
 /// Bigger downloads are refused (Spotify's 640 px covers are ~100 KB).
 const MAX_BYTES: u64 = 8 * 1024 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(10);
+/// The scheme of covers handed over as bytes ([`stash`]).
+pub const THUMB_SCHEME: &str = "lavatui-thumb:";
+/// Stashed covers kept (the playing one and a few before it).
+const STASHED: usize = 4;
+
+/// Covers handed over as bytes, newest last.
+type Stash = Mutex<Vec<(String, Arc<[u8]>)>>;
+static STASH: Stash = Mutex::new(Vec::new());
+
+/// Keep a cover's encoded bytes (JPEG / PNG) for the art worker, and
+/// return the URL to ask for it by (`lavatui-thumb:` + its SHA-256, so the
+/// same picture is the same URL). `None` for nothing or too much.
+pub fn stash(bytes: Vec<u8>) -> Option<String> {
+    stash_in(&STASH, bytes)
+}
+
+fn stash_in(stash: &Stash, bytes: Vec<u8>) -> Option<String> {
+    if bytes.is_empty() || bytes.len() as u64 > MAX_BYTES {
+        return None;
+    }
+    let hash = Sha256::digest(&bytes);
+    let hex: String = hash[..16].iter().map(|b| format!("{b:02x}")).collect();
+    let url = format!("{THUMB_SCHEME}{hex}");
+    let mut stash = lock(stash);
+    stash.retain(|(u, _)| *u != url);
+    stash.push((url.clone(), Arc::from(bytes)));
+    let over = stash.len().saturating_sub(STASHED);
+    stash.drain(..over);
+    Some(url)
+}
+
+/// The bytes [`stash`] kept for `url`, while it still has them.
+fn stashed(url: &str) -> Option<Arc<[u8]>> {
+    stashed_in(&STASH, url)
+}
+
+fn stashed_in(stash: &Stash, url: &str) -> Option<Arc<[u8]>> {
+    lock(stash)
+        .iter()
+        .find(|(u, _)| u == url)
+        .map(|(_, bytes)| Arc::clone(bytes))
+}
 
 /// A cover, decoded and shrunk: `ART_PX`² pixels, row by row, and the
 /// sharp copy when it was asked for.
@@ -254,14 +301,15 @@ impl ArtLoader {
     }
 
     /// Ask for the cover at `url` (a no-op if it's the one already asked
-    /// for). Anything but `https` is never fetched.
+    /// for). Anything but `https` is never fetched; stashed covers
+    /// (`lavatui-thumb:`) are decoded from memory.
     pub fn want(&mut self, url: &str) {
         let request = (url.to_owned(), self.hires);
         if self.wanted.as_ref() == Some(&request) {
             return;
         }
         self.wanted = Some(request.clone());
-        let sent = url.starts_with("https://")
+        let sent = (url.starts_with("https://") || url.starts_with(THUMB_SCHEME))
             && self
                 .requests
                 .as_ref()
@@ -319,6 +367,9 @@ impl<F: Fetch> Worker<F> {
     }
 
     fn load(&mut self, url: &str, hires: bool) -> Option<Art> {
+        if url.starts_with(THUMB_SCHEME) {
+            return Art::decode(&stashed(url)?, hires).ok();
+        }
         let path = self.cache.as_ref().map(|dir| dir.join(file_name(url)));
         if let Some(art) = path
             .as_ref()
@@ -496,6 +547,49 @@ mod tests {
             assert_eq!(loader.get(), ArtState::Missing, "{url:?}");
         }
         assert_eq!(*count.lock().unwrap(), 0);
+    }
+
+    #[test]
+    fn stashed_covers_decode_without_fetching_or_the_disk() {
+        let dir = TempDir::new("art-stash");
+        let count = Arc::new(Mutex::new(0));
+        let mut loader = ArtLoader::spawn(Served(Arc::clone(&count), 9), Some(dir.0.clone()));
+        let url = stash(png(64, 32)).expect("a picture");
+        assert!(url.starts_with(THUMB_SCHEME), "{url}");
+        loader.want(&url);
+        match wait(&loader) {
+            ArtState::Ready(art) => {
+                let px = art.scaled(4, 1);
+                assert_eq!((px[0], px[3]), (Rgb(255, 0, 0), Rgb(0, 0, 255)));
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(*count.lock().unwrap(), 0, "nothing fetched");
+        let cached = fs::read_dir(&dir.0).map_or(0, |d| d.count());
+        assert_eq!(cached, 0, "nothing cached");
+
+        // Nothing, too much, or forgotten: no cover.
+        assert_eq!(stash(Vec::new()), None);
+        assert_eq!(stash(vec![0; MAX_BYTES as usize + 1]), None);
+        loader.want(&format!("{THUMB_SCHEME}0000"));
+        assert_eq!(wait(&loader), ArtState::Missing);
+        let junk = stash(b"not an image".to_vec()).unwrap();
+        loader.want(&junk);
+        assert_eq!(wait(&loader), ArtState::Missing);
+    }
+
+    #[test]
+    fn the_stash_keeps_only_the_newest() {
+        let mine = Stash::default();
+        let urls: Vec<String> = (0..STASHED as u8 + 2)
+            .map(|i| stash_in(&mine, vec![i; 3]).unwrap())
+            .collect();
+        assert!(stashed_in(&mine, &urls[0]).is_none());
+        assert!(stashed_in(&mine, &urls[2]).is_some());
+        // The same picture again is the same URL, kept once, newest.
+        assert_eq!(stash_in(&mine, vec![2; 3]).as_ref(), Some(&urls[2]));
+        assert_eq!(lock(&mine).len(), STASHED);
+        assert_eq!(lock(&mine).last().map(|(u, _)| u), Some(&urls[2]));
     }
 
     #[test]

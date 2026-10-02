@@ -32,4 +32,4 @@ zbus = "5.19"
 
 # Now playing over System Media Transport Controls.
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.62", features = ["Media_Control", "Foundation", "Foundation_Collections", "Win32_System_WinRT"] }
+windows = { version = "0.62", features = ["Media_Control", "Foundation", "Foundation_Collections", "Storage_Streams", "Win32_System_WinRT"] }

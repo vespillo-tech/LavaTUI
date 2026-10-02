@@ -285,9 +285,11 @@ numbers); `docs/design.md` is the layout/visual contract.
                 launches Spotify, can't shuffle/repeat), Linux `mpris.rs`
                 (any MPRIS player via zbus, Spotify first), Windows
                 `smtc.rs` (system media controls, Spotify first; no
-                volume/art/URIs); `capabilities()` says what each can do,
+                volume/URIs; covers from the thumbnail stream via
+                `art::stash`); `capabilities()` says what each can do,
                 `FakeSource` for tests, `art.rs`: `ArtLoader` (cover fetch
-                https-only on its thread, disk cache in
+                https-only on its thread, or `lavatui-thumb:` bytes a
+                backend stashed; disk cache in
                 `$XDG_CACHE_HOME/lavatui/art`, decoded to 128 px `Art`
                 (+ `hires`: a ≤ 400 px PNG as base64 for kitty, when
                 `set_hires`),
