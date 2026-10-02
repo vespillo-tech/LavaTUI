@@ -176,6 +176,17 @@ impl<H: Http> Worker<H> {
                 Err(error) => {
                     let wait = waits.next().filter(|_| transient(&error));
                     let Some(&wait) = wait else {
+                        crate::diag::note(|| {
+                            format!(
+                                "lyrics: lookup for {} failed: {error:?}{}",
+                                crate::diag::tag(&format!("{}\u{1f}{}", track.artist, track.title)),
+                                if cached.is_some() {
+                                    " (old answer used)"
+                                } else {
+                                    ""
+                                }
+                            )
+                        });
                         let answer = match cached {
                             Some(stale) => answer(stale.value.as_ref()),
                             None => Answer::Offline(error),

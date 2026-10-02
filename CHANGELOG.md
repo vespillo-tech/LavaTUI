@@ -4,10 +4,20 @@ What changed in each version of LavaTUI, in plain words.
 
 ## Unreleased
 
+**Clock**
+
 - The clock's seconds can be turned off: settings (`,`) › clock & timer ›
   seconds. Off, the big clock shows just hours and minutes at every size
   (no second hand on the analog face), and a paused lamp wakes once a
   minute instead of every second. On is still the default.
+
+**Music**
+
+- A short hiccup no longer hides a song's cover, lyrics or like and add
+  buttons until the next song. If Spotify is slow to answer for a moment,
+  the music stays on screen. A cover or lyrics that couldn't load are
+  tried again while the song plays.
+- The add-to-playlist button shows for every Spotify song right away.
 
 ## 1.2.0 — 2026-10-02 — first public release
 

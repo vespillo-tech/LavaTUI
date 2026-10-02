@@ -1731,6 +1731,49 @@ mod lyrics {
         assert!(Lyrics.chip(&m).is_none());
     }
 
+    /// lava-75z.22: LRCLIB out of reach as a song starts (a network blip)
+    /// used to leave it on "lyrics offline" to its end; now the song is
+    /// asked about again every so often, and its lyrics come.
+    #[test]
+    fn offline_lyrics_are_asked_for_again() {
+        use crate::app::model::lyrics::ASK_AGAIN;
+        let (mut m, t0) = model_with(Session::default(), temp_config("lyrics-again"), 120, 36);
+        let source = FakeSource::new(playing(track("t:1", "Slow Rise"), S, t0), Vec::new());
+        let mock = Mock::new([Err("network down".into())]);
+        with(&mut m, &source, &mock);
+        m.update(Action::Place("lyrics"), t0);
+        settle(&mut m, t0);
+        assert_eq!(m.lyrics.found, Some(Fetch::Offline));
+        assert_eq!(mock.urls().len(), 1);
+
+        // Not before it's due.
+        mock.replies.lock().unwrap().push_back(record(LRC));
+        tick(&mut m, t0 + ASK_AGAIN / 2);
+        std::thread::sleep(Duration::from_millis(20));
+        tick(&mut m, t0 + ASK_AGAIN / 2);
+        assert_eq!(mock.urls().len(), 1);
+        assert_eq!(m.lyrics.found, Some(Fetch::Offline));
+
+        // Due: asked again; "offline" stays up until the answer is in.
+        let at = t0 + ASK_AGAIN + S;
+        tick(&mut m, at);
+        for _ in 0..500 {
+            if m.lyrics.found != Some(Fetch::Offline) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+            tick(&mut m, at);
+        }
+        assert!(matches!(
+            m.lyrics.found,
+            Some(Fetch::Lyrics(Words::Synced(_)))
+        ));
+        assert_eq!(mock.urls().len(), 2);
+        // Found: no more asking.
+        tick(&mut m, at + ASK_AGAIN * 3);
+        assert_eq!(mock.urls().len(), 2);
+    }
+
     #[test]
     fn plain_lyrics_when_there_is_no_sync() {
         let (mut m, t0) = model_with(Session::default(), temp_config("lyrics-plain"), 120, 36);

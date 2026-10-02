@@ -85,6 +85,14 @@ impl Cadence {
 /// position never jitters back and forth by a poll's latency.
 const JITTER: Duration = Duration::from_millis(250);
 
+/// A player that was answering and then misses (busy as it changes track,
+/// a loaded machine: Spotify can take a second over a track change) keeps
+/// its last state on screen for this many failed polls in a row, each
+/// tried again at the playing pace, before the failure shows. One missed
+/// answer used to blank the music, lyrics and cover for 5-15 s
+/// (lava-75z.22).
+const GRACE: u32 = 2;
+
 #[derive(Debug)]
 struct State {
     snapshot: Snapshot,
@@ -116,6 +124,7 @@ impl Polled {
             commands: rx,
             handled: 0,
             cadence,
+            misses: 0,
         };
         let spawned = thread::Builder::new()
             .name("lavatui-media".into())
@@ -181,6 +190,8 @@ struct Worker<B> {
     /// Commands taken off the channel so far.
     handled: u64,
     cadence: Cadence,
+    /// Failed polls in a row (see [`GRACE`]).
+    misses: u32,
 }
 
 impl<B: Backend> Worker<B> {
@@ -207,6 +218,26 @@ impl<B: Backend> Worker<B> {
         self.handled += batch.len() as u64;
         let batch = coalesce(batch);
         let fresh = self.backend.exchange(&batch);
+        let transient = matches!(
+            fresh.status,
+            Status::Unavailable(Unavailable::NotResponding | Unavailable::Error(_))
+        );
+        if !transient {
+            self.misses = 0;
+        } else {
+            self.misses += 1;
+            crate::diag::note(|| {
+                format!(
+                    "player: no answer ({:?}), miss {}",
+                    fresh.status, self.misses
+                )
+            });
+            let shown = lock(&self.state).snapshot.status.is_available();
+            if shown && self.misses <= GRACE {
+                // What's shown stays (its clock runs on); ask again soon.
+                return self.cadence.playing;
+            }
+        }
         let mut wait = self.cadence.after(&fresh.status);
         if !batch.is_empty() {
             wait = wait.min(self.cadence.after_command);
@@ -325,6 +356,7 @@ mod tests {
             commands: rx,
             handled: 0,
             cadence: Cadence::default(),
+            misses: 0,
         };
         (handle, worker, log)
     }
@@ -340,6 +372,75 @@ mod tests {
         assert_eq!(cadence.after(&Status::Paused), cadence.idle);
         assert!(cadence.after(&Status::Unavailable(Unavailable::NotRunning)) > cadence.playing);
         assert!(cadence.after(&Status::Unavailable(Unavailable::PermissionDenied)) > cadence.idle);
+    }
+
+    /// lava-75z.22: a missed answer or two (Spotify busy over a track
+    /// change) keeps what's shown, asked again at the playing pace; only
+    /// a third in a row shows the problem. A player that's gone shows at
+    /// once.
+    #[test]
+    fn a_missed_answer_or_two_keeps_what_is_shown() {
+        let answers = Arc::new(Mutex::new(Vec::<Status>::new()));
+        let script = Arc::clone(&answers);
+        let (handle, mut worker, _) = worker(move |_| {
+            let status = script.lock().unwrap().remove(0);
+            Snapshot {
+                status,
+                ..playing("a", MS, Instant::now())
+            }
+        });
+        let busy = Status::Unavailable(Unavailable::NotResponding);
+        let odd = Status::Unavailable(Unavailable::Error("Spotify: odd".into()));
+        answers.lock().unwrap().extend([
+            Status::Playing,
+            busy.clone(),
+            odd.clone(),
+            Status::Playing,
+            busy.clone(),
+            busy.clone(),
+            busy.clone(),
+            Status::Playing,
+            Status::Unavailable(Unavailable::NotRunning),
+        ]);
+        let cadence = Cadence::default();
+        worker.turn(Vec::new());
+        // Two misses: still playing, asked again soon.
+        for _ in 0..2 {
+            assert_eq!(worker.turn(Vec::new()), cadence.playing);
+            assert_eq!(handle.snapshot().status, Status::Playing);
+        }
+        // An answer resets the count.
+        worker.turn(Vec::new());
+        worker.turn(Vec::new());
+        worker.turn(Vec::new());
+        assert_eq!(handle.snapshot().status, Status::Playing);
+        // The third miss in a row shows.
+        assert_eq!(worker.turn(Vec::new()), cadence.not_responding);
+        assert_eq!(handle.snapshot().status, busy);
+        worker.turn(Vec::new());
+        assert_eq!(handle.snapshot().status, Status::Playing);
+        // Quit: at once.
+        worker.turn(Vec::new());
+        assert_eq!(
+            handle.snapshot().status,
+            Status::Unavailable(Unavailable::NotRunning)
+        );
+    }
+
+    /// Before the first answer there's nothing to keep: a failure shows.
+    #[test]
+    fn a_first_failure_shows_at_once() {
+        let (handle, mut worker, _) = worker(|_| {
+            Snapshot::new(
+                Status::Unavailable(Unavailable::NotResponding),
+                Instant::now(),
+            )
+        });
+        worker.turn(Vec::new());
+        assert_eq!(
+            handle.snapshot().status,
+            Status::Unavailable(Unavailable::NotResponding)
+        );
     }
 
     #[test]
