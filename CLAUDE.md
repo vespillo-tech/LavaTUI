@@ -136,7 +136,9 @@ numbers); `docs/design.md` is the layout/visual contract.
                 `<widget name> = side|overlay|off` per registered widget
                 (a flattened map, so a new widget needs no config code).
 - `app/`      — `mod.rs` is the loop only: poll input until the frame
-                deadline → `Model::update(action)` (any input draws at once;
+                deadline → `Model::update(action)` (input draws at once, or when the
+                period since the last frame is up: never above the fps,
+                `timing::input_frame_at`;
                 queued events are drained first, as one burst that
                 `replies.rs` strips of terminal replies (DCS/OSC/APC, DA2
                 tails) crossterm reads as keys; the wait is recomputed from

@@ -160,6 +160,9 @@ pub struct Model {
     pub toast: Option<Toast>,
     pub hud: bool,
     pub focused: bool,
+    /// The terminal selects text under mouse capture with option held,
+    /// not shift (macOS Terminal, iTerm2): help says so. Set by the app.
+    pub option_drag: bool,
     pub layout: Layout,
     /// Cell height ÷ width: reported by the terminal, else from config.
     pub cell_aspect: f64,
@@ -234,6 +237,7 @@ impl Model {
             toast: None,
             hud: false,
             focused: true,
+            option_drag: false,
             layout: Layout {
                 area,
                 ..Layout::default()

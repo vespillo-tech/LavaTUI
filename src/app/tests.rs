@@ -334,7 +334,7 @@ fn ignored_events_dont_starve_frames() {
     let mut replies = ReplyFilter::default();
     for _ in 0..5 {
         let deadline = events.now + Duration::from_millis(50);
-        assert!(!wait_for_input(&mut events, &mut replies, &mut m, deadline).unwrap());
+        assert!(!wait_for_input(&mut events, &mut replies, &mut m, deadline, None).unwrap());
         assert_eq!(events.now, deadline, "frame held back");
     }
 }
@@ -350,7 +350,7 @@ fn a_key_flood_still_draws_by_the_deadline() {
     );
     let deadline = events.now + Duration::from_millis(40);
     let mut replies = ReplyFilter::default();
-    assert!(wait_for_input(&mut events, &mut replies, &mut m, deadline).unwrap());
+    assert!(wait_for_input(&mut events, &mut replies, &mut m, deadline, None).unwrap());
     assert!(events.now <= deadline, "frame held back");
 }
 
@@ -406,8 +406,14 @@ fn terminal_replies_are_not_keys() {
             events: crossterm_events(reply).into(),
         };
         let deadline = t0 + Duration::from_millis(16);
-        let handled =
-            wait_for_input(&mut events, &mut ReplyFilter::default(), &mut m, deadline).unwrap();
+        let handled = wait_for_input(
+            &mut events,
+            &mut ReplyFilter::default(),
+            &mut m,
+            deadline,
+            None,
+        )
+        .unwrap();
         let shown = String::from_utf8_lossy(reply);
         assert!(!handled, "{shown:?} acted");
         assert_eq!(state(&m), before, "{shown:?} changed state");
@@ -422,7 +428,7 @@ fn terminal_replies_are_not_keys() {
         events: crossterm_events(&bytes).into(),
     };
     let heat = m.settings.lamp.heat;
-    wait_for_input(&mut events, &mut ReplyFilter::default(), &mut m, t0).unwrap();
+    wait_for_input(&mut events, &mut ReplyFilter::default(), &mut m, t0, None).unwrap();
     assert!(!m.quit);
     assert_eq!(m.settings.lamp.heat, heat + 1);
     assert!(m.frozen);
@@ -447,13 +453,114 @@ fn input_redraw_keeps_the_scheduled_next_frame() {
             &mut input,
             &mut ReplyFilter::default(),
             &mut model,
-            deadline
+            deadline,
+            None
         )
         .unwrap()
     );
     pacer.frame_done(input.now + Duration::from_millis(1));
     assert_eq!(pacer.deadline(), deadline);
     assert!(pacer.deadline() - input.now < Duration::from_millis(7));
+}
+
+/// Runs the loop's timing for `span` on `events`' fake clock: wait for
+/// input or the deadline, "draw", repeat. Returns when each frame within
+/// `span` started.
+fn frames(m: &mut Model, events: &mut impl Events, span: Duration, idle: bool) -> Vec<Instant> {
+    let start = events.now();
+    let mut pacer = FramePacer::new(m.target_fps(), start);
+    let mut replies = ReplyFilter::default();
+    let mut drawn: Vec<Instant> = Vec::new();
+    while events.now() < start + span {
+        // Frozen: nothing due for a minute, only input draws.
+        let deadline = if idle {
+            events.now() + Duration::from_secs(60)
+        } else {
+            pacer.deadline()
+        };
+        let last = drawn.last().copied();
+        wait_for_input(events, &mut replies, m, deadline, last).unwrap();
+        let at = events.now();
+        pacer.frame_done(at);
+        drawn.push(at);
+    }
+    drawn.retain(|&at| at < start + span);
+    drawn
+}
+
+/// lava-s4w: a 200 Hz stream of input that acts (heat keys; mouse drags
+/// do the same) draws no faster than the target fps, animating or frozen.
+#[test]
+fn input_faster_than_the_frame_rate_draws_at_the_frame_rate() {
+    for idle in [false, true] {
+        let (mut m, _) = model("input-cap", 80, 24);
+        let fps = m.target_fps() as usize;
+        let mut events = Stream::new(
+            Duration::from_millis(5),
+            Event::Key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE)),
+        );
+        // One second, in whole (rounded-down) periods.
+        let period = Duration::from_secs(1) / fps as u32;
+        let drawn = frames(&mut m, &mut events, period * fps as u32, idle);
+        assert!(drawn.len() <= fps, "idle {idle}: {} frames", drawn.len());
+        assert!(
+            drawn.len() >= fps - 1,
+            "idle {idle}: {} frames",
+            drawn.len()
+        );
+        for pair in drawn.windows(2) {
+            assert!(pair[1] - pair[0] >= period, "idle {idle}: {pair:?}");
+        }
+    }
+}
+
+/// lava-s4w: input still shows within one frame: at once when the last
+/// frame is a period old, else when the period is up.
+#[test]
+fn input_draws_within_a_frame() {
+    let (mut m, t0) = model("input-latency", 80, 24);
+    let period = Duration::from_secs(1) / m.target_fps();
+    let far = t0 + Duration::from_secs(60);
+    let key = || Event::Key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
+    // A key 5 ms after a frame: drawn when the period is up.
+    let mut events = Burst {
+        now: t0 + Duration::from_millis(5),
+        events: [key()].into(),
+    };
+    let handled = wait_for_input(
+        &mut events,
+        &mut ReplyFilter::default(),
+        &mut m,
+        far,
+        Some(t0),
+    )
+    .unwrap();
+    assert!(handled);
+    assert_eq!(events.now, t0 + period);
+    // A key two periods after the last frame: drawn at once.
+    let at = t0 + period * 2;
+    let mut events = Burst {
+        now: at,
+        events: [key()].into(),
+    };
+    let handled = wait_for_input(
+        &mut events,
+        &mut ReplyFilter::default(),
+        &mut m,
+        far,
+        Some(t0),
+    )
+    .unwrap();
+    assert!(handled);
+    assert_eq!(events.now, at);
+}
+
+#[test]
+fn option_drag_terminals() {
+    assert!(option_drag(Some("Apple_Terminal")));
+    assert!(option_drag(Some("iTerm.app")));
+    assert!(!option_drag(Some("ghostty")));
+    assert!(!option_drag(None));
 }
 
 #[test]

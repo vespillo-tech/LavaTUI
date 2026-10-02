@@ -3,9 +3,11 @@
 //! file only owns the terminal, the wall clock and the frame pacing.
 //!
 //! Input is handled the moment it arrives (the loop sleeps inside
-//! `event::poll`), and any input draws a frame immediately, so a key shows
-//! up within one frame (§7). Bursts (resize storms, held keys) are drained
-//! before drawing, so only the final state is drawn. Terminal replies that
+//! `event::poll`), and input draws a frame immediately, so a key shows up
+//! within one frame (§7), unless a frame started less than a period ago:
+//! then it waits out the period, handling whatever else arrives, so input
+//! never draws faster than the target fps. Bursts (resize storms, held
+//! keys) are drained before drawing, so only the final state is drawn. Terminal replies that
 //! crossterm reads as keys are filtered out first ([`replies`]).
 
 mod model;
@@ -37,7 +39,7 @@ use crate::clock::ClockTime;
 use crate::config::Session;
 use crate::config::store::Store;
 use crate::render::LampState;
-use crate::timing::{FpsMeter, FramePacer};
+use crate::timing::{FpsMeter, FramePacer, input_frame_at};
 use crate::ui::{self, keymap};
 use replies::ReplyFilter;
 
@@ -61,6 +63,7 @@ pub fn run(
         session.seed.unwrap_or_else(time_seed),
         Instant::now(),
     );
+    model.option_drag = option_drag(std::env::var("TERM_PROGRAM").ok().as_deref());
     model.background_saves()?;
     let modes = TerminalModes::enable(model.settings.input.mouse)?;
     let mut trace = trace::Trace::new(trace_path)?;
@@ -140,6 +143,7 @@ fn run_loop(
     let mut priority = crate::thread_qos::UiPriority::new();
     let mut replies = ReplyFilter::default();
     let mut last_drawn = None;
+    let mut last_started = None;
 
     loop {
         let idle = model.idle_until();
@@ -148,16 +152,18 @@ fn run_loop(
         let deadline = idle.unwrap_or_else(|| pacer.deadline());
         let wait_start = Instant::now();
         let wait_cpu_start = trace.enabled().then(crate::thread_qos::cpu_ns);
-        let input = wait_for_input(&mut events, &mut replies, model, deadline)?;
+        let input = wait_for_input(&mut events, &mut replies, model, deadline, last_started)?;
         let wait_cpu_us = wait_cpu_start.map_or(0, |start| {
             crate::thread_qos::cpu_ns().saturating_sub(start) / 1000
         });
         let wait_end = Instant::now();
-        // Input draws immediately, while the scheduled grid stays put.
+        // Input draws off the grid (at most a frame a period), while the
+        // scheduled grid stays put.
         if model.quit {
             return Ok(());
         }
         let started = Instant::now();
+        last_started = Some(started);
         terminal.backend_mut().writer_mut().begin_frame()?;
         if std::mem::take(&mut model.clear) {
             full_repaint(terminal)?;
@@ -285,8 +291,9 @@ impl Events for TerminalEvents {
 /// only bounds the work between deadline checks.
 const MAX_BURST: usize = 128;
 
-/// Handle input until `deadline`. Returns `true` as soon as anything was
-/// handled (after draining whatever else is already queued).
+/// Handle input until `deadline`. Returns `true` once anything was handled
+/// and its frame may draw ([`input_frame_at`]: at once, or a period after
+/// `last_frame`), having handled everything that arrived until then.
 ///
 /// Events are read in bursts (everything already queued) and terminal
 /// replies are dropped from each burst before any of it is dispatched.
@@ -298,15 +305,14 @@ fn wait_for_input(
     replies: &mut ReplyFilter,
     model: &mut Model,
     deadline: Instant,
+    last_frame: Option<Instant>,
 ) -> io::Result<bool> {
     let mut handled = false;
+    // When to draw: the deadline, or sooner once input was handled.
+    let mut draw_at = deadline;
     let mut burst = Vec::new();
     loop {
-        let timeout = if handled {
-            Duration::ZERO
-        } else {
-            deadline.saturating_duration_since(events.now())
-        };
+        let timeout = draw_at.saturating_duration_since(events.now());
         if !events.poll(timeout)? {
             return Ok(handled);
         }
@@ -329,10 +335,20 @@ fn wait_for_input(
                 return Ok(handled);
             }
         }
-        if now >= deadline {
+        if handled {
+            // Focus can change the fps: recompute with each burst.
+            draw_at = input_frame_at(last_frame, model.target_fps(), now, deadline);
+        }
+        if now >= draw_at {
             return Ok(handled);
         }
     }
+}
+
+/// Whether the terminal (`TERM_PROGRAM`) selects text past mouse capture
+/// with option held rather than shift: macOS Terminal and iTerm2.
+fn option_drag(term_program: Option<&str>) -> bool {
+    matches!(term_program, Some("Apple_Terminal" | "iTerm.app"))
 }
 
 /// Cell height ÷ width from the terminal's pixel size, when it reports one

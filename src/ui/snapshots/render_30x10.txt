@@ -15,10 +15,10 @@
  app
  m       minimal
  ?       this help
- q       quit · ctrl-c
- b d     status bar · debug
+ q       quit
+ b       status bar
+ d       debug info
  ctrl-l  redraw
- ⇧ drag  select text
 
 ── style picker ──
 ~~~~~~~~~ ‹ solid › ~~~~~~~~~~

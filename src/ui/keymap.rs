@@ -135,6 +135,8 @@ pub enum Section {
     /// Where the dock widgets go.
     Widgets,
     App,
+    /// What the mouse does (no keys: rows without bindings).
+    Mouse,
     /// The player keys: live only after `A` ([`InputMode::Player`]).
     Music,
 }
@@ -146,6 +148,7 @@ impl Section {
             Section::Clock => "clock & pomodoro",
             Section::Widgets => "widgets",
             Section::App => "app",
+            Section::Mouse => "mouse",
             Section::Music => "music · after A",
         }
     }
@@ -159,6 +162,25 @@ pub struct Row {
     pub keys: &'static str,
     pub label: &'static str,
     pub binds: &'static [(Key, Action)],
+    /// The row one action a line, `(keys, label)`, for the narrow help:
+    /// a combined row cut to fit would name one action for both keys.
+    /// Empty: the row is one action already.
+    pub narrow: &'static [(&'static str, &'static str)],
+}
+
+impl Row {
+    const fn narrow(self, narrow: &'static [(&'static str, &'static str)]) -> Row {
+        Row { narrow, ..self }
+    }
+
+    /// The row as the narrow help shows it: one action a line.
+    pub fn split(&self) -> Vec<(&'static str, &'static str)> {
+        if self.narrow.is_empty() {
+            vec![(self.keys, self.label)]
+        } else {
+            self.narrow.to_vec()
+        }
+    }
 }
 
 const fn row(
@@ -172,25 +194,42 @@ const fn row(
         keys,
         label,
         binds,
+        narrow: &[],
     }
 }
 
 use Action as A;
 use Key::{Char as K, Ctrl};
 use PlayerKey as P;
-use Section::{App, Clock, Lamp, Music, Widgets};
+use Section::{App, Clock, Lamp, Mouse, Music, Widgets};
+
+/// The text-selection row's keys: shift-drag in most terminals.
+pub const SELECT_DRAG: &str = "⇧ drag";
 
 pub static KEYMAP: &[Row] = &[
-    row(Lamp, "s", "next style", &[(K('s'), A::NextStyle)]),
-    row(Lamp, "S", "style picker", &[(K('S'), A::StylePicker)]),
-    row(Lamp, "p", "next palette", &[(K('p'), A::NextPalette)]),
-    row(Lamp, "P", "palette picker", &[(K('P'), A::PalettePicker)]),
+    // A key and its shifted picker share a row (help fits 80x24, §4.3);
+    // the narrow help splits them.
+    row(
+        Lamp,
+        "s S",
+        "style · picker",
+        &[(K('s'), A::NextStyle), (K('S'), A::StylePicker)],
+    )
+    .narrow(&[("s", "next style"), ("S", "style picker")]),
+    row(
+        Lamp,
+        "p P",
+        "palette · picker",
+        &[(K('p'), A::NextPalette), (K('P'), A::PalettePicker)],
+    )
+    .narrow(&[("p", "next palette"), ("P", "palette picker")]),
     row(
         Lamp,
         "[ ]",
         "heat − +",
         &[(K('['), A::HeatDown), (K(']'), A::HeatUp)],
-    ),
+    )
+    .narrow(&[("[", "less heat"), ("]", "more heat")]),
     row(
         Lamp,
         "- +",
@@ -200,7 +239,8 @@ pub static KEYMAP: &[Row] = &[
             (K('+'), A::Faster),
             (K('='), A::Faster),
         ],
-    ),
+    )
+    .narrow(&[("-", "slower"), ("+", "faster")]),
     row(Lamp, "z", "freeze", &[(K('z'), A::Freeze)]),
     row(
         Lamp,
@@ -209,8 +249,13 @@ pub static KEYMAP: &[Row] = &[
         &[(K('0'), A::ResetHeatSpeed)],
     ),
     row(Lamp, "R", "reseed wax", &[(K('R'), A::Reseed)]),
-    row(Clock, "c", "next face", &[(K('c'), A::NextFace)]),
-    row(Clock, "C", "face picker", &[(K('C'), A::FacePicker)]),
+    row(
+        Clock,
+        "c C",
+        "face · picker",
+        &[(K('c'), A::NextFace), (K('C'), A::FacePicker)],
+    )
+    .narrow(&[("c", "next face"), ("C", "face picker")]),
     row(Clock, "T", "12h / 24h", &[(K('T'), A::ToggleHour24)]),
     row(
         Clock,
@@ -224,45 +269,52 @@ pub static KEYMAP: &[Row] = &[
         "r r",
         "reset pomodoro",
         &[(K('r'), A::PomodoroReset)],
-    ),
+    )
+    .narrow(&[("r r", "reset timer")]),
     // One row per dock widget (`Action::Place` names it), plus the anchor.
     row(
         Widgets,
         "t",
         "clock side/lava/off",
         &[(K('t'), A::Place("clock"))],
-    ),
+    )
+    .narrow(&[("t", "place clock")]),
     row(
         Widgets,
         "f",
         "pomodoro side/lava/off",
         &[(K('f'), A::Place("pomodoro"))],
-    ),
+    )
+    .narrow(&[("f", "place pomodoro")]),
     row(
         Widgets,
         "a",
         "music side/lava/off",
         &[(K('a'), A::Place("music"))],
-    ),
+    )
+    .narrow(&[("a", "place music")]),
     row(Widgets, "A", "music keys", &[(K('A'), A::PlayerKeys)]),
     row(
         Widgets,
         "y",
         "lyrics · lrclib.net",
         &[(K('y'), A::Place("lyrics"))],
-    ),
+    )
+    .narrow(&[("y", "place lyrics")]),
     row(
         Widgets,
         "o O",
         "cover · detail",
         &[(K('o'), A::Place("cover")), (K('O'), A::CoverDetail)],
-    ),
+    )
+    .narrow(&[("o", "place cover"), ("O", "cover detail")]),
     row(
         Widgets,
         "l L",
         "move, pick lava widget",
         &[(K('l'), A::NextAnchor), (K('L'), A::NextLavaWidget)],
-    ),
+    )
+    .narrow(&[("l", "move widget"), ("L", "pick widget")]),
     // m ? q first: the small full-screen help leads with them (§4.3).
     row(App, "m", "minimal", &[(K('m'), A::ToggleMinimal)]),
     row(App, "?", "this help", &[(K('?'), A::Help)]),
@@ -271,16 +323,23 @@ pub static KEYMAP: &[Row] = &[
         "q",
         "quit · ctrl-c",
         &[(K('q'), A::Quit), (Ctrl('c'), A::Quit)],
-    ),
+    )
+    .narrow(&[("q", "quit")]),
     row(
         App,
         "b d",
         "status bar · debug hud",
         &[(K('b'), A::ToggleStatusBar), (K('d'), A::DebugHud)],
-    ),
+    )
+    .narrow(&[("b", "status bar"), ("d", "debug info")]),
     row(App, "ctrl-l", "redraw", &[(Ctrl('l'), A::Redraw)]),
-    // Not a key: with mouse capture on, the terminal's own selection.
-    row(App, "⇧ drag", "select text", &[]),
+    // The mouse (`input.mouse`): not keys, so no bindings (`mouse_action`).
+    row(Mouse, "drag", "warm the wax", &[]),
+    row(Mouse, "click", "pick · double keeps", &[]),
+    row(Mouse, "wheel", "scroll lists & help", &[]),
+    // With mouse capture on, the terminal's own selection; help shows
+    // `⌥ drag` where that's the modifier (`Model::option_drag`).
+    row(Mouse, SELECT_DRAG, "select text", &[]),
     // The player keys, after `A` (their own mode: they may reuse keys).
     row(
         Music,
@@ -291,7 +350,12 @@ pub static KEYMAP: &[Row] = &[
             (K('n'), A::Player(P::Next)),
             (K('p'), A::Player(P::Previous)),
         ],
-    ),
+    )
+    .narrow(&[
+        ("␣", "play / pause"),
+        ("n", "next track"),
+        ("p", "previous"),
+    ]),
     row(
         Music,
         "←→ ↑↓",
@@ -309,7 +373,8 @@ pub static KEYMAP: &[Row] = &[
             (K('='), A::Player(P::VolumeUp)),
             (K('-'), A::Player(P::VolumeDown)),
         ],
-    ),
+    )
+    .narrow(&[("←→", "seek"), ("↑↓", "volume")]),
     row(
         Music,
         "x r",
@@ -318,7 +383,8 @@ pub static KEYMAP: &[Row] = &[
             (K('x'), A::Player(P::Shuffle)),
             (K('r'), A::Player(P::Repeat)),
         ],
-    ),
+    )
+    .narrow(&[("x", "shuffle"), ("r", "repeat")]),
     // The Spotify library (Web API, `docs/spotify.md`).
     row(
         Music,
@@ -328,7 +394,8 @@ pub static KEYMAP: &[Row] = &[
             (K('s'), A::Player(P::Like)),
             (K('a'), A::Player(P::AddToPlaylist)),
         ],
-    ),
+    )
+    .narrow(&[("s", "like"), ("a", "add to playlist")]),
     row(
         Music,
         "b i",
@@ -337,7 +404,8 @@ pub static KEYMAP: &[Row] = &[
             (K('b'), A::Player(P::Playlists)),
             (K('i'), A::Player(P::Account)),
         ],
-    ),
+    )
+    .narrow(&[("b", "playlists"), ("i", "log in / out")]),
 ];
 
 /// Which key set is live.
