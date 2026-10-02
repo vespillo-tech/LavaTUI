@@ -316,8 +316,8 @@ on its own.
 
 The cover is a real picture in kitty, Ghostty, iTerm2, WezTerm, foot,
 mlterm and Konsole. In other terminals it's drawn with text blocks.
-Press `O` to change how it looks: sharp, pixelated or chunky (pixel art
-with bigger squares).
+Press `O` to change how it looks: sharp, or pixel art with small, medium
+or big pixels.
 
 ### Optional: your Spotify library
 

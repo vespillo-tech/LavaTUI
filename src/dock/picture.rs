@@ -6,12 +6,13 @@
 //! |---|---|---|
 //! | quadrant | 2 × 2 | `▘▝▀▖▌▞▛▗▚▐▜▄▙▟█` |
 //! | sextant | 2 × 3 | U+1FB00..U+1FB3B (Unicode 13), `▌▐█` |
-//! | pixelated, chunky | blocks of k columns × k half rows | `▀` (exact: top ink, bottom paper), `█` |
+//! | pixels (small, medium, big) | blocks of k columns × k half rows | `▀` (exact: top ink, bottom paper), `█` |
 //!
-//! Pixel-art blocks are about [`PIXEL_ART`] across (16 pixelated, 8 chunky),
-//! a whole number of columns wide ([`block_side`]), so every block is the
-//! same size give or take one; chunky's are always bigger than
-//! pixelated's, however small the cover.
+//! Pixel-art blocks are about [`PIXEL_ART`] across (32 small, 16 medium,
+//! 10 big), a whole number of columns wide, at least two
+//! ([`block_side`]), so every
+//! block is the same size give or take one; each size's blocks are always
+//! bigger than the one before's, however small the cover.
 //!
 //! Quadrants and sextants split each cell's pixels in the two groups whose
 //! means lose the least (every split is tried: 8 or 32), one mean the
@@ -46,27 +47,28 @@ pub enum TextMode {
     Quadrant,
     /// Sharp, 2 × 3 pixels a cell (terminals that draw sextants).
     Sextant,
-    /// Pixel art, about `PIXEL_ART[0]` blocks across.
-    Pixelated,
-    /// Pixel art, about `PIXEL_ART[1]` blocks across.
-    Chunky,
+    /// Pixel art, about `PIXEL_ART[level]` blocks across.
+    Pixels(usize),
 }
 
 /// The side of a pixel-art block in `mode` on a cover `cols` wide: in
-/// columns across and half rows down (about square on screen); even, so
-/// a block is whole cells, where cell backgrounds are see-through.
-/// `None` for the sharp modes.
+/// columns across and half rows down (about square on screen); at least
+/// two (one column is as fine as text gets: it would look sharp); even,
+/// so a block is whole cells, where cell backgrounds are see-through;
+/// always bigger than the level before's. `None` for the sharp modes.
 pub fn block_side(mode: TextMode, cols: u16, translucent: bool) -> Option<usize> {
+    let TextMode::Pixels(level) = mode else {
+        return None;
+    };
     let unit = if translucent { 2 } else { 1 };
     let side = |across: u16| {
         let k = (f64::from(cols) / f64::from(across)).round() as usize;
-        k.max(1).next_multiple_of(unit)
+        k.max(2).next_multiple_of(unit)
     };
-    match mode {
-        TextMode::Quadrant | TextMode::Sextant => None,
-        TextMode::Pixelated => Some(side(PIXEL_ART[0])),
-        TextMode::Chunky => Some(side(PIXEL_ART[1]).max(side(PIXEL_ART[0]) + unit)),
-    }
+    let sides = PIXEL_ART[..=level.min(PIXEL_ART.len() - 1)].iter();
+    sides.fold(None, |before: Option<usize>, &across| {
+        Some(before.map_or(side(across), |b| side(across).max(b + unit)))
+    })
 }
 
 /// One cell of a picture: the glyph, its ink and its background.
@@ -133,7 +135,7 @@ pub fn cells(
     let (gw, gh) = match mode {
         TextMode::Quadrant => (2, 2),
         TextMode::Sextant => (2, 3),
-        TextMode::Pixelated | TextMode::Chunky => {
+        TextMode::Pixels(_) => {
             let side = block_side(mode, cols, translucent).unwrap_or(1);
             return blocks(art, (cols, rows), (side, translucent), theme);
         }
@@ -298,11 +300,12 @@ mod tests {
         assert_eq!((mask, paper), (0, r));
     }
 
-    const MODES: [TextMode; 4] = [
+    const MODES: [TextMode; 5] = [
         TextMode::Sextant,
         TextMode::Quadrant,
-        TextMode::Pixelated,
-        TextMode::Chunky,
+        TextMode::Pixels(0),
+        TextMode::Pixels(1),
+        TextMode::Pixels(2),
     ];
 
     #[test]
@@ -364,46 +367,52 @@ mod tests {
             across.count() + down.count()
         };
         // Sharp ones: nearly every cell differs from the next.
-        let [sextant, quadrant, pixelated, chunky] = MODES.map(edges);
-        assert!(sextant.min(quadrant) > pixelated && pixelated > chunky);
+        let [sextant, quadrant, small, medium, big] = MODES.map(edges);
+        assert!(
+            sextant.min(quadrant) > medium,
+            "{sextant} {quadrant} {medium}"
+        );
+        assert!(small > medium && medium > big, "{small} {medium} {big}");
     }
 
-    /// Pixel art: about 16 and 8 blocks across, whole columns, chunky
-    /// always the bigger; whole cells where backgrounds are see-through.
+    /// Pixel art: about 32, 16 and 10 blocks across, whole columns, each
+    /// size always bigger than the one before; whole cells where
+    /// backgrounds are see-through.
     #[test]
-    fn pixel_art_blocks_are_whole_cells_and_chunky_is_coarser() {
-        use TextMode::{Chunky, Pixelated};
+    fn pixel_art_blocks_are_whole_cells_and_get_bigger() {
+        use TextMode::Pixels;
         assert_eq!(block_side(TextMode::Sextant, 24, false), None);
         for translucent in [false, true] {
             for cols in 4..=64 {
-                let p = block_side(Pixelated, cols, translucent).unwrap();
-                let c = block_side(Chunky, cols, translucent).unwrap();
-                assert!(p < c, "{cols} {translucent}: {p} {c}");
-                assert!(!translucent || (p.is_multiple_of(2) && c.is_multiple_of(2)));
+                let sides = [0, 1, 2].map(|l| block_side(Pixels(l), cols, translucent).unwrap());
+                assert!(
+                    sides[0] < sides[1] && sides[1] < sides[2],
+                    "{cols} {translucent}: {sides:?}"
+                );
+                assert!(!translucent || sides.iter().all(|s| s.is_multiple_of(2)));
             }
         }
-        let across = |mode, cols| usize::from(cols) / block_side(mode, cols, false).unwrap();
-        assert_eq!((across(Pixelated, 64), across(Chunky, 64)), (16, 8));
-        assert_eq!((across(Pixelated, 24), across(Chunky, 24)), (12, 8));
+        let across = |cols| {
+            [0, 1, 2].map(|l| usize::from(cols) / block_side(Pixels(l), cols, false).unwrap())
+        };
+        assert_eq!(across(64), [32, 16, 10]);
+        assert_eq!(across(24), [12, 8, 6]);
         // Blocks are flat: a cell row's colours change only at block edges.
         let t = theme(ColorDepth::TrueColor);
         let art = rings();
-        for (mode, side) in [(Pixelated, 2), (Chunky, 3)] {
-            let cells = cells(&art, 24, 12, (mode, false), &t);
-            assert_eq!(block_side(mode, 24, false), Some(side));
+        for (level, side) in [(0, 2), (1, 3), (2, 4)] {
+            let cells = cells(&art, 24, 12, (Pixels(level), false), &t);
+            assert_eq!(block_side(Pixels(level), 24, false), Some(side));
             for row in cells.chunks(24) {
                 for (x, pair) in row.windows(2).enumerate() {
-                    assert!(
-                        pair[0] == pair[1] || (x + 1) % side == 0,
-                        "{mode:?} col {x}"
-                    );
+                    assert!(pair[0] == pair[1] || (x + 1) % side == 0, "{level} col {x}");
                 }
             }
         }
         // See-through backgrounds: whole cells, one colour each, still in
-        // blocks two and four columns wide.
-        for (mode, side) in [(Pixelated, 2), (Chunky, 4)] {
-            let cells = cells(&art, 24, 12, (mode, true), &t);
+        // blocks two, four and six columns wide.
+        for (level, side) in [(0, 2), (1, 4), (2, 6)] {
+            let cells = cells(&art, 24, 12, (Pixels(level), true), &t);
             assert!(cells.iter().all(|&(ch, fg, bg)| ch == '█' && fg == bg));
             for row in cells.chunks(24) {
                 assert!(row.chunks(side).all(|b| b.iter().all(|c| *c == b[0])));

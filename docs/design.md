@@ -1129,7 +1129,8 @@ out.
 
 **Detail** (`art.detail`, `O` cycles it). On screen (toasts, settings)
 it's the **cover quality**, named by how fine the picture is: `auto`,
-`sharp`, `pixelated`, `chunky`. Each is its own look in every terminal
+`sharp`, `small pixels`, `medium pixels`, `big pixels` (in the config
+`small-pixels`, `medium-pixels`, `big-pixels`). Each is its own look in every terminal
 (lava-bq0: the old `photo` / `fine` / `medium` / `coarse` were the same
 photo in a terminal with pictures, and the same one colour a cell where
 cell backgrounds are see-through). The toast says what it comes to
@@ -1138,8 +1139,9 @@ here, e.g. `cover quality · auto · sharp`:
 | detail | with pictures | in text cells (256 colours+) |
 |---|---|---|
 | `sharp` | the real picture, at the terminal's resolution | the finest text: sextants (2 × 3 pixels a cell, two colours each, U+1FB00..1FB3B) where the terminal draws them, else quadrants (2 × 2, `▘▝▀▖▌▞▛▗▚▐▜▄▙▟█`) |
-| `pixelated` | pixel art: 16 × 16 flat squares | flat square blocks, about 16 across: k columns × k half rows (`▀`, exact colours), k whole |
-| `chunky` | pixel art: 8 × 8 flat squares | the same, about 8 across, always bigger blocks than `pixelated` |
+| `small-pixels` | pixel art: 32 × 32 flat squares | flat square blocks, about 32 across: k columns × k half rows (`▀`, exact colours), k whole |
+| `medium-pixels` | pixel art: 16 × 16 flat squares | the same, about 16 across, always bigger blocks than `small-pixels` |
+| `big-pixels` | pixel art: 10 × 10 flat squares | the same, about 10 across, always bigger blocks than `medium-pixels` |
 | `auto` (default) | `sharp` | `sharp` |
 
 Pictures need a pixel protocol: kitty graphics with Unicode placeholders
@@ -1148,12 +1150,17 @@ sixel (foot, mlterm, Konsole ≥ 22.04, Contour); any colour depth but
 none. Pixel art is made with the sharp copy, on the art worker
 (`Art::pixel_art`, each block a box-filtered mean, drawn ~400 px square
 so the terminal's scaling keeps edges crisp; sixel scales it nearest).
-In text cells a block is `round(cols / n)` columns wide, so blocks are
-all one size, and where cell backgrounds are see-through (`translucent`) the side
-is even: whole cells, one colour each. The config keeps the names above;
-older ones load as the nearest look: `pixels` / `photo` / `sextant` /
-`fine` → `sharp`, `quadrant` / `medium` → `pixelated`, `halfblock` /
-`coarse` → `chunky`.
+In text cells a block is `round(cols / n)` columns wide (so blocks are
+all one size), bumped where needed so each size's blocks are bigger than
+the one before's on small covers; where cell backgrounds are see-through
+(`translucent`) the side is even: whole cells, one colour each. A block
+is at least two columns: one column is as fine as text gets and would
+look like `sharp`. (At a 24-column cover: 12, 8 and 6 blocks across;
+see-through 12, 6 and 4; at 64 columns 32, 16 and 10.)
+Older names load as the nearest look: `pixels` / `photo` / `sextant` /
+`fine` → `sharp`, `quadrant` / `medium` / `pixelated` → `medium-pixels`,
+`halfblock` / `coarse` / `chunky` → `big-pixels` (`pixels` stays the real
+picture it always meant, so it's never a pixel-art name).
 
 Sextants (`sharp` in text) are used only in terminals
 known to draw them, and **never through a multiplexer** (tmux, screen,
@@ -1795,7 +1802,7 @@ cover = "off"
 anchor = { clock = "center", pomodoro = "center", music = "top-left", lyrics = "bottom", cover = "top-right" }
 
 [art]
-detail = "auto"          # auto | sharp | pixelated | chunky (§4.6 Cover; older names load, see there)
+detail = "auto"          # auto | sharp | small-pixels | medium-pixels | big-pixels (§4.6 Cover; older names load)
 size = "medium"          # small | medium | large | fill
 inline = true            # the music card's small cover, while the cover widget is off
 

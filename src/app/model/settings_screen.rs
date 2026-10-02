@@ -599,8 +599,9 @@ impl Model {
                 "cover picture",
                 s.art.detail.label(),
                 "Sharp is the real picture where the terminal can show one, like kitty \
-                 or Ghostty; elsewhere it's as fine as text allows. Pixelated and chunky \
-                 turn the cover into pixel art with bigger squares. Auto is sharp.",
+                 or Ghostty; elsewhere it's as fine as text allows. Small, medium and \
+                 big pixels turn the cover into pixel art with bigger and bigger \
+                 squares. Auto is sharp.",
             ),
             Item::CoverSize => choice(
                 "cover size",

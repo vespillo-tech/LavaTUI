@@ -9,8 +9,8 @@
 //! scale to any cell size every frame for free. When pixels are wanted
 //! ([`ArtLoader::set_hires`]: kitty, iTerm2 or sixel images) it also keeps a
 //! sharper copy, up to [`HIRES_PX`]² and ready to send: PNG, base64, and
-//! the cover as pixel art at each of [`PIXEL_ART`] (for the `pixelated` and
-//! `chunky` cover quality).
+//! the cover as pixel art at each of [`PIXEL_ART`] (the cover quality's
+//! small, medium and big pixels).
 //!
 //! Cache: `$XDG_CACHE_HOME/lavatui/art`, else the platform cache dir; one
 //! file per URL (named by its SHA-256). A cover read from it is marked
@@ -44,8 +44,8 @@ pub const ART_PX: u32 = 128;
 /// 10-pixel-wide cell, and ~200-300 KB to send.
 pub const HIRES_PX: u32 = 400;
 /// Pixel-art copies made with the sharp one: this many square blocks
-/// across (the cover quality `pixelated`, then `chunky`).
-pub const PIXEL_ART: [u16; 2] = [16, 8];
+/// across (the cover quality's small, medium and big pixels).
+pub const PIXEL_ART: [u16; 3] = [32, 16, 10];
 /// The cover cache's files' extension.
 pub const CACHE_EXT: &str = "img";
 /// Covers kept on disk: a Spotify cover is ~60 KB (~15 MB for 256), the

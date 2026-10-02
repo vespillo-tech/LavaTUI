@@ -8,10 +8,10 @@
 //! (iTerm2, WezTerm) or sixel (foot, mlterm, Konsole); see
 //! [`crate::graphics`]. Without one it's the finest text cells: sextants
 //! (2 × 3 pixels a cell, Unicode 13) where they're known to be drawn, else
-//! quadrants (2 × 2). `pixelated` and `chunky` are pixel art, the cover in
-//! flat square blocks, about 16 and 8 across: sent as a picture where the
-//! terminal shows pictures, else drawn in whole and half cells
-//! ([`super::picture`]). `auto` is `sharp`. Text cells need 256 colours or
+//! quadrants (2 × 2). `small-pixels`, `medium-pixels` and `big-pixels` are
+//! pixel art, the cover in flat square blocks, about 32, 16 and 10
+//! across: sent as a picture where the terminal shows pictures, else drawn
+//! in whole and half cells ([`super::picture`]). `auto` is `sharp`. Text cells need 256 colours or
 //! more; pixels any colour at all. With no way to show it the widget is
 //! one calm line.
 //!
@@ -63,11 +63,11 @@ impl Default for ArtSettings {
 }
 
 /// `art.detail`: how covers are drawn, as fine or coarse as the user
-/// likes. Older names still load: `pixels` / `photo` / `sextant` / `fine`
-/// are `sharp`, `quadrant` / `medium` `pixelated`, `halfblock` / `coarse`
-/// `chunky`.
+/// likes. Older names still load as the nearest look: `pixels` / `photo`
+/// / `sextant` / `fine` are `sharp`; `quadrant` / `medium` / `pixelated`
+/// `medium-pixels`; `halfblock` / `coarse` / `chunky` `big-pixels`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 pub enum Detail {
     /// The best the terminal can do (sharp).
     #[default]
@@ -76,20 +76,23 @@ pub enum Detail {
     /// text cells.
     #[serde(alias = "pixels", alias = "photo", alias = "sextant", alias = "fine")]
     Sharp,
+    /// Pixel art, about 32 blocks across.
+    SmallPixels,
     /// Pixel art, about 16 blocks across.
-    #[serde(alias = "quadrant", alias = "medium")]
-    Pixelated,
-    /// Pixel art, about 8 blocks across.
-    #[serde(alias = "halfblock", alias = "coarse")]
-    Chunky,
+    #[serde(alias = "quadrant", alias = "medium", alias = "pixelated")]
+    MediumPixels,
+    /// Pixel art, about 10 blocks across.
+    #[serde(alias = "halfblock", alias = "coarse", alias = "chunky")]
+    BigPixels,
 }
 
 impl Detail {
-    pub const ALL: [Detail; 4] = [
+    pub const ALL: [Detail; 5] = [
         Detail::Auto,
         Detail::Sharp,
-        Detail::Pixelated,
-        Detail::Chunky,
+        Detail::SmallPixels,
+        Detail::MediumPixels,
+        Detail::BigPixels,
     ];
 
     pub fn next(self) -> Self {
@@ -109,26 +112,29 @@ impl Detail {
     pub fn grain(self) -> Grain {
         match self {
             Detail::Auto | Detail::Sharp => Grain::Sharp,
-            Detail::Pixelated => Grain::Pixelated,
-            Detail::Chunky => Grain::Chunky,
+            Detail::SmallPixels => Grain::Pixels(0),
+            Detail::MediumPixels => Grain::Pixels(1),
+            Detail::BigPixels => Grain::Pixels(2),
         }
     }
 }
 
-/// How coarse a cover is drawn: as sharp as it can be, or pixel art.
+/// The pixel-art sizes, as the user reads them (by `PIXEL_ART` level).
+const PIXEL_NAMES: [&str; 3] = ["small pixels", "medium pixels", "big pixels"];
+
+/// How coarse a cover is drawn: as sharp as it can be, or pixel art at a
+/// level of [`PIXEL_ART`] (0 the finest).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Grain {
     Sharp,
-    Pixelated,
-    Chunky,
+    Pixels(usize),
 }
 
 impl Grain {
     pub fn label(self) -> &'static str {
         match self {
             Grain::Sharp => "sharp",
-            Grain::Pixelated => "pixelated",
-            Grain::Chunky => "chunky",
+            Grain::Pixels(level) => PIXEL_NAMES[level.min(PIXEL_NAMES.len() - 1)],
         }
     }
 
@@ -137,8 +143,7 @@ impl Grain {
     pub fn blocks(self) -> Option<u16> {
         match self {
             Grain::Sharp => None,
-            Grain::Pixelated => Some(PIXEL_ART[0]),
-            Grain::Chunky => Some(PIXEL_ART[1]),
+            Grain::Pixels(level) => PIXEL_ART.get(level).copied(),
         }
     }
 
@@ -147,8 +152,7 @@ impl Grain {
         match self {
             Grain::Sharp if caps.sextants => TextMode::Sextant,
             Grain::Sharp => TextMode::Quadrant,
-            Grain::Pixelated => TextMode::Pixelated,
-            Grain::Chunky => TextMode::Chunky,
+            Grain::Pixels(level) => TextMode::Pixels(level),
         }
     }
 }
@@ -194,8 +198,7 @@ impl Drawn {
         match self {
             Drawn::Pixels(_, grain) => grain.label(),
             Drawn::Text(TextMode::Sextant | TextMode::Quadrant) => "sharp",
-            Drawn::Text(TextMode::Pixelated) => "pixelated",
-            Drawn::Text(TextMode::Chunky) => "chunky",
+            Drawn::Text(TextMode::Pixels(level)) => Grain::Pixels(level).label(),
             Drawn::None => "no pictures in this terminal",
         }
     }
@@ -573,12 +576,17 @@ mod tests {
                     .iter()
                     .map(|&d| resolve(d, caps, depth))
                     .collect();
-                assert!(
-                    drawn[0] != drawn[1] && drawn[1] != drawn[2] && drawn[0] != drawn[2],
-                    "{caps:?} {depth:?}: {drawn:?}"
-                );
+                for (i, a) in drawn.iter().enumerate() {
+                    assert!(
+                        drawn[i + 1..].iter().all(|b| a != b),
+                        "{caps:?} {depth:?}: {drawn:?}"
+                    );
+                }
                 let labels: Vec<&str> = drawn.iter().map(|d| d.label()).collect();
-                assert_eq!(labels, ["sharp", "pixelated", "chunky"]);
+                assert_eq!(
+                    labels,
+                    ["sharp", "small pixels", "medium pixels", "big pixels"]
+                );
                 assert_eq!(
                     resolve(Detail::Auto, caps, depth),
                     drawn[0],
@@ -588,30 +596,44 @@ mod tests {
         }
         // Pictures: pixel art goes as pixels too.
         assert_eq!(
-            resolve(Detail::Chunky, KITTY, Ansi16),
-            Drawn::Pixels(Protocol::Kitty, Grain::Chunky)
+            resolve(Detail::BigPixels, KITTY, Ansi16),
+            Drawn::Pixels(Protocol::Kitty, Grain::Pixels(2))
         );
         assert_eq!(
-            resolve(Detail::Pixelated, PLAIN, Ansi256),
-            Drawn::Text(TextMode::Pixelated)
+            resolve(Detail::SmallPixels, PLAIN, Ansi256),
+            Drawn::Text(TextMode::Pixels(0))
         );
-        assert_eq!(resolve(Detail::Pixelated, PLAIN, Ansi16), Drawn::None);
+        assert_eq!(resolve(Detail::MediumPixels, PLAIN, Ansi16), Drawn::None);
         // Sharp only uses sextants where they're drawn.
         assert_eq!(
             resolve(Detail::Sharp, PLAIN, TrueColor),
             Drawn::Text(TextMode::Quadrant)
         );
-        assert_eq!(Grain::Sharp.blocks(), Option::None);
-        assert!(Grain::Chunky.blocks() < Grain::Pixelated.blocks());
+        let blocks = Detail::ALL.map(|d| d.grain().blocks());
+        assert_eq!(
+            blocks,
+            [Option::None, Option::None, Some(32), Some(16), Some(10)]
+        );
     }
 
-    /// Settings saved by older versions keep meaning as fine or as coarse.
+    /// Settings saved by older versions (and this one's own names) load
+    /// as the nearest look; each is written back by its own name.
     #[test]
     fn old_detail_names_still_load() {
         for (names, detail) in [
-            (&["pixels", "photo", "sextant", "fine"][..], Detail::Sharp),
-            (&["quadrant", "medium"], Detail::Pixelated),
-            (&["halfblock", "coarse"], Detail::Chunky),
+            (
+                &["pixels", "photo", "sextant", "fine", "sharp"][..],
+                Detail::Sharp,
+            ),
+            (&["small-pixels"], Detail::SmallPixels),
+            (
+                &["quadrant", "medium", "pixelated", "medium-pixels"],
+                Detail::MediumPixels,
+            ),
+            (
+                &["halfblock", "coarse", "chunky", "big-pixels"],
+                Detail::BigPixels,
+            ),
             (&["auto"], Detail::Auto),
         ] {
             for name in names {
@@ -625,10 +647,8 @@ mod tests {
                 ..ArtSettings::default()
             })
             .unwrap();
-            assert!(
-                text.contains(&format!("detail = \"{}\"", detail.label())),
-                "{text}"
-            );
+            let name = detail.label().replace(' ', "-");
+            assert!(text.contains(&format!("detail = \"{name}\"")), "{text}");
         }
     }
 
@@ -683,10 +703,10 @@ mod tests {
     #[test]
     fn settings_read_and_write_lowercase_names() {
         let s: ArtSettings =
-            toml::from_str("detail = \"chunky\"\nsize = \"fill\"\ninline = false").unwrap();
+            toml::from_str("detail = \"big-pixels\"\nsize = \"fill\"\ninline = false").unwrap();
         assert_eq!(
             (s.detail, s.size, s.inline),
-            (Detail::Chunky, CoverSize::Fill, false)
+            (Detail::BigPixels, CoverSize::Fill, false)
         );
         let text = toml::to_string(&ArtSettings::default()).unwrap();
         assert!(text.contains("detail = \"auto\""), "{text}");

@@ -1320,9 +1320,9 @@ mod music {
         assert!(!m.kitty.busy());
     }
 
-    /// lava-bq0: in a terminal with pictures, pixelated and chunky are
-    /// pictures too, their own (pixel art made with the sharp copy), sent
-    /// once each like any other.
+    /// lava-bq0: in a terminal with pictures, small, medium and big pixels
+    /// are pictures too, their own (pixel art made with the sharp copy),
+    /// sent once each like any other.
     #[test]
     fn pixel_art_is_sent_as_its_own_picture() {
         let (mut m, t0) = model_with(Session::default(), temp_config("cover-pixel-art"), 120, 36);
@@ -1339,7 +1339,11 @@ mod music {
             String::from_utf8(out).unwrap()
         };
         assert!(sent(&mut m).contains(";QUJD\x1b\\"), "the sharp picture");
-        for (detail, png) in [(Detail::Pixelated, "QUJD16"), (Detail::Chunky, "QUJD8")] {
+        for (detail, png) in [
+            (Detail::SmallPixels, "QUJD32"),
+            (Detail::MediumPixels, "QUJD16"),
+            (Detail::BigPixels, "QUJD10"),
+        ] {
             m.settings.art.detail = detail;
             let out = sent(&mut m);
             assert!(
@@ -1350,7 +1354,7 @@ mod music {
             assert!(sent(&mut m).is_empty(), "and nothing more");
         }
         // While it's on its way: the same grain in text cells.
-        m.settings.art.detail = Detail::Pixelated;
+        m.settings.art.detail = Detail::MediumPixels;
         tick(&mut m, t0);
         let p = *m.layout.placed(COVER_W).unwrap();
         let mut buf = ratatui::buffer::Buffer::empty(m.layout.area);
@@ -1501,8 +1505,9 @@ mod music {
             seen,
             [
                 "cover quality · sharp",
-                "cover quality · pixelated",
-                "cover quality · chunky",
+                "cover quality · small pixels",
+                "cover quality · medium pixels",
+                "cover quality · big pixels",
                 "cover quality · auto · sharp",
             ]
         );

@@ -4,11 +4,12 @@ What changed in each version of LavaTUI, in plain words.
 
 ## Unreleased
 
-- Cover quality (`O`, or in settings) is now sharp, pixelated or chunky,
-  and each one looks clearly different. Sharp is the real picture where
-  your terminal can show it. Pixelated and chunky turn the cover into
-  pixel art with bigger and bigger squares, in every terminal. Before,
-  the choices often looked the same. Your old choice carries over.
+- Cover quality (`O`, or in settings) is now sharp, small pixels, medium
+  pixels or big pixels, and each one looks clearly different. Sharp is
+  the real picture where your terminal can show it. The three pixel
+  sizes turn the cover into pixel art with bigger and bigger squares, in
+  every terminal. Before, the choices often looked the same. Your old
+  choice carries over.
 
 ## 1.2.0 — 2026-10-02 — first public release
 

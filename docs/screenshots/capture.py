@@ -342,7 +342,7 @@ COVER = {
         f'[art];detail="{detail}";size="large";[display];cells="{cells or "opaque"}"',
         args="--seed 2 --demo", frames=420,
     )
-    for detail in ["sharp", "pixelated", "chunky"]
+    for detail in ["sharp", "small-pixels", "medium-pixels", "big-pixels"]
     for (place, style, pal) in [("side", "solid", "lava"), ("overlay", "braille", "abyss")]
     # "-translucent": as Ghostty draws see-through cell backgrounds.
     for cells in ["", "translucent"]
@@ -350,8 +350,8 @@ COVER = {
 COVER |= {
     "cover-fill-200x50": Shot(200, 50, '[lamp];style="solid";[dock];cover="side";[art];size="fill";detail="sharp"', args="--seed 2 --demo", frames=420),
     "cover-small-80x24": Shot(80, 24, '[lamp];style="solid";[dock];cover="overlay";[art];size="small"', args="--seed 2 --demo", frames=420),
-    "cover-inline-120x36": Shot(120, 36, '[lamp];style="solid";[dock];music="side";[art];detail="pixelated"', args="--seed 2 --demo", frames=420),
-    "cover-256-120x36": Shot(120, 36, '[lamp];style="solid";[dock];cover="side";[art];detail="chunky"', args="--seed 2 --demo --color 256", frames=420),
+    "cover-inline-120x36": Shot(120, 36, '[lamp];style="solid";[dock];music="side";[art];detail="medium-pixels"', args="--seed 2 --demo", frames=420),
+    "cover-256-120x36": Shot(120, 36, '[lamp];style="solid";[dock];cover="side";[art];detail="big-pixels"', args="--seed 2 --demo --color 256", frames=420),
     "cover-16-80x24": Shot(80, 24, '[lamp];style="ascii";[dock];cover="side"', args="--seed 2 --demo --color 16", frames=420),
     "cover-tiny-30x10": Shot(30, 10, '[lamp];style="solid";[dock];cover="overlay"', args="--seed 2 --demo", frames=420),
 }
@@ -424,9 +424,9 @@ def main(names):
         montage(os.path.join(HERE, "styles.png"), 5, [(s, f"{tmp}/style-{s}.png") for s in STYLES])
     if "cover" in want:
         live = os.environ.get("LAVATUI_SHOT_OUT", tempfile.gettempdir())
-        montage(os.path.join(live, "cover-qualities.png"), 3, [
+        montage(os.path.join(live, "cover-qualities.png"), 4, [
             (f"{d}{' (see-through cells)' if c else ''}", f"{live}/cover-side-{d}{c}.png")
-            for c in ["", "translucent"] for d in ["sharp", "pixelated", "chunky"]
+            for c in ["", "translucent"] for d in ["sharp", "small-pixels", "medium-pixels", "big-pixels"]
         ])
     if "palettes" in want:
         montage(os.path.join(HERE, "palettes.png"), 8, [(p, f"{tmp}/palette-{p}.png") for p in PALETTES])
