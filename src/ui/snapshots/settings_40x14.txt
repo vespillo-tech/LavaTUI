@@ -81,13 +81,13 @@
     cover picture                 auto
     cover size                  medium
     small cover with music          on
+    saved lyrics & covers
     reset this page              reset
 
  Play, pause and skip work with the
  Spotify app on its own. Playlists and
  likes need a one-time setup: press
  enter.
-
 ── controls ──
  settings · controls           esc back
 

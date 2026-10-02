@@ -226,8 +226,9 @@ type to find a playlist or song.
 **The mouse** works too. Click the music buttons, or click the progress
 bar to jump in the song. Click or drag on the lamp to warm the wax. Scroll
 in help and lists. To select text with the mouse, hold `Shift` while you
-drag (in Terminal and iTerm2 on a Mac, hold `Option`). You can turn the
-mouse off in the settings.
+drag (in Terminal and iTerm2 on a Mac, hold `Option`). If you'd rather
+LavaTUI ignore the mouse, switch off *mouse* on the *controls* page of
+LavaTUI's settings. This only changes LavaTUI, not your computer's mouse.
 
 ## Settings
 
@@ -265,9 +266,9 @@ and `o` for a large album cover.
 You can play, pause, skip, seek and change the volume. Some players
 ignore shuffle and repeat. LavaTUI notices, tells you, and stops
 offering them. You also get the
-album cover and lyrics, all with no account and no setup. LavaTUI never
-opens your music app for you. It only shows a player that is already
-running.
+album cover and lyrics, all with no account and no setup. LavaTUI shows
+whatever is already playing. It won't open your music app or start music
+on its own.
 
 The cover is a real picture in kitty, Ghostty, iTerm2, WezTerm, foot,
 mlterm and Konsole. In other terminals it's drawn with text blocks.
@@ -307,6 +308,10 @@ app walks you through each step. More detail is in
   song is looked up only once.
 - **Album covers** are downloaded from your music player's image link
   and saved on your computer.
+- **Where they're saved:** lyrics and covers go in your system's cache
+  folder. They stay small (a few MB), and old ones are removed on their
+  own. To clear saved lyrics and covers, open settings (`,`), go to
+  music & lyrics, and press `Enter` twice on "saved lyrics & covers".
 - **Spotify login:** your login is kept in your computer's password
   store (Keychain on a Mac, Credential Manager on Windows, the Secret
   Service on Linux). If there isn't one, it's kept in a file only you can
@@ -351,12 +356,16 @@ rows*.
 
 **I can't select text with the mouse.**
 Hold `Shift` while you drag (`Option` in Terminal and iTerm2 on a Mac).
-Or turn the mouse off in the settings (*controls* page).
+Or tell LavaTUI to ignore the mouse: press `,` to open LavaTUI's
+settings, go to the *controls* page and switch off *mouse*. This only
+affects LavaTUI. Your computer's mouse keeps working as normal.
 
 **The music card says Spotify isn't open.**
-Start your music app and play a song. LavaTUI doesn't open it for you.
-On a Mac, also check System Settings › Privacy & Security ›
-Automation.
+Just open your music app and start a song, and the card will pick it up
+in a moment. LavaTUI leaves it to you to open your music app, so it
+never starts playing anything unexpectedly. On a Mac, if the card still
+doesn't show your song, check that your terminal is allowed to control
+Spotify in System Settings › Privacy & Security › Automation.
 
 **Space doesn't start the timer.**
 The music controls may be on (a line at the top says so). Press `Esc`
@@ -370,9 +379,12 @@ connection the first time.
 Your account isn't on the developer app's list, or its owner has no
 Premium. See [the Spotify guide](docs/spotify.md).
 
-**It uses too much of my computer.**
-Try `--fps 30`, or a style like `braille`. LavaTUI already slows down
-when its window isn't in front, and it sleeps when the wax is paused.
+**How do I make LavaTUI lighter on my computer's battery or processor?**
+LavaTUI is already light: it slows down when its window isn't in front,
+and it rests completely while the wax is paused (`z`). To lighten it
+further, lower the frame rate with `lavatui --fps 30` (or *smoothness*
+on the *window* page of the settings), or pick a simpler style such as
+`braille`.
 
 **How do I get my settings back to normal?**
 Each settings page has a reset line. Or delete `config.toml` (see

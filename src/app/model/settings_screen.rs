@@ -18,6 +18,7 @@ use crate::clock;
 use crate::config::{
     CellsChoice, ColorChoice, LoginStore, MinimalClock, Overridden, Settings, UiMode,
 };
+use crate::disk_cache::size_words;
 use crate::dock::cover::{CoverSize, Detail};
 use crate::dock::{self, Anchor, Backing, Place, WIDGETS};
 use crate::media::{Status, Unavailable};
@@ -91,7 +92,9 @@ impl Page {
                 "Where the clock, the focus timer and the music go: beside the lamp, \
                  on it, or nowhere."
             }
-            Page::Music => "Connecting Spotify, song lyrics and album covers.",
+            Page::Music => {
+                "Connecting Spotify, song lyrics and album covers, and clearing the saved ones."
+            }
             Page::Controls => "How the mouse works in the lamp.",
             Page::Window => "Lamp-only mode, the hint line and how smoothly the lamp moves.",
             Page::Spotify => SPOTIFY_INTRO,
@@ -178,6 +181,8 @@ pub enum Item {
     /// Where the login is kept: the Keychain or a private file.
     LoginStore,
     PlayerApp,
+    /// Clear the saved lyrics and covers.
+    ClearSaved,
 }
 
 /// How a row takes keys.
@@ -410,7 +415,7 @@ impl Model {
             Page::Music => {
                 out.push(Spotify);
                 with_position(widget("lyrics"), &mut out);
-                out.extend([CoverDetail, CoverSize, InlineCover]);
+                out.extend([CoverDetail, CoverSize, InlineCover, ClearSaved]);
             }
             Page::Controls => out.push(Mouse),
             Page::Window => out.extend([LampOnly, HintLine, Smoothness, CornerClock]),
@@ -712,6 +717,54 @@ impl Model {
                 },
             ),
             Item::PlayerApp => self.player_row(),
+            Item::ClearSaved => self.saved_row(),
+        }
+    }
+
+    fn saved_row(&self) -> Row {
+        let files = &self.saved_files;
+        let value = match files.saved.map(|s| s.total()) {
+            _ if self.armed(Item::ClearSaved) => "press enter again".into(),
+            _ if !files.exist() => "nothing saved".into(),
+            None => "…".into(),
+            Some(total) if total.files == 0 => "nothing saved".into(),
+            Some(total) => format!("{} · clear", size_words(total.bytes)),
+        };
+        let sizes = match files.saved {
+            Some(s) if s.total().files > 0 => format!(
+                " Right now: {} of lyrics and {} of covers.",
+                size_words(s.lyrics.bytes),
+                size_words(s.covers.bytes)
+            ),
+            _ => String::new(),
+        };
+        let about = if files.exist() {
+            format!(
+                "Lyrics and album covers are kept on this computer, so they show up fast \
+                 and work offline. They stay small: old ones are removed on their own.\
+                 {sizes} Press enter twice to clear saved lyrics and covers."
+            )
+        } else {
+            "Nothing is kept on this computer.".into()
+        };
+        Row {
+            item: Item::ClearSaved,
+            label: "saved lyrics & covers".into(),
+            value,
+            about,
+            kind: Kind::Button,
+            sub: false,
+        }
+    }
+
+    /// Pick up the saved files' sizes (and a finished clear); keep them
+    /// measured while the music page is open.
+    pub(super) fn sync_saved_files(&mut self, now: Instant) {
+        if self.saved_files.poll() {
+            self.toast("saved lyrics and covers cleared");
+        }
+        if self.settings_view().is_some_and(|v| v.page == Page::Music) {
+            self.saved_files.measure(now);
         }
     }
 
@@ -1035,6 +1088,14 @@ impl Model {
                     self.settings_screen.armed = None;
                     self.reset_page(page, now);
                 } else {
+                    self.settings_screen.armed = Some((item, now));
+                }
+            }
+            Item::ClearSaved => {
+                if self.armed(item) {
+                    self.settings_screen.armed = None;
+                    self.saved_files.clear();
+                } else if self.saved_files.exist() {
                     self.settings_screen.armed = Some((item, now));
                 }
             }

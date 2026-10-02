@@ -7,7 +7,8 @@
 //! worker only looks up the newest, and `poll` only returns answers to it.
 //! Transient failures are retried with backoff, abandoned as soon as a newer
 //! request arrives; if they persist, a stale cached answer is used, else
-//! [`Answer::Offline`]. Dropping the service ends the thread (after any
+//! [`Answer::Offline`]. Each new entry is followed by a prune of the
+//! cache ([`Cache::prune`]), on the worker too. Dropping the service ends the thread (after any
 //! fetch in flight; nothing waits for it).
 
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
@@ -166,7 +167,9 @@ impl<H: Http> Worker<H> {
                 Ok(value) => {
                     if let Some(cache) = &self.cache {
                         // Best effort: a failed write only costs a refetch.
-                        let _ = cache.put(track, value.as_ref(), SystemTime::now());
+                        let now = SystemTime::now();
+                        let _ = cache.put(track, value.as_ref(), now);
+                        cache.prune(now);
                     }
                     return (Some(answer(value.as_ref())), None);
                 }

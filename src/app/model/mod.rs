@@ -7,6 +7,7 @@
 //! effects the loop must perform (bell, full clear) are flags it drains.
 
 mod actions;
+mod caches;
 mod library;
 mod lyrics;
 mod music;
@@ -37,6 +38,7 @@ use crate::timing::{FixedStep, Quality};
 use crate::ui::keymap::InputMode;
 use crate::ui::layout::{self, DockItem, Layout, LayoutInput, SizeTier};
 
+pub use caches::SavedFiles;
 pub use library::{Account, Library, ListKind, ListView};
 pub use lyrics::{Fetch, LyricsState};
 pub use music::Music;
@@ -181,6 +183,9 @@ pub struct Model {
     pub settings_screen: SettingsState,
     /// The last save failed: why (the settings screen says so).
     pub save_problem: Option<String>,
+    /// The saved lyrics and covers, measured and cleared for the settings
+    /// screen.
+    pub saved_files: SavedFiles,
 
     // Chrome.
     /// The welcome card is up (`ui.welcome` at start, or `w`): see
@@ -283,6 +288,7 @@ impl Model {
             welcome: settings.ui.welcome,
             settings_screen: SettingsState::default(),
             save_problem: None,
+            saved_files: SavedFiles::default(),
             overlay: Overlay::None,
             toast: None,
             hud: false,
@@ -432,9 +438,12 @@ impl Model {
             // A cover on its way to the terminal, a slice a frame.
             wake = wake.min(self.now + Duration::from_millis(16));
         }
-        if self.saver.as_ref().is_some_and(saving::Saver::busy) || self.library.busy() {
-            // Frozen frames still collect save errors and Spotify's
-            // answers promptly.
+        if self.saver.as_ref().is_some_and(saving::Saver::busy)
+            || self.library.busy()
+            || self.saved_files.busy()
+        {
+            // Frozen frames still collect save errors, Spotify's answers
+            // and the saved files' sizes promptly.
             wake = wake.min(self.now + Duration::from_millis(100));
         }
         Some(wake + WAKE_SLACK)
@@ -532,6 +541,7 @@ impl Model {
         }
         self.sync_music();
         self.sync_library();
+        self.sync_saved_files(now);
 
         self.relayout(area);
         self.sync_pictures();

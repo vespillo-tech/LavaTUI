@@ -402,6 +402,12 @@ the layout/visual contract.
                 change, poll + sync each frame (`sync_music` calls it),
                 fade timing, `wake` for frozen frames; `start_with` injects
                 a mock in tests.
+- `disk_cache.rs` — the lyrics / cover caches' housekeeping (worker
+                threads only): `dir`, `Limits` (files, bytes, idle),
+                `touch` on read, LRU `prune` after each write, `usage`,
+                `clear`. `app/model/caches.rs` (`SavedFiles`): the
+                settings row `saved lyrics & covers` measures / clears
+                them on its own thread (no folders under `cfg(test)`).
 - `ui/`       — the only terminal-facing code. `layout.rs`: the pure
                 `layout(area, &LayoutInput) -> Layout` of design §1 (the lamp
                 rect; `panel` = `Stack` of side widgets in the best of

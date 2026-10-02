@@ -9,6 +9,10 @@
 //!
 //! Location: `$XDG_CACHE_HOME/lavatui/lyrics`, else the platform cache dir.
 //! Every failure is a miss: a cache problem never blocks lyrics.
+//!
+//! Size: reading a file marks it used; [`Cache::prune`] (the worker runs it
+//! after each write) keeps the [`LIMITS`] newest by last use, so the folder
+//! stays at a few MB however many songs are played.
 
 use std::fs;
 use std::io::{self, Write};
@@ -18,8 +22,18 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 use super::{RawLyrics, Track};
+use crate::disk_cache::{self, Limits};
 
 const DAY: Duration = Duration::from_secs(24 * 60 * 60);
+/// The cache files' extension.
+pub const EXT: &str = "json";
+/// A file is ~1-4 KB: at most a few MB. Unused for half a year, a song's
+/// lyrics go even below the cap (a stale entry is only an offline fallback).
+pub const LIMITS: Limits = Limits {
+    files: 2000,
+    bytes: 16 * 1000 * 1000,
+    idle: Duration::from_secs(180 * 24 * 60 * 60),
+};
 /// Bump when the file format changes; older files then read as misses.
 const VERSION: u32 = 1;
 
@@ -89,22 +103,19 @@ impl Cache {
 
     /// The default location, if the platform has a cache dir.
     pub fn default_dir() -> Option<PathBuf> {
-        let base = match std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from) {
-            Some(xdg) if xdg.is_absolute() => xdg.join("lavatui"),
-            _ => directories::ProjectDirs::from("", "", "lavatui")?
-                .cache_dir()
-                .to_path_buf(),
-        };
-        Some(base.join("lyrics"))
+        disk_cache::dir("lyrics")
     }
 
+    /// The cached answer for `track`; marks its file used `now`.
     pub fn get(&self, track: &Track, now: SystemTime) -> Option<Hit> {
         let key = key(track);
-        let text = fs::read_to_string(self.path(&key)).ok()?;
+        let path = self.path(&key);
+        let text = fs::read_to_string(&path).ok()?;
         let file: File = serde_json::from_str(&text).ok()?;
         if file.version != VERSION || file.key != key {
             return None;
         }
+        disk_cache::touch(&path, now);
         let stored = UNIX_EPOCH + Duration::from_secs(file.stored);
         // A file from the future (clock change) counts as stale.
         let stale = match now.duration_since(stored) {
@@ -130,9 +141,14 @@ impl Cache {
         write_atomic(&self.path(&file.key), &json)
     }
 
+    /// Remove what [`LIMITS`] doesn't keep (disk I/O: the worker's job).
+    pub fn prune(&self, now: SystemTime) {
+        disk_cache::prune(&self.dir, EXT, LIMITS, now);
+    }
+
     fn path(&self, key: &str) -> PathBuf {
         self.dir
-            .join(format!("{:016x}.json", fnv1a(key.as_bytes())))
+            .join(format!("{:016x}.{EXT}", fnv1a(key.as_bytes())))
     }
 }
 
@@ -321,6 +337,35 @@ pub(crate) mod tests {
         };
         fs::write(cache.path(&key(&t)), serde_json::to_vec(&other).unwrap()).unwrap();
         assert_eq!(cache.get(&t, at(6)), None);
+    }
+
+    #[test]
+    fn reading_marks_used_and_prune_keeps_the_recently_used() {
+        let tmp = TempDir::new("lyrics-prune");
+        let cache = Cache::new(tmp.0.clone());
+        let n = LIMITS.files + 3;
+        let day = DAY.as_secs();
+        for i in 0..n {
+            cache
+                .put(&track(&format!("Song {i}"), 100), None, at(0))
+                .unwrap();
+            disk_cache::touch(
+                &cache.path(&key(&track(&format!("Song {i}"), 100))),
+                at(i as u64),
+            );
+        }
+        // The very first song, played again: now the most recently used.
+        assert!(cache.get(&track("Song 0", 100), at(n as u64)).is_some());
+        cache.prune(at(n as u64));
+        assert_eq!(disk_cache::usage(&tmp.0, EXT).files, LIMITS.files);
+        assert!(cache.get(&track("Song 0", 100), at(n as u64)).is_some());
+        for i in 1..=3 {
+            let gone = track(&format!("Song {i}"), 100);
+            assert_eq!(cache.get(&gone, at(n as u64)), None, "song {i}");
+        }
+        // Half a year later, everything unused since goes.
+        cache.prune(at(n as u64 + 180 * day));
+        assert_eq!(disk_cache::usage(&tmp.0, EXT).files, 0);
     }
 
     #[test]

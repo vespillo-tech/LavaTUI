@@ -135,11 +135,11 @@
 ~~~~~~~~│    widgets            cover picture                    auto  │
 ~~~~~~~~│  ▸ music & lyrics     cover size                     medium  │
 ~~~~~~~~│    controls           small cover with music             on  │
-~~~~~~~~│    window             reset this page                 reset  │
+~~~~~~~~│    window             saved lyrics & covers   nothing saved  │
+~~~~~~~~│                       reset this page                 reset  │
 ~~~~~~~~│                                                              │
 ~~~~~~~~│ Play, pause and skip work with the Spotify app on its own.   │
 ~~~~~~~~│ Playlists and likes need a one-time setup: press enter.      │
-~~~~~~~~│                                                              │
 ~~~~~~~~│                                                              │
 ~~~~~~~~│                                                              │
 ~~~~~~~~│                                                              │
