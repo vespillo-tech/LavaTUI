@@ -236,11 +236,7 @@ mod tests {
             };
             let raw = client.fetch(&track).expect("fetch").expect("found");
             let lyrics = Lyrics::from_parts(raw.instrumental, raw.synced.as_deref(), None);
-            assert!(
-                matches!(lyrics, Some(Lyrics::Synced(_))),
-                "{}",
-                song.title
-            );
+            assert!(matches!(lyrics, Some(Lyrics::Synced(_))), "{}", song.title);
         }
         let other = LyricsTrack {
             title: "Something Else".into(),
