@@ -1659,7 +1659,12 @@ mod lyrics {
         mock.replies.lock().unwrap().extend([status(404), ok("[]")]);
         source.set(playing(track("t:2", "Blob Merge"), S, t0 + S * 4));
         tick(&mut m, t0 + S * 4);
-        assert_eq!(m.lyrics.found, Some(Fetch::Looking));
+        // The lookup runs on its own thread: on a fast machine its answer
+        // can already be in by this tick, so either state is right here.
+        assert!(matches!(
+            m.lyrics.found,
+            Some(Fetch::Looking | Fetch::NotFound)
+        ));
         assert!(m.lyrics.cursor.is_none());
         settle(&mut m, t0 + S * 4);
         assert_eq!(m.lyrics.found, Some(Fetch::NotFound));
