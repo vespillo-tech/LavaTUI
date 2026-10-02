@@ -65,9 +65,9 @@
     reset this page
 
  Click buttons, lists
- and the wax.
-
-
+ and the wax. While
+ it's on, hold Shift to
+ select text.
 ── window ──
  window        esc back
 

@@ -301,6 +301,8 @@ pub struct PlayerState {
     pub device: Option<String>,
     /// URI of what's playing, if anything.
     pub item_uri: Option<String>,
+    /// URI of the playlist / album it plays in, if any.
+    pub context_uri: Option<String>,
     /// Spotify won't toggle shuffle here (`actions.disallows`: a lone
     /// track, some contexts).
     pub shuffle_blocked: bool,
@@ -318,6 +320,7 @@ pub(super) struct RawPlayer {
     is_playing: bool,
     device: Option<Named>,
     item: Option<RawUri>,
+    context: Option<RawUri>,
     actions: Option<RawActions>,
 }
 
@@ -344,6 +347,7 @@ impl From<RawPlayer> for PlayerState {
             is_playing: p.is_playing,
             device: p.device.map(|d| d.name).filter(|n| !n.is_empty()),
             item_uri: p.item.and_then(|i| i.uri),
+            context_uri: p.context.and_then(|c| c.uri),
         }
     }
 }

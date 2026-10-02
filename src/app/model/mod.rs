@@ -27,6 +27,8 @@ use crate::config::{self, CellsChoice, ColorChoice, Overridden, Session, Setting
 use crate::dock::cover::Caps;
 use crate::dock::{Place, WIDGETS};
 use crate::graphics::Kitty;
+use crate::graphics::inline::Inline;
+use crate::graphics::probe::Probe;
 use crate::render::StyleId;
 use crate::sim::{Field, HEAT_LEVELS, SimSpeed, World};
 use crate::theme::{ColorDepth, Palette, Theme};
@@ -144,14 +146,21 @@ pub struct Model {
 
     /// The music widget's player, cover and keys.
     pub music: Music,
-    /// What the terminal can show pictures with (read once at start).
+    /// What the terminal can show pictures with (read once at start;
+    /// `pixels` once the terminal confirms it).
     pub caps: Caps,
+    /// The pixel protocol the environment promises, being checked with the
+    /// terminal (the app writes its query once at start).
+    pub probe: Option<Probe>,
     /// Ghostty's config makes cell backgrounds see-through (read once at
     /// start, for `display.cells = "auto"`).
     pub ghostty_translucent: bool,
     /// The cover as a real picture: what the terminal holds and what's on
     /// its way (bytes the loop writes after each frame).
     pub kitty: Kitty,
+    /// The cover as an iTerm2 / sixel picture: placed over its cells
+    /// (`settle` after each frame is drawn, `write` after its cells).
+    pub inline: Inline,
     /// The Spotify library (Web API): login, playlists, likes.
     pub library: Library,
     /// The lyrics widget's lookups and sync.
@@ -168,9 +177,15 @@ pub struct Model {
     pub toast: Option<Toast>,
     pub hud: bool,
     pub focused: bool,
+    /// The terminal selects text under mouse capture with option held,
+    /// not shift (macOS Terminal, iTerm2): help says so. Set by the app.
+    pub option_drag: bool,
     pub layout: Layout,
     /// Cell height ÷ width: reported by the terminal, else from config.
     pub cell_aspect: f64,
+    /// A cell's width and height in pixels, when the terminal reports
+    /// them (sixel pictures are drawn at that size).
+    pub cell_px: Option<(u16, u16)>,
     pub stats: FrameStats,
     /// Adaptive quality (§7): reduced grid, then fps, while over budget.
     pub quality: Quality,
@@ -207,6 +222,7 @@ impl Model {
         let speed = SimSpeed::from_factor(settings.lamp.speed);
         let mut world = World::new(seed, 1.0);
         world.set_heat(settings.lamp.heat);
+        let (caps, unconfirmed) = Caps::detect();
         let mut model = Model {
             style: StyleId::by_name(&settings.lamp.style).unwrap_or_default(),
             theme: Theme::new(
@@ -216,6 +232,7 @@ impl Model {
             face: clock::face_by_name(&settings.clock.face).unwrap_or_else(clock::default_face),
             pomodoro: Pomodoro::new(pomodoro_config(&settings)),
             cell_aspect: cell_aspect.unwrap_or(settings.display.cell_aspect),
+            cell_px: None,
             file: loaded.settings,
             overridden,
             store: Some(store),
@@ -234,9 +251,11 @@ impl Model {
             reset_pending: None,
             last_reset_key: None,
             music: Music::default(),
-            caps: Caps::detect(),
+            caps,
+            probe: unconfirmed.map(|p| Probe::new(p, now)),
             ghostty_translucent: crate::cells::detect(),
             kitty: Kitty::default(),
+            inline: Inline::default(),
             library: Library::new(settings.spotify_client_id()),
             lyrics: LyricsState::default(),
             lava_focus: None,
@@ -246,6 +265,7 @@ impl Model {
             toast: None,
             hud: false,
             focused: true,
+            option_drag: false,
             layout: Layout {
                 area,
                 ..Layout::default()
@@ -292,8 +312,9 @@ impl Model {
                 opener: p.kind.opener(),
                 inline: self.inline_pickers(),
             },
-            Overlay::Library(_) => InputMode::Library {
+            Overlay::Library(view) => InputMode::Library {
                 inline: self.inline_pickers(),
+                typing: view.typing,
             },
             Overlay::Settings(_) => InputMode::Settings {
                 typing: self.settings_screen.editing,
@@ -371,7 +392,11 @@ impl Model {
             // The next line (or the end of a fade).
             wake = wake.min(at);
         }
-        if self.kitty.busy() {
+        if let Some(p) = &self.probe {
+            // Settled by then, answer or not.
+            wake = wake.min(p.deadline());
+        }
+        if self.kitty.busy() || self.inline.busy() {
             // A cover on its way to the terminal, a slice a frame.
             wake = wake.min(self.now + Duration::from_millis(16));
         }
@@ -469,6 +494,9 @@ impl Model {
             let started = Instant::now();
             self.save();
             self.stats.save_us = started.elapsed().as_micros() as u64;
+        }
+        if let Some(verdict) = self.probe.as_ref().and_then(|p| p.expired(now)) {
+            self.settle_probe(verdict);
         }
         self.sync_music();
         self.sync_library();

@@ -95,9 +95,9 @@
     reset this page              reset
 
  Click buttons, lists and the wax.
- While it's on, hold Shift (Option in
- Mac Terminal or iTerm2) to select
+ While it's on, hold Shift to select
  text.
+
 
 
 

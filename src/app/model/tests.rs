@@ -281,7 +281,7 @@ fn help_scroll_is_clamped_when_the_window_grows() {
         panic!("help is open");
     };
     assert!(scroll > 0, "small help scrolls");
-    m.tick(t0, Rect::new(0, 0, 40, 60), local());
+    m.tick(t0, Rect::new(0, 0, 40, 70), local());
     assert_eq!(m.overlay, Overlay::Help { scroll: 0 });
 }
 
@@ -1043,7 +1043,7 @@ mod music {
         assert!(m.layout.panel.is_some(), "and takes nothing down");
         // A terminal with real pixels doesn't need the palette's colours.
         m.caps = Caps {
-            kitty: true,
+            pixels: Some(crate::graphics::Protocol::Kitty),
             sextants: true,
         };
         tick(&mut m, t0);
@@ -1054,7 +1054,7 @@ mod music {
     fn pixels_are_sent_once_drawn_as_placeholders_and_deleted_when_off() {
         let (mut m, t0) = model_with(Session::default(), temp_config("cover-kitty"), 120, 36);
         m.caps = Caps {
-            kitty: true,
+            pixels: Some(crate::graphics::Protocol::Kitty),
             sextants: true,
         };
         with_hires(&mut m, &fake(t0));
@@ -1119,6 +1119,129 @@ mod music {
     }
 
     #[test]
+    fn iterm_pictures_are_placed_over_skipped_cells_and_repainted_when_off() {
+        use crate::graphics::inline::SENTINEL;
+        use ratatui::buffer::{Buffer, CellDiffOption};
+        let (mut m, t0) = model_with(Session::default(), temp_config("cover-iterm"), 120, 36);
+        m.caps = Caps {
+            pixels: Some(crate::graphics::Protocol::Iterm),
+            sextants: true,
+        };
+        with_hires(&mut m, &fake(t0));
+        m.update(Action::Place("cover"), t0);
+        // One frame as the loop draws it: the cover's cells, settle, the
+        // bytes after.
+        let frame = |m: &mut Model| {
+            tick(m, t0);
+            let p = *m.layout.placed(COVER_W).unwrap();
+            let mut buf = Buffer::empty(m.layout.area);
+            let look = crate::dock::Look {
+                backdrop: crate::dock::Backdrop::Panel,
+                align: ratatui::layout::Alignment::Left,
+            };
+            Cover.draw(m, p.form, p.rect, look, &mut buf);
+            m.inline.settle(&mut buf);
+            let mut out = Vec::new();
+            m.inline.write(&mut out).unwrap();
+            m.kitty.write(&mut out).unwrap();
+            (p.rect, buf, String::from_utf8(out).unwrap())
+        };
+        let (r, buf, out) = frame(&mut m);
+        assert!(
+            out.starts_with(&format!(
+                "\x1b7\x1b[{};{}H\x1b]1337;File=inline=1;size=3;width=24;height=12;",
+                r.y + 1,
+                r.x + 1
+            )),
+            "{out:?}"
+        );
+        assert!(out.ends_with(":QUJD\x07\x1b8"), "{out:?}");
+        assert!(!out.contains("\x1b_G"), "no kitty bytes");
+        assert!(r.positions().all(|p| buf[p].symbol() == " "));
+        // Left alone after.
+        let (_, buf, out) = frame(&mut m);
+        assert!(out.is_empty());
+        assert!(
+            r.positions()
+                .all(|p| buf[p].diff_option == CellDiffOption::Skip)
+        );
+        assert!(r.positions().all(|p| buf[p].symbol() == SENTINEL));
+        // Off: repainted where it was.
+        m.update(Action::Place("cover"), t0);
+        m.update(Action::Place("cover"), t0);
+        tick(&mut m, t0);
+        let mut buf = Buffer::empty(m.layout.area);
+        m.inline.settle(&mut buf);
+        assert!(
+            r.positions()
+                .all(|p| buf[p].diff_option == CellDiffOption::AlwaysUpdate)
+        );
+        assert!(!m.inline.busy());
+    }
+
+    #[test]
+    fn pixels_wait_for_the_terminal_to_confirm_them() {
+        use crate::dock::cover::Drawn;
+        use crate::graphics::Protocol;
+        use crate::graphics::probe::{Probe, WAIT};
+        let setup = |name: &str| {
+            let (mut m, t0) = model_with(Session::default(), temp_config(name), 120, 36);
+            m.caps.sextants = true;
+            m.probe = Some(Probe::new(Protocol::Kitty, t0));
+            with_hires(&mut m, &fake(t0));
+            m.update(Action::Place("cover"), t0);
+            tick(&mut m, t0);
+            m.toast = None;
+            (m, t0)
+        };
+        // Native Ghostty: OK. Text cells until then, pixels after.
+        let (mut m, t0) = setup("probe-ok");
+        assert_eq!(
+            m.pictures(),
+            Drawn::Text(crate::dock::picture::TextMode::Sextant)
+        );
+        assert!(
+            m.idle_until()
+                .is_none_or(|at| at <= t0 + WAIT + Duration::from_millis(50))
+        );
+        m.terminal_replies(&["]11;rgb:0/0/0".into(), "_Gi=31;OK".into()]);
+        assert!(m.probe.is_none());
+        assert_eq!(m.pictures(), Drawn::Pixels(Protocol::Kitty));
+        assert!(m.toast.is_none());
+        // The sharp copy is asked for now (the test loader can't fetch it:
+        // a fresh one has it).
+        with_hires(&mut m, &fake(t0));
+        tick(&mut m, t0);
+        assert!(m.kitty.busy(), "and the cover goes out");
+        // Ghostex-like: the fence comes back first. Text, and a toast.
+        let (mut m, t0) = setup("probe-no");
+        m.terminal_replies(&["]10;rgb:ffff/ffff/ffff".into()]);
+        assert!(m.probe.is_none());
+        assert_eq!(m.caps.pixels, None);
+        assert_eq!(
+            m.pictures(),
+            Drawn::Text(crate::dock::picture::TextMode::Sextant)
+        );
+        assert_eq!(
+            m.toast.as_ref().unwrap().text,
+            "no pixels in this terminal · cover in sextant"
+        );
+        tick(&mut m, t0);
+        assert!(!m.kitty.busy(), "nothing sent");
+        // No answer at all: settled at the deadline, the same way.
+        let (mut m, t0) = setup("probe-silent");
+        tick(&mut m, t0 + WAIT / 2);
+        assert!(m.probe.is_some());
+        tick(&mut m, t0 + WAIT);
+        assert!(m.probe.is_none());
+        assert_eq!(m.caps.pixels, None);
+        assert!(m.toast.is_some());
+        // A late OK changes nothing.
+        m.terminal_replies(&["_Gi=31;OK".into()]);
+        assert_eq!(m.caps.pixels, None);
+    }
+
+    #[test]
     fn the_detail_key_cycles_and_says_what_it_comes_to() {
         let (mut m, t0) = model("cover-detail");
         let mut seen = Vec::new();
@@ -1129,7 +1252,7 @@ mod music {
         assert_eq!(
             seen,
             [
-                "cover · pixels",
+                "cover · pixels · quadrant",
                 "cover · sextant",
                 "cover · quadrant",
                 "cover · halfblock",

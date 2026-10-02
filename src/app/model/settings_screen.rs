@@ -579,8 +579,13 @@ impl Model {
             Item::Mouse => choice(
                 "mouse",
                 on_off(s.input.mouse),
-                "Click buttons, lists and the wax. While it's on, hold Shift (Option in \
-                 Mac Terminal or iTerm2) to select text.",
+                if self.option_drag {
+                    "Click buttons, lists and the wax. While it's on, hold Option to \
+                     select text."
+                } else {
+                    "Click buttons, lists and the wax. While it's on, hold Shift to \
+                     select text."
+                },
             ),
             Item::LampOnly => choice(
                 "lamp only",

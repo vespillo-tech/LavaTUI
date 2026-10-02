@@ -95,7 +95,9 @@ in minimal mode:
   default), small / medium / large / as big as fits (`art.size`). In
   **kitty and Ghostty it's the real picture** (the kitty graphics
   protocol, sent once per track and size, then just cells that never
-  flicker); elsewhere it's drawn in text cells: sextants (2 × 3 pixels a
+  flicker), and in iTerm2, WezTerm, foot, mlterm and Konsole too (their
+  own picture formats: iTerm2 images or sixel); elsewhere it's drawn in
+  text cells: sextants (2 × 3 pixels a
   cell), quadrants (2 × 2) or half blocks (1 × 2). `O` cycles the detail
   (`auto` picks the best your terminal has). Clicking it plays / pauses.
   With the cover widget on, the music card leaves its own small cover
@@ -155,7 +157,8 @@ see-through but its glyph opaque, so a half-block cell split across two
 colours shows its lower or upper half darker. The lamp is drawn for this:
 halves that look alike become one colour, and the liquid is always the
 (see-through) background. In such a Ghostty (`display.cells = "auto"`
-reads its config at start) wax cells are never split at all, so wax and
+reads its config at start; apps that embed Ghostty's terminal, like
+Ghostex, don't count: they don't read that config) wax cells are never split at all, so wax and
 pool show no half-row streaks; it costs a little colour detail inside the
 wax, which is why opaque terminals don't get it. Set
 `display.cells = "translucent"` for another terminal that blends this
@@ -233,10 +236,15 @@ open, `q` closes it instead of quitting.
   out). They take the keyboard like an overlay, so they can reuse `space`,
   `n` and `p`; the status bar shows them while they're on.
 - **In the playlist browser:** `j`/`k` move, `enter` (or `l`) opens a
-  playlist you own or share (others: plays it) or plays a track in it,
-  `p` plays the whole playlist, `g`/`G` and page up/down jump, `esc` (or
-  `h`) goes back, `q` closes. The add-to-playlist picker lists only
-  playlists you can add to; `enter` adds.
+  playlist you own or share (others: plays it) or plays a track in it
+  (then the rest of the playlist follows, Premium or not), `p` plays the
+  whole playlist, `g`/`G` and page up/down jump, `esc` (or `h`) goes
+  back, `q` closes. The add-to-playlist picker lists only playlists you
+  can add to; `enter` adds.
+- **Finding a playlist or song:** press `/` in the browser and type part
+  of its name (for songs, the artist works too). The list shrinks to what
+  matches as you type; `enter` picks, the arrow keys move, `backspace`
+  deletes, and `esc` clears it.
 - **In help:** `j`/`k` or `↑`/`↓` scroll. `?`, `esc` or `q` close it.
 - **In pickers:** `j`/`k` or `↑`/`↓` move (with live preview), `1`–`9`
   jump, `enter` or `space` keep, and `esc` or `q` revert. Pressing the
@@ -269,7 +277,7 @@ playing differs:
 | Play/pause, next/previous, seek | ✓ | ✓ | ✓ |
 | Volume | ✓ | ✓ if the player has it | – (SMTC has no volume: no readout, the keys say so) |
 | Shuffle / repeat | – (no-ops in Spotify 1.2) | ✓ if the player honours them | ✓ if the app honours them |
-| Cover art | ✓ | ✓ (`https` art URLs, so Spotify) | – (SMTC gives a stream, not a URL) |
+| Cover art | ✓ | ✓ (`https` art URLs, so Spotify) | ✓ (the session's thumbnail; untested on real Windows) |
 | Launches the player? | never | never | never |
 | Permission | macOS asks once (Automation) | none | none |
 
@@ -443,7 +451,14 @@ unchanged, since the cover's cells never change between frames (its text
 cells are worked out once per track and size). In pixels mode the
 picture (a ≤ 400 px PNG, ~370 KB as base64) is sent once per track and
 size, at most 96 KB a frame (a few frames), inside the frame's
-synchronized update; `tools/kitty_check.py` shows exactly what goes out.
+synchronized update; `tools/kitty_check.py` shows exactly what goes out
+(`tools/inline_check.py` does the same for iTerm2 images and sixel, which
+are sent whole, once, when the cover appears, moves or changes size). If
+your terminal can show pictures but isn't recognised, set
+`LAVATUI_GRAPHICS` to `kitty`, `iterm` or `sixel` (or `none`). Otherwise
+lavatui asks the terminal once at start whether it really can, and draws
+the cover in text until it says yes (inside tmux, screen, zellij or
+Ghostex it doesn't try).
 
 Here is the render time per frame at 200×60 in truecolor: the field
 sampling plus the style draw (`bench_lamp`: a full-area lamp, two sim

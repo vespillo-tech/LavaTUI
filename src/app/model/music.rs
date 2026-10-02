@@ -1,7 +1,7 @@
 //! The music widget's state: the media source and the cover loader, both
 //! alive only while a widget that needs them is placed (music, lyrics,
-//! cover), the player keys (`A`), and which cover the kitty protocol
-//! should hold.
+//! cover), the player keys (`A`), and which cover the terminal's pixel
+//! protocol should hold.
 //!
 //! Nothing here waits on the player: [`Music::sync`] reads the source's
 //! latest snapshot once a frame (a short lock) and commands are queued.
@@ -10,11 +10,14 @@ use std::time::{Duration, Instant};
 
 use super::Model;
 use super::library::ListKind;
-use crate::dock::cover::{self, Drawn};
+use crate::dock::cover::{self, Detail, Drawn};
 use crate::dock::{self, DockWidget, Place};
-use crate::graphics;
+use crate::graphics::inline::Wish;
+use crate::graphics::probe::Verdict;
+use crate::graphics::{self, Protocol};
 use crate::media::art::{ArtLoader, ArtState};
 use crate::media::{self, Capabilities, Command, MediaSource, Snapshot};
+use crate::theme::Rgb;
 use crate::ui::keymap::PlayerKey;
 
 /// `←` / `→` in the player keys.
@@ -121,14 +124,28 @@ impl Music {
 
     /// The desktop app plays `uri`, or why it can't.
     pub fn play_uri(&mut self, uri: &str, now: Instant) -> Result<(), String> {
+        self.play(Command::play_uri(uri), now)
+    }
+
+    /// The desktop app plays `track` inside `context` (its playlist), so
+    /// it carries on through the rest of it; or why it can't.
+    pub fn play_in_context(
+        &mut self,
+        track: &str,
+        context: &str,
+        now: Instant,
+    ) -> Result<(), String> {
+        self.play(Command::play_in_context(track, context), now)
+    }
+
+    fn play(&mut self, command: Option<Command>, now: Instant) -> Result<(), String> {
         let snap = self.current().ok_or("music is off · a to show it")?;
         if !snap.status.is_available() {
             return Err(snap
                 .unavailable_message()
                 .unwrap_or_else(|| "connecting…".into()));
         }
-        let command = Command::play_uri(uri).ok_or("can't play that")?;
-        self.send(command, now);
+        self.send(command.ok_or("can't play that")?, now);
         Ok(())
     }
 
@@ -181,19 +198,59 @@ impl Model {
         let pictures = self.pictures();
         let images = (self.music_on() && self.inline_cover()) || self.cover_on();
         let images = images && pictures != Drawn::None;
-        self.music
-            .sync(self.media_on(), images, pictures == Drawn::Pixels);
+        self.music.sync(
+            self.media_on(),
+            images,
+            matches!(pictures, Drawn::Pixels(_)),
+        );
         self.patch_modes();
         self.sync_lyrics();
+    }
+
+    /// String replies from the terminal (`app::replies`): the answer to
+    /// the picture probe, if one is among them. Whether it settled it
+    /// (a redraw is due).
+    pub fn terminal_replies(&mut self, replies: &[String]) -> bool {
+        let mut settled = false;
+        for reply in replies {
+            if let Some(verdict) = self.probe.as_ref().and_then(|p| p.reply(reply)) {
+                self.settle_probe(verdict);
+                settled = true;
+            }
+        }
+        settled
+    }
+
+    /// The probe's answer: pixels from now on, or (if covers were going
+    /// to use them) a toast that they're drawn in text cells instead.
+    pub(super) fn settle_probe(&mut self, verdict: Verdict) {
+        let Some(probe) = self.probe.take() else {
+            return;
+        };
+        if verdict == Verdict::Yes {
+            self.caps.pixels = Some(probe.protocol);
+            return;
+        }
+        let covers = self.cover_on() || (self.music_on() && self.settings.art.inline);
+        let wanted = matches!(self.settings.art.detail, Detail::Auto | Detail::Pixels);
+        if covers
+            && wanted
+            && let Drawn::Text(mode) = self.pictures()
+        {
+            self.toast(format!(
+                "no pixels in this terminal · cover in {}",
+                mode.name()
+            ));
+        }
     }
 
     /// After each layout: the picture the terminal should hold (the cover
     /// at the size it's laid out at, in pixels mode), or none.
     pub(super) fn sync_pictures(&mut self) {
         let want = (|| {
-            if self.pictures() != Drawn::Pixels {
+            let Drawn::Pixels(protocol) = self.pictures() else {
                 return None;
-            }
+            };
             let ArtState::Ready(art) = self.music.art() else {
                 return None;
             };
@@ -205,10 +262,23 @@ impl Model {
                 cols: r.width,
                 rows: r.height,
             };
-            Some((key, png))
+            let Rgb(red, green, blue) = art.mean();
+            Some(Wish {
+                protocol,
+                key,
+                at: r,
+                png,
+                cell: self.cell_px,
+                bg: [red, green, blue],
+            })
         })();
+        let (kitty, inline) = match want {
+            Some(w) if w.protocol == Protocol::Kitty => (Some(w), None),
+            w => (None, w),
+        };
         self.kitty
-            .want(want.as_ref().map(|(key, png)| (key.clone(), png)));
+            .want(kitty.as_ref().map(|w| (w.key.clone(), &w.png)));
+        self.inline.want(inline, self.layout.area);
     }
 
     /// The player key a mouse press at (`col`, `row`) stands for: a
@@ -248,12 +318,8 @@ impl Model {
         self.changed(now);
         self.sync_music();
         let drawn = match self.pictures() {
-            Drawn::Pixels => "pixels",
-            Drawn::Text(cover_mode) => match cover_mode {
-                dock::picture::TextMode::Sextant => "sextant",
-                dock::picture::TextMode::Quadrant => "quadrant",
-                dock::picture::TextMode::HalfBlock => "halfblock",
-            },
+            Drawn::Pixels(_) => "pixels",
+            Drawn::Text(mode) => mode.name(),
             Drawn::None => "no pictures here",
         };
         self.toast(if drawn == detail.name() {

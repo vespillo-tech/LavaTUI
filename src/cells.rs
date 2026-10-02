@@ -6,6 +6,10 @@
 //! terminal's replies says so, so this reads Ghostty's own config files,
 //! once at start. Other terminals that blend backgrounds this way can be
 //! told with `display.cells = "translucent"`.
+//!
+//! Only native Ghostty: hosts that embed Ghostty's terminal (Ghostex, with
+//! its `zmx` sessions) report `TERM_PROGRAM=ghostty` too, but their
+//! renderer never reads Ghostty's config ([`hosted`]).
 
 use std::path::{Path, PathBuf};
 
@@ -17,9 +21,19 @@ pub fn detect() -> bool {
     if cfg!(test) {
         return false;
     }
+    if hosted(std::env::vars_os().map(|(k, _)| k.to_string_lossy().into_owned())) {
+        return false;
+    }
     let var = |k: &str| std::env::var(k).ok();
     let home = directories::BaseDirs::new().map(|d| d.home_dir().to_path_buf());
     translucent(var, home, |p| std::fs::read_to_string(p).ok())
+}
+
+/// Whether the environment (its variable `names`) says we run inside a
+/// host that embeds Ghostty's terminal rather than in Ghostty itself:
+/// Ghostex (`GHOSTEX_*`) or its `zmx` sessions (`ZMX_SESSION`).
+pub fn hosted(mut names: impl Iterator<Item = String>) -> bool {
+    names.any(|k| k == "ZMX_SESSION" || k.starts_with("GHOSTEX_"))
 }
 
 /// Whether we're in Ghostty (`var` reads one variable) and its config
@@ -164,6 +178,24 @@ mod tests {
 
     fn home() -> Option<PathBuf> {
         Some(PathBuf::from("/h"))
+    }
+
+    #[test]
+    fn embedded_ghostty_hosts_are_not_ghostty() {
+        let names = |n: &[&str]| {
+            n.iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+                .into_iter()
+        };
+        assert!(hosted(names(&["TERM_PROGRAM", "ZMX_SESSION"])));
+        assert!(hosted(names(&["HOME", "GHOSTEX_SESSION_ID"])));
+        assert!(!hosted(names(&[
+            "TERM_PROGRAM",
+            "TERM",
+            "GHOSTTY_RESOURCES_DIR"
+        ])));
+        assert!(!hosted(names(&[])));
     }
 
     #[test]

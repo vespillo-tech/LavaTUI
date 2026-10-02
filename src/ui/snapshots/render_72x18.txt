@@ -22,20 +22,20 @@
 
  app
  m       minimal
- ? ,     this help · settings
- q       quit · ctrl-c
- b d     status bar · debug hud
+ ?       this help
+ ,       settings
+ q       quit
+ b       status bar
+ d       debug info
  ctrl-l  redraw
- ⇧ drag  select text
 
  lamp
- s    next style
- S    style picker
- p    next palette
- P    palette picker
- [ ]  heat − +
- - +  speed
- z    freeze
+ s  next style
+ S  style picker
+ p  next palette
+ P  palette picker
+ [  less heat
+ ]  more heat
 ── style picker ──
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -358,7 +358,7 @@
 │   Shared Jams                                1 │
 │                                                │
 ╰────────────────────────────────────────────────╯
-  ● solid · lava                    ↑↓ move  ⏎ open  p play  esc close
+  ● solid · lava            ↑↓ move  ⏎ open  p play  / find  esc close
 ── library: a playlist's tracks ──
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -377,7 +377,26 @@
 │   Slow Rise 4                       Wax & Wane │
 │   Slow Rise 5                       Wax & Wane │
 ╰────────────────────────────────────────────────╯
-  ● solid · lava                 ↑↓ move  ⏎ play  p play all  esc back
+  ● solid · lava         ↑↓ move  ⏎ play  p play all  / find  esc back
+── library: filtering ──
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+╭ playlists ─────────────────────────────────────╮
+│   Lamplight Mix                             60 │
+│ ▸ lavatui test                               0 │
+│                                                │
+│                                                │
+│                                                │
+╰ / LA▏  2 of 4 ─────────────────────────────────╯
+  ● solid · lava                          ↑↓ move  ⏎ choose  esc clear
 ── library: add to playlist ──
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -396,7 +415,7 @@
 │   Shared Jams                                1 │
 │                                                │
 ╰────────────────────────────────────────────────╯
-  ● solid · lava                             ↑↓ move  ⏎ add  esc close
+  ● solid · lava                     ↑↓ move  ⏎ add  / find  esc close
 ── library: logged out ──
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -415,7 +434,7 @@
 │   not logged in · ⏎ to log in                  │
 │                                                │
 ╰────────────────────────────────────────────────╯
-  ● solid · lava                    ↑↓ move  ⏎ open  p play  esc close
+  ● solid · lava            ↑↓ move  ⏎ open  p play  / find  esc close
 ── lyrics beside, a long line wrapped ──
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ▄█  █ █ ▄ ▀▀█ ▀▀█

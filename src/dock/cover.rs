@@ -3,8 +3,9 @@
 //! Off by default.
 //!
 //! **Detail** (`art.detail`, `O` cycles it): `pixels` is the real picture
-//! through the kitty graphics protocol (kitty, Ghostty; see
-//! [`crate::graphics`]); `sextant` (2 × 3 pixels a cell, Unicode 13),
+//! through whichever pixel protocol the terminal speaks: kitty graphics
+//! (kitty, Ghostty), iTerm2 inline images (iTerm2, WezTerm) or sixel
+//! (foot, mlterm, Konsole); see [`crate::graphics`]. `sextant` (2 × 3 pixels a cell, Unicode 13),
 //! `quadrant` (2 × 2) and `halfblock` (1 × 2) draw it in text cells
 //! ([`super::picture`]). `auto` picks pixels where the terminal has them,
 //! else sextants where it's known to draw them, else quadrants. Text cells
@@ -30,7 +31,7 @@ use super::music::{fit, width, wrap};
 use super::picture::{self, TextMode};
 use super::{Anchor, Backdrop, ChipText, DockWidget, Look, Place, WidgetForm, align_x};
 use crate::app::Model;
-use crate::graphics;
+use crate::graphics::{self, Protocol};
 use crate::media::Status;
 use crate::media::art::ArtState;
 use crate::theme::{ColorDepth, Ink, Rgb, Role};
@@ -65,7 +66,7 @@ pub enum Detail {
     /// The best the terminal can do.
     #[default]
     Auto,
-    /// Real pixels (kitty graphics protocol).
+    /// Real pixels (kitty, iTerm2 or sixel: whichever the terminal has).
     Pixels,
     Sextant,
     Quadrant,
@@ -126,7 +127,7 @@ impl CoverSize {
 /// terminal and the colour depth.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Drawn {
-    Pixels,
+    Pixels(Protocol),
     Text(TextMode),
     /// No picture at all (16 colours without pixels, or no colour).
     None,
@@ -135,23 +136,38 @@ pub enum Drawn {
 /// What the terminal can show, read once at start ([`crate::graphics`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Caps {
-    /// The kitty graphics protocol with Unicode placeholders.
-    pub kitty: bool,
+    /// The terminal's pixel protocol, if it has one.
+    pub pixels: Option<Protocol>,
     /// Draws Unicode 13 block sextants (its own glyphs, not a font's).
     pub sextants: bool,
 }
 
 impl Caps {
     /// From the environment; never in tests (they say what they want).
-    pub fn detect() -> Self {
+    /// A pixel protocol the terminal still has to confirm
+    /// ([`graphics::probe`]) comes back apart, `pixels` staying `None`
+    /// until it does: everywhere but Windows (whose console input doesn't
+    /// pass replies on), unless `LAVATUI_GRAPHICS` said it.
+    pub fn detect() -> (Self, Option<Protocol>) {
         if cfg!(test) {
-            return Self::default();
+            return (Self::default(), None);
         }
         let var = |k: &str| std::env::var(k).ok();
-        let kitty = graphics::detect(var);
-        Self {
-            kitty,
-            sextants: kitty || sextants(var),
+        let pixels = graphics::detect(var);
+        let caps = Self {
+            pixels,
+            sextants: pixels == Some(Protocol::Kitty) || sextants(var),
+        };
+        if pixels.is_some() && cfg!(unix) && !graphics::forced(var) {
+            (
+                Self {
+                    pixels: None,
+                    ..caps
+                },
+                pixels,
+            )
+        } else {
+            (caps, None)
         }
     }
 }
@@ -168,7 +184,10 @@ pub fn sextants(var: impl Fn(&str) -> Option<String>) -> bool {
         || var("WT_SESSION").is_some()
 }
 
-/// `detail` at this terminal and depth (pure).
+/// `detail` at this terminal and depth (pure). `pixels` where there are
+/// none (not recognised, or not confirmed) is the best text cells: never
+/// a protocol the terminal may not speak (kitty placeholders show as `?`).
+/// `LAVATUI_GRAPHICS` is the way to name one.
 pub fn resolve(detail: Detail, caps: Caps, depth: ColorDepth) -> Drawn {
     let text = matches!(depth, ColorDepth::TrueColor | ColorDepth::Ansi256);
     let best_text = if caps.sextants {
@@ -179,9 +198,7 @@ pub fn resolve(detail: Detail, caps: Caps, depth: ColorDepth) -> Drawn {
     let as_text = |mode| if text { Drawn::Text(mode) } else { Drawn::None };
     match detail {
         _ if depth == ColorDepth::None => Drawn::None,
-        Detail::Pixels => Drawn::Pixels,
-        Detail::Auto if caps.kitty => Drawn::Pixels,
-        Detail::Auto => as_text(best_text),
+        Detail::Pixels | Detail::Auto => caps.pixels.map_or(as_text(best_text), Drawn::Pixels),
         Detail::Sextant => as_text(TextMode::Sextant),
         Detail::Quadrant => as_text(TextMode::Quadrant),
         Detail::HalfBlock => as_text(TextMode::HalfBlock),
@@ -331,7 +348,8 @@ impl DockWidget for Cover {
 }
 
 /// The playing track's cover in `r`, however this terminal draws it best
-/// right now: its kitty image once that's all there, else text cells,
+/// right now: its picture once that's all there (kitty placeholders, or
+/// the spot an iTerm2 / sixel picture is placed over), else text cells,
 /// else (loading, or no colours for it) a quiet placeholder. Shared with
 /// the music card's inline cover.
 pub(super) fn draw_cover(model: &Model, r: Rect, buf: &mut Buffer) {
@@ -348,16 +366,25 @@ pub(super) fn draw_cover(model: &Model, r: Rect, buf: &mut Buffer) {
         _ => return placeholder(model, r, buf),
     };
     let text = match model.pictures() {
-        Drawn::Pixels => {
+        Drawn::Pixels(protocol) => {
             let key = graphics::Key {
                 source: url.to_owned(),
                 cols: r.width,
                 rows: r.height,
             };
-            if let Some(id) = model.kitty.ready(&key) {
-                let Rgb(red, green, blue) = art.mean();
-                let bg = Color::Rgb(red, green, blue);
-                return graphics::draw(buf, r, id, bg);
+            let Rgb(red, green, blue) = art.mean();
+            let bg = Color::Rgb(red, green, blue);
+            match protocol {
+                Protocol::Kitty => {
+                    if let Some(id) = model.kitty.ready(&key) {
+                        return graphics::draw(buf, r, id, bg);
+                    }
+                }
+                Protocol::Iterm | Protocol::Sixel => {
+                    if model.inline.shows(&key, r) {
+                        return graphics::inline::draw(buf, r, bg);
+                    }
+                }
             }
             // Until the picture is all there: the best text cells.
             if model.caps.sextants {
@@ -408,23 +435,35 @@ mod tests {
     use super::*;
 
     const KITTY: Caps = Caps {
-        kitty: true,
+        pixels: Some(Protocol::Kitty),
         sextants: true,
     };
     const PLAIN: Caps = Caps {
-        kitty: false,
+        pixels: None,
         sextants: false,
+    };
+    const SIXEL: Caps = Caps {
+        pixels: Some(Protocol::Sixel),
+        sextants: false,
+    };
+    const ITERM: Caps = Caps {
+        pixels: Some(Protocol::Iterm),
+        sextants: true,
     };
 
     #[test]
     fn auto_picks_the_best_the_terminal_has() {
         use ColorDepth::*;
         let r = |d, c, depth| resolve(d, c, depth);
-        assert_eq!(r(Detail::Auto, KITTY, TrueColor), Drawn::Pixels);
+        let pixels = |p| Drawn::Pixels(p);
+        assert_eq!(r(Detail::Auto, KITTY, TrueColor), pixels(Protocol::Kitty));
+        assert_eq!(r(Detail::Auto, ITERM, TrueColor), pixels(Protocol::Iterm));
+        assert_eq!(r(Detail::Auto, SIXEL, Ansi256), pixels(Protocol::Sixel));
         // Pixels don't need the palette's colours: 16 is fine.
-        assert_eq!(r(Detail::Auto, KITTY, Ansi16), Drawn::Pixels);
+        assert_eq!(r(Detail::Auto, KITTY, Ansi16), pixels(Protocol::Kitty));
+        assert_eq!(r(Detail::Auto, SIXEL, Ansi16), pixels(Protocol::Sixel));
         let wezterm = Caps {
-            kitty: false,
+            pixels: Option::None,
             sextants: true,
         };
         assert_eq!(
@@ -445,8 +484,20 @@ mod tests {
     #[test]
     fn a_chosen_detail_is_kept_where_it_can_be() {
         use ColorDepth::*;
-        // Pixels when asked, even where the terminal wasn't recognised.
-        assert_eq!(resolve(Detail::Pixels, PLAIN, TrueColor), Drawn::Pixels);
+        // Pixels when asked: the terminal's protocol, else the best text.
+        assert_eq!(
+            resolve(Detail::Pixels, PLAIN, TrueColor),
+            Drawn::Text(TextMode::Quadrant)
+        );
+        assert_eq!(resolve(Detail::Pixels, PLAIN, Ansi16), Drawn::None);
+        assert_eq!(
+            resolve(Detail::Pixels, SIXEL, TrueColor),
+            Drawn::Pixels(Protocol::Sixel)
+        );
+        assert_eq!(
+            resolve(Detail::Pixels, ITERM, Ansi16),
+            Drawn::Pixels(Protocol::Iterm)
+        );
         assert_eq!(
             resolve(Detail::HalfBlock, KITTY, TrueColor),
             Drawn::Text(TextMode::HalfBlock)

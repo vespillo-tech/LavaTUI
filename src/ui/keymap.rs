@@ -76,10 +76,15 @@ pub enum Action {
     Change(bool),
     /// The settings screen: the next (`true`, tab) or previous page.
     SwitchPage(bool),
-    /// A character typed into a text field.
+    /// `/` in the library: open the filter row (lava-75z.17).
+    Find,
+    /// A character typed into a text field (the library's filter, the
+    /// settings screen's Client ID).
     Type(char),
-    /// Backspace in a text field.
+    /// Backspace in a text field (the empty filter: closes it).
     Erase,
+    /// esc in the filter: clear it, all rows back.
+    ClearFind,
     // Not keys.
     /// The terminal was resized: relayout and redraw now.
     Resize,
@@ -145,6 +150,8 @@ pub enum Section {
     /// Where the dock widgets go.
     Widgets,
     App,
+    /// What the mouse does (no keys: rows without bindings).
+    Mouse,
     /// The player keys: live only after `A` ([`InputMode::Player`]).
     Music,
 }
@@ -156,6 +163,7 @@ impl Section {
             Section::Clock => "clock & pomodoro",
             Section::Widgets => "widgets",
             Section::App => "app",
+            Section::Mouse => "mouse",
             Section::Music => "music · after A",
         }
     }
@@ -169,6 +177,25 @@ pub struct Row {
     pub keys: &'static str,
     pub label: &'static str,
     pub binds: &'static [(Key, Action)],
+    /// The row one action a line, `(keys, label)`, for the narrow help:
+    /// a combined row cut to fit would name one action for both keys.
+    /// Empty: the row is one action already.
+    pub narrow: &'static [(&'static str, &'static str)],
+}
+
+impl Row {
+    const fn narrow(self, narrow: &'static [(&'static str, &'static str)]) -> Row {
+        Row { narrow, ..self }
+    }
+
+    /// The row as the narrow help shows it: one action a line.
+    pub fn split(&self) -> Vec<(&'static str, &'static str)> {
+        if self.narrow.is_empty() {
+            vec![(self.keys, self.label)]
+        } else {
+            self.narrow.to_vec()
+        }
+    }
 }
 
 const fn row(
@@ -182,25 +209,42 @@ const fn row(
         keys,
         label,
         binds,
+        narrow: &[],
     }
 }
 
 use Action as A;
 use Key::{Char as K, Ctrl};
 use PlayerKey as P;
-use Section::{App, Clock, Lamp, Music, Widgets};
+use Section::{App, Clock, Lamp, Mouse, Music, Widgets};
+
+/// The text-selection row's keys: shift-drag in most terminals.
+pub const SELECT_DRAG: &str = "⇧ drag";
 
 pub static KEYMAP: &[Row] = &[
-    row(Lamp, "s", "next style", &[(K('s'), A::NextStyle)]),
-    row(Lamp, "S", "style picker", &[(K('S'), A::StylePicker)]),
-    row(Lamp, "p", "next palette", &[(K('p'), A::NextPalette)]),
-    row(Lamp, "P", "palette picker", &[(K('P'), A::PalettePicker)]),
+    // A key and its shifted picker share a row (help fits 80x24, §4.3);
+    // the narrow help splits them.
+    row(
+        Lamp,
+        "s S",
+        "style · picker",
+        &[(K('s'), A::NextStyle), (K('S'), A::StylePicker)],
+    )
+    .narrow(&[("s", "next style"), ("S", "style picker")]),
+    row(
+        Lamp,
+        "p P",
+        "palette · picker",
+        &[(K('p'), A::NextPalette), (K('P'), A::PalettePicker)],
+    )
+    .narrow(&[("p", "next palette"), ("P", "palette picker")]),
     row(
         Lamp,
         "[ ]",
         "heat − +",
         &[(K('['), A::HeatDown), (K(']'), A::HeatUp)],
-    ),
+    )
+    .narrow(&[("[", "less heat"), ("]", "more heat")]),
     row(
         Lamp,
         "- +",
@@ -210,7 +254,8 @@ pub static KEYMAP: &[Row] = &[
             (K('+'), A::Faster),
             (K('='), A::Faster),
         ],
-    ),
+    )
+    .narrow(&[("-", "slower"), ("+", "faster")]),
     row(Lamp, "z", "freeze", &[(K('z'), A::Freeze)]),
     row(
         Lamp,
@@ -219,8 +264,13 @@ pub static KEYMAP: &[Row] = &[
         &[(K('0'), A::ResetHeatSpeed)],
     ),
     row(Lamp, "R", "reseed wax", &[(K('R'), A::Reseed)]),
-    row(Clock, "c", "next face", &[(K('c'), A::NextFace)]),
-    row(Clock, "C", "face picker", &[(K('C'), A::FacePicker)]),
+    row(
+        Clock,
+        "c C",
+        "face · picker",
+        &[(K('c'), A::NextFace), (K('C'), A::FacePicker)],
+    )
+    .narrow(&[("c", "next face"), ("C", "face picker")]),
     row(Clock, "T", "12h / 24h", &[(K('T'), A::ToggleHour24)]),
     row(
         Clock,
@@ -234,45 +284,52 @@ pub static KEYMAP: &[Row] = &[
         "r r",
         "reset pomodoro",
         &[(K('r'), A::PomodoroReset)],
-    ),
+    )
+    .narrow(&[("r r", "reset timer")]),
     // One row per dock widget (`Action::Place` names it), plus the anchor.
     row(
         Widgets,
         "t",
         "clock side/lava/off",
         &[(K('t'), A::Place("clock"))],
-    ),
+    )
+    .narrow(&[("t", "place clock")]),
     row(
         Widgets,
         "f",
         "pomodoro side/lava/off",
         &[(K('f'), A::Place("pomodoro"))],
-    ),
+    )
+    .narrow(&[("f", "place pomodoro")]),
     row(
         Widgets,
         "a",
         "music side/lava/off",
         &[(K('a'), A::Place("music"))],
-    ),
+    )
+    .narrow(&[("a", "place music")]),
     row(Widgets, "A", "music keys", &[(K('A'), A::PlayerKeys)]),
     row(
         Widgets,
         "y",
         "lyrics · lrclib.net",
         &[(K('y'), A::Place("lyrics"))],
-    ),
+    )
+    .narrow(&[("y", "place lyrics")]),
     row(
         Widgets,
         "o O",
         "cover · detail",
         &[(K('o'), A::Place("cover")), (K('O'), A::CoverDetail)],
-    ),
+    )
+    .narrow(&[("o", "place cover"), ("O", "cover detail")]),
     row(
         Widgets,
         "l L",
         "move, pick lava widget",
         &[(K('l'), A::NextAnchor), (K('L'), A::NextLavaWidget)],
-    ),
+    )
+    .narrow(&[("l", "move widget"), ("L", "pick widget")]),
     // m ? q first: the small full-screen help leads with them (§4.3).
     row(App, "m", "minimal", &[(K('m'), A::ToggleMinimal)]),
     row(
@@ -280,22 +337,30 @@ pub static KEYMAP: &[Row] = &[
         "? ,",
         "this help · settings",
         &[(K('?'), A::Help), (K(','), A::Settings)],
-    ),
+    )
+    .narrow(&[("?", "this help"), (",", "settings")]),
     row(
         App,
         "q",
         "quit · ctrl-c",
         &[(K('q'), A::Quit), (Ctrl('c'), A::Quit)],
-    ),
+    )
+    .narrow(&[("q", "quit")]),
     row(
         App,
         "b d",
         "status bar · debug hud",
         &[(K('b'), A::ToggleStatusBar), (K('d'), A::DebugHud)],
-    ),
+    )
+    .narrow(&[("b", "status bar"), ("d", "debug info")]),
     row(App, "ctrl-l", "redraw", &[(Ctrl('l'), A::Redraw)]),
-    // Not a key: with mouse capture on, the terminal's own selection.
-    row(App, "⇧ drag", "select text", &[]),
+    // The mouse (`input.mouse`): not keys, so no bindings (`mouse_action`).
+    row(Mouse, "drag", "warm the wax", &[]),
+    row(Mouse, "click", "pick · double keeps", &[]),
+    row(Mouse, "wheel", "scroll lists & help", &[]),
+    // With mouse capture on, the terminal's own selection; help shows
+    // `⌥ drag` where that's the modifier (`Model::option_drag`).
+    row(Mouse, SELECT_DRAG, "select text", &[]),
     // The player keys, after `A` (their own mode: they may reuse keys).
     row(
         Music,
@@ -306,7 +371,12 @@ pub static KEYMAP: &[Row] = &[
             (K('n'), A::Player(P::Next)),
             (K('p'), A::Player(P::Previous)),
         ],
-    ),
+    )
+    .narrow(&[
+        ("␣", "play / pause"),
+        ("n", "next track"),
+        ("p", "previous"),
+    ]),
     row(
         Music,
         "←→ ↑↓",
@@ -324,7 +394,8 @@ pub static KEYMAP: &[Row] = &[
             (K('='), A::Player(P::VolumeUp)),
             (K('-'), A::Player(P::VolumeDown)),
         ],
-    ),
+    )
+    .narrow(&[("←→", "seek"), ("↑↓", "volume")]),
     row(
         Music,
         "x r",
@@ -333,7 +404,8 @@ pub static KEYMAP: &[Row] = &[
             (K('x'), A::Player(P::Shuffle)),
             (K('r'), A::Player(P::Repeat)),
         ],
-    ),
+    )
+    .narrow(&[("x", "shuffle"), ("r", "repeat")]),
     // The Spotify library (Web API, `docs/spotify.md`).
     row(
         Music,
@@ -343,7 +415,8 @@ pub static KEYMAP: &[Row] = &[
             (K('s'), A::Player(P::Like)),
             (K('a'), A::Player(P::AddToPlaylist)),
         ],
-    ),
+    )
+    .narrow(&[("s", "like"), ("a", "add to playlist")]),
     row(
         Music,
         "b i",
@@ -352,7 +425,8 @@ pub static KEYMAP: &[Row] = &[
             (K('b'), A::Player(P::Playlists)),
             (K('i'), A::Player(P::Account)),
         ],
-    ),
+    )
+    .narrow(&[("b", "playlists"), ("i", "log in / out")]),
 ];
 
 /// Which key set is live.
@@ -368,9 +442,11 @@ pub enum InputMode {
     /// The player keys (`A`); `esc`, `q` and `A` leave them.
     Player,
     /// The playlist browser / add-to-playlist picker; `inline` adds
-    /// h/l ←/→ as move (else they go back / open).
+    /// h/l ←/→ as move (else they go back / open). `typing`: the filter
+    /// row is open and letters go into it.
     Library {
         inline: bool,
+        typing: bool,
     },
     /// The settings screen; `typing` into its text field.
     Settings {
@@ -446,8 +522,33 @@ fn key_action(event: &KeyEvent, mode: InputMode) -> Option<Action> {
             (KeyCode::Down, _) | (_, Some(K('j'))) => Some(Action::Down),
             _ => None,
         },
-        InputMode::Library { inline } => match (code, key) {
+        InputMode::Library {
+            typing: true,
+            inline,
+        } => match code {
+            KeyCode::Esc => Some(Action::ClearFind),
+            KeyCode::Enter => Some(Action::Keep),
+            KeyCode::Backspace => Some(Action::Erase),
+            KeyCode::Up => Some(Action::Up),
+            KeyCode::Down => Some(Action::Down),
+            KeyCode::Left if inline => Some(Action::Up),
+            KeyCode::Right if inline => Some(Action::Down),
+            KeyCode::PageUp => Some(Action::Page(false)),
+            KeyCode::PageDown => Some(Action::Page(true)),
+            KeyCode::Home => Some(Action::Edge(false)),
+            KeyCode::End => Some(Action::Edge(true)),
+            KeyCode::Char(c)
+                if !event
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                Some(Action::Type(c))
+            }
+            _ => None,
+        },
+        InputMode::Library { inline, .. } => match (code, key) {
             (KeyCode::Esc, _) => Some(Action::Back),
+            (_, Some(K('/'))) => Some(Action::Find),
             (_, Some(K('q'))) => Some(Action::Close),
             (KeyCode::Enter, _) | (_, Some(Key::Space)) => Some(Action::Keep),
             (KeyCode::Up, _) | (_, Some(K('k'))) => Some(Action::Up),
@@ -748,7 +849,10 @@ mod tests {
 
     #[test]
     fn library_keys() {
-        let lib = InputMode::Library { inline: false };
+        let lib = InputMode::Library {
+            inline: false,
+            typing: false,
+        };
         let esc = press(KeyCode::Esc, KeyModifiers::NONE);
         assert_eq!(action_for(&esc, lib), Some(Action::Back));
         assert_eq!(action_for(&ch('q'), lib), Some(Action::Close));
@@ -765,8 +869,44 @@ mod tests {
             Some(Action::Page(true))
         );
         assert_eq!(action_for(&ch('s'), lib), None, "globals are off");
-        let inline = InputMode::Library { inline: true };
+        let inline = InputMode::Library {
+            inline: true,
+            typing: false,
+        };
         assert_eq!(action_for(&ch('l'), inline), Some(Action::Down));
+        assert_eq!(action_for(&ch('/'), lib), Some(Action::Find));
+    }
+
+    #[test]
+    fn the_library_filter_takes_every_letter() {
+        let typing = InputMode::Library {
+            inline: false,
+            typing: true,
+        };
+        for c in ['q', 'j', 'k', 'p', 'G', '/', ' ', 'é'] {
+            assert_eq!(action_for(&ch(c), typing), Some(Action::Type(c)), "{c}");
+        }
+        let key = |code| press(code, KeyModifiers::NONE);
+        assert_eq!(
+            action_for(&key(KeyCode::Esc), typing),
+            Some(Action::ClearFind)
+        );
+        assert_eq!(
+            action_for(&key(KeyCode::Backspace), typing),
+            Some(Action::Erase)
+        );
+        assert_eq!(action_for(&key(KeyCode::Enter), typing), Some(Action::Keep));
+        assert_eq!(action_for(&key(KeyCode::Down), typing), Some(Action::Down));
+        assert_eq!(
+            action_for(&key(KeyCode::End), typing),
+            Some(Action::Edge(true))
+        );
+        let shifted = press(KeyCode::Char('A'), KeyModifiers::SHIFT);
+        assert_eq!(action_for(&shifted, typing), Some(Action::Type('A')));
+        let ctrl_c = press(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert_eq!(action_for(&ctrl_c, typing), Some(Action::Quit));
+        let ctrl_x = press(KeyCode::Char('x'), KeyModifiers::CONTROL);
+        assert_eq!(action_for(&ctrl_x, typing), None);
     }
 
     #[test]
@@ -783,7 +923,10 @@ mod tests {
         let press = Some(Action::Press { col: 3, row: 4 });
         assert_eq!(action_for(&down, InputMode::Normal), press);
         assert_eq!(action_for(&down, InputMode::Player), press);
-        let lib = InputMode::Library { inline: false };
+        let lib = InputMode::Library {
+            inline: false,
+            typing: false,
+        };
         assert_eq!(
             action_for(&down, lib),
             Some(Action::Click { col: 3, row: 4 })

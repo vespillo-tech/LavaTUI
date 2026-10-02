@@ -15,7 +15,8 @@
 //! calls it.
 //!
 //! A request is `lavatui1 ␞ known track id ␞ command…`, a command being a
-//! verb and maybe one argument (`seek 61250`, `uri spotify:album:…`).
+//! verb and its arguments (`seek 61250`, `uri spotify:album:…`,
+//! `context spotify:track:… spotify:playlist:…`).
 //!
 //! The reply is `lavatui1 ␞ state ␞ position ms ␞ shuffle ␞ repeat ␞
 //! volume [␞ id [␞ duration ms ␞ artwork url ␞ artist ␞ album ␞ name]]`,
@@ -174,6 +175,9 @@ fn spotify_part() -> String {
          set sound volume to (a as integer)\n\
          else if v is \"uri\" then\n\
          play track a\n\
+         else if v is \"context\" then\n\
+         set o to offset of \" \" in a\n\
+         play track (text 1 thru (o - 1) of a) in context (text (o + 1) thru -1 of a)\n\
          end if\n\
          end tell\n\
          end act\n\
@@ -270,6 +274,8 @@ fn command_word(command: &Command) -> String {
         // Validated by `Command::play_uri`: no spaces, separators or
         // newlines.
         Command::PlayUri(uri) => format!("uri {uri}"),
+        // Spotify carries on through the context, without Premium.
+        Command::PlayInContext { track, context } => format!("context {track} {context}"),
     }
 }
 
@@ -609,6 +615,7 @@ mod tests {
                 Command::SetVolume(0),
                 Command::SetVolume(100),
                 Command::PlayUri("spotify:album:abc".into()),
+                Command::play_in_context("spotify:track:t", "spotify:playlist:p").unwrap(),
             ],
             "spotify:track:a",
         );
@@ -628,6 +635,7 @@ mod tests {
                 "volume 0",
                 "volume 100",
                 "uri spotify:album:abc",
+                "context spotify:track:t spotify:playlist:p",
             ]
         );
         assert_eq!(request(&[], ""), "lavatui1\u{1e}");

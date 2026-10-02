@@ -12,10 +12,10 @@
 
  app
  m       minimal
- ? ,     this help
+ ?       this help
+ ,       settings
  q       quit
- b d     status bar
- ctrl-l  redraw
+ b       status bar
 ── style picker ──
 ~~~~ ‹ solid › ~~~~~
 ~~~~~~~~~~~~~~~~~~~~
@@ -171,6 +171,15 @@
 ~~~~~~~~~~~~~ 14:32
 ── library: a playlist's tracks ──
 ~ ‹ Slow Rise 1 › ~~
+~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~ 14:32
+── library: filtering ──
+~/LA▏ lavatui test~~
 ~~~~~~~~~~~~~~~~~~~~
 ~~~~~~~~~~~~~~~~~~~~
 ~~~~~~~~~~~~~~~~~~~~

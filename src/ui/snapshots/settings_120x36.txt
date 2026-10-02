@@ -237,7 +237,7 @@
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    clock & timer      reset this page                 reset  │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    widgets                                                   │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│ Click buttons, lists and the wax. While it's on, hold Shift  │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│ (Option in Mac Terminal or iTerm2) to select text.           │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│ to select text.                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    window                                                    │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │

@@ -368,7 +368,7 @@ pub fn by_name(name: &str) -> Option<(usize, &'static dyn DockWidget)> {
 
 /// Where a cover is drawn in this layout, if anywhere: the cover widget's
 /// picture, else the music card's inline one (only one is ever shown).
-/// What the kitty protocol sizes its picture to.
+/// What a pixel protocol sizes its picture to.
 pub fn cover_at(layout: &crate::ui::layout::Layout) -> Option<Rect> {
     let (cover, music) = (by_name(Cover.name())?.0, by_name(Music.name())?.0);
     let placed = || {
