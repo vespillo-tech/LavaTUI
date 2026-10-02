@@ -1,9 +1,18 @@
 [package]
 name = "lavatui"
-version = "0.1.0"
+version = "1.2.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
+description = "A lava lamp for your terminal: glowing wax blobs that rise, sink, merge and split, with a clock, a pomodoro timer and now-playing music"
+readme = "README.md"
+keywords = ["lava-lamp", "terminal", "tui", "ambient", "ratatui"]
+categories = ["command-line-utilities", "visualization"]
+repository = "https://github.com/Vespillo/LavaTUI"
+homepage = "https://github.com/Vespillo/LavaTUI"
+# What `cargo package` / `cargo install` ship: the code and its test
+# snapshots, not screenshots, perf traces, tools or agent config.
+include = ["/src/**", "/Cargo.toml", "/Cargo.lock", "/README.md", "/CHANGELOG.md", "/LICENSE-*"]
 
 [dependencies]
 base64 = "0.22"
@@ -33,3 +42,11 @@ zbus = "5.19"
 # Now playing over System Media Transport Controls.
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = ["Media_Control", "Foundation", "Foundation_Collections", "Storage_Streams", "Win32_System_WinRT"] }
+
+# Release binaries: fat LTO + one codegen unit cut the binary by a third
+# (7.4 MB -> 4.8 MB on macOS arm64) at no measurable frame-time cost
+# (bench_lamp within noise); `cargo test --release` / the benches inherit it.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true

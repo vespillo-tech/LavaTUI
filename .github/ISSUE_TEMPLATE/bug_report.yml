@@ -1,0 +1,65 @@
+name: Bug report
+description: Something looks wrong, crashes, or doesn't work.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this! A few details about your
+        setup help a lot, because LavaTUI looks different in every terminal.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you see, and what did you expect to see instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How can we make it happen?
+      description: The keys you pressed or the steps you took, if you know them.
+      placeholder: |
+        1. Start lavatui
+        2. Press `s` a few times to change the style
+        3. ...
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal app
+      description: The program you run LavaTUI in, with its version if you know it.
+      placeholder: e.g. Ghostty 1.2, iTerm2 3.5, Windows Terminal, kitty, GNOME Terminal, tmux inside Alacritty
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: e.g. macOS 15, Ubuntu 24.04, Windows 11
+    validations:
+      required: true
+  - type: input
+    id: size
+    attributes:
+      label: Window size
+      description: Roughly how big the window was, in columns × rows (`tput cols; tput lines` prints them), or just describe it.
+      placeholder: e.g. 120×36, or "small, about a quarter of the screen"
+  - type: input
+    id: version
+    attributes:
+      label: LavaTUI version
+      description: Output of `lavatui --version`.
+      placeholder: e.g. lavatui 1.2.0
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: Screenshot or recording
+      description: Drag an image or video here. Visual bugs are much easier to fix with one.
+  - type: textarea
+    id: config
+    attributes:
+      label: Your config (optional)
+      description: |
+        Anything you changed in `config.toml`. Please remove anything private
+        first (for example a Spotify Client ID).
+      render: toml

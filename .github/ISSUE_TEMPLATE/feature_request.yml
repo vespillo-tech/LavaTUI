@@ -1,0 +1,21 @@
+name: Feature request
+description: An idea for something new, or a way to make LavaTUI nicer.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like?
+      description: Describe the idea. A sketch or a picture of something similar is welcome.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why would it help?
+      description: What would you use it for, or what bugs you today?
+  - type: textarea
+    id: other
+    attributes:
+      label: Anything else?
+      description: Other ways you thought of doing it, or apps that already do it well.

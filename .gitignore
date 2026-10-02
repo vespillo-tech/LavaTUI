@@ -26,3 +26,6 @@ perf.data*
 # Local env
 .env
 .env.*
+
+# Release packaging (see .github/workflows/release.yml)
+/dist/
