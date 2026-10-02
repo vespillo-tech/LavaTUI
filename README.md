@@ -74,18 +74,47 @@ The songs, cover and lyrics in these pictures are made up for the demo.
 
 ## Install
 
-### Download it (easiest)
+### With Homebrew (Mac and Linux)
+
+If you use [Homebrew](https://brew.sh):
+
+```sh
+brew install vespillo-tech/tap/lavatui
+```
+
+To update later, run `brew upgrade lavatui`.
+
+### With one command
+
+On a Mac or Linux, paste this into a terminal:
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/vespillo-tech/LavaTUI/releases/latest/download/lavatui-installer.sh | sh
+```
+
+On Windows, paste this into PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/vespillo-tech/LavaTUI/releases/latest/download/lavatui-installer.ps1 | iex"
+```
+
+It downloads the right program for your computer and puts it in
+`~/.cargo/bin` (on Windows, `%USERPROFILE%\.cargo\bin`). Then open a new
+terminal and type `lavatui`. To update, run the same command again.
+
+### Download it yourself
 
 1. Go to the [Releases page](https://github.com/vespillo-tech/LavaTUI/releases)
    and open the newest release.
 2. Download the file for your computer:
 
-   | Computer | File name ends in |
+   | Computer | File |
    |---|---|
-   | Mac with Apple chip (M1 or newer) | `aarch64-apple-darwin.tar.gz` |
-   | Mac with Intel chip | `x86_64-apple-darwin.tar.gz` |
-   | Linux (64-bit PC) | `x86_64-unknown-linux-gnu.tar.gz` |
-   | Windows (64-bit) | `x86_64-pc-windows-msvc.zip` |
+   | Mac with Apple chip (M1 or newer) | `lavatui-aarch64-apple-darwin.tar.xz` |
+   | Mac with Intel chip | `lavatui-x86_64-apple-darwin.tar.xz` |
+   | Linux (64-bit PC) | `lavatui-x86_64-unknown-linux-gnu.tar.xz` |
+   | Linux (64-bit ARM, like a Raspberry Pi 4 or 5) | `lavatui-aarch64-unknown-linux-gnu.tar.xz` |
+   | Windows (64-bit) | `lavatui-x86_64-pc-windows-msvc.zip` |
 
 3. Unpack it. Inside is the program, `lavatui` (or `lavatui.exe` on
    Windows).
@@ -96,8 +125,9 @@ To run it from anywhere, move the program to a folder on your `PATH`,
 like `/usr/local/bin` or `~/.local/bin`.
 
 On a Mac, the first try may say the program "can't be opened" or "is
-damaged". That's because it was downloaded from the web and isn't signed
-by Apple. To allow it, run this once in the same folder:
+damaged". That's because your browser marked it as downloaded from the
+web. (Homebrew and the one-command install don't have this problem.) To
+allow it, run this once in the same folder:
 
 ```sh
 xattr -d com.apple.quarantine ./lavatui

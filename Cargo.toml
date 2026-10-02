@@ -50,3 +50,7 @@ windows = { version = "0.62", features = ["Media_Control", "Foundation", "Founda
 lto = "fat"
 codegen-units = 1
 strip = true
+
+# What `dist` (the release workflow) builds with: the release profile as is.
+[profile.dist]
+inherits = "release"

@@ -57,8 +57,11 @@ What changed in each version of LavaTUI, in plain words.
 
 **Other**
 
-- Ready-made downloads for macOS (Apple and Intel), Linux and Windows on
-  the Releases page.
+- Easy installs: `brew install vespillo-tech/tap/lavatui` on a Mac or
+  Linux, or one command that downloads and installs it (Mac, Linux and
+  Windows).
+- Ready-made downloads for macOS (Apple and Intel), Linux (PC and ARM)
+  and Windows on the Releases page.
 - Licensed under MIT or Apache 2.0.
 
 ## 1.1.0
