@@ -13,9 +13,9 @@
  app
  m       minimal
  ?       this help
+ ,       settings
  q       quit
  b       status bar
- d       debug info
 ── style picker ──
 ~~~~ ‹ solid › ~~~~~
 ~~~~~~~~~~~~~~~~~~~~

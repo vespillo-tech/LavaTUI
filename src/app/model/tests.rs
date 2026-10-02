@@ -281,7 +281,7 @@ fn help_scroll_is_clamped_when_the_window_grows() {
         panic!("help is open");
     };
     assert!(scroll > 0, "small help scrolls");
-    m.tick(t0, Rect::new(0, 0, 40, 60), local());
+    m.tick(t0, Rect::new(0, 0, 40, 70), local());
     assert_eq!(m.overlay, Overlay::Help { scroll: 0 });
 }
 

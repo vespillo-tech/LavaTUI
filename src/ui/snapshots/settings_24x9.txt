@@ -1,0 +1,110 @@
+── the list of pages ──
+ settings     esc close
+
+  ▸ look
+    clock & timer
+    widgets
+    music & lyrics
+    controls
+
+
+── look ──
+ look          esc back
+
+  ▸ style    ‹ solid ›
+    colours       lava
+    heat         ▮▮▮▯▯
+    speed           ×1
+    background
+
+ How the wax is drawn.
+── look, on colours ──
+ look          esc back
+
+    style        solid
+  ▸ colours   ‹ lava ›
+    heat         ▮▮▮▯▯
+    speed           ×1
+    background
+
+
+── clock & timer ──
+ clock & tim…  esc back
+
+  ▸ clock face  blocks
+    time format
+    focus length
+    short break  5 min
+    long break  15 min
+
+
+── widgets, clock on the lamp ──
+ widgets       esc back
+
+  ▸ clock  on the lamp
+      position  centre
+    focus timer
+    music player   off
+    lyrics         off
+
+ The time of day.
+── music & lyrics ──
+ music & lyr…  esc back
+
+  ▸ spotify
+    lyrics         off
+    cover picture
+    cover size  medium
+    small cover with m…
+
+ ‹ not set up ›
+── controls ──
+ controls      esc back
+
+  ▸ mouse       ‹ on ›
+    reset this page
+
+ Click buttons, lists
+ and the wax. While
+ it's on, hold Shift to
+ select text.
+── window ──
+ window        esc back
+
+  ▸ lamp only  ‹ off ›
+    hint line    shown
+    smoothness
+    lamp-only clock
+    reset this page
+
+
+── spotify setup ──
+ spotify set…  esc back
+
+  ▸ status  not set up
+    1  make a spotify…
+    2  add this address
+    3  paste the clien…
+    4  connect
+
+
+── spotify setup, a bad client id ──
+ spotify set…  esc back
+
+    status  not set up
+    1  make a spotify…
+    2  add this address
+  ▸ 3  paste the clien…
+    4  connect
+
+ ‹ my-client-secret▏ ›
+── spotify setup, connected ──
+ spotify set…  esc back
+
+  ▸ status   connected
+    1  make a spotify…
+    2  add this address
+    3  paste the clien…
+    4  connect
+
+

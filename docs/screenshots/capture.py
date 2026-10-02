@@ -12,6 +12,7 @@ a monospace font. Clock times are whatever the local time is.
     /tmp/v/bin/python docs/screenshots/capture.py music      # needs Spotify playing
     /tmp/v/bin/python docs/screenshots/capture.py lyrics     # Spotify + lrclib.net
     /tmp/v/bin/python docs/screenshots/capture.py cover      # Spotify; text-cell covers
+    /tmp/v/bin/python docs/screenshots/capture.py settings-pages  # every settings page
 
 `music` (the now-playing widget, beside the lamp and on the lava) and
 `lyrics` (the lyrics widget at three sizes, on the lava over several
@@ -268,6 +269,7 @@ SHOTS = {
     "overlay": Shot(100, 30, '[lamp];style="solid";[dock];clock="overlay";pomodoro="overlay"', "0.5: "),
     "overlay-mix": Shot(100, 30, '[lamp];style="braille";[theme];palette="abyss";[dock];clock="overlay"', "0.5: ", "--seed 5"),
     "color16": Shot(80, 24, '[lamp];style="ascii"', args="--seed 2 --color 16"),
+    "settings": Shot(100, 30, '[lamp];style="solid"', "1:\\x2c,1.5:\\r,2:j", frames=240),
 }
 # Live: whatever Spotify plays (never in "all", never committed).
 LIVE = {
@@ -314,6 +316,21 @@ COVER |= {
     "cover-16-80x24": Shot(80, 24, '[lamp];style="ascii";[dock];cover="side"', args="--seed 2 --color 16", frames=420),
     "cover-tiny-30x10": Shot(30, 10, '[lamp];style="solid";[dock];cover="overlay"', frames=420),
 }
+# (`\\x2c` is `,`: the key list is comma-separated.)
+# Every page of the settings screen at two sizes (`capture.py
+# settings-pages`); the Spotify setup asks the Spotify app how it is, so
+# these land in $LAVATUI_SHOT_OUT like the live ones.
+SETTINGS_PAGES = {}
+for (c, r) in [(80, 24), (40, 14)]:
+    SETTINGS_PAGES[f"settings-{c}x{r}-pages"] = Shot(c, r, '[lamp];style="solid"', "1:\\x2c", frames=240)
+    for i, page in enumerate(["look", "clock", "widgets", "music", "controls", "window"]):
+        down = "".join(f",{1.2 + 0.2 * k:.1f}:j" for k in range(i))
+        SETTINGS_PAGES[f"settings-{c}x{r}-{page}"] = Shot(
+            c, r, '[lamp];style="solid"', f"1:\\x2c{down},2.6:\\r", frames=240
+        )
+    SETTINGS_PAGES[f"settings-{c}x{r}-spotify"] = Shot(
+        c, r, '[lamp];style="solid"', "1:\\x2c,1.2:j,1.4:j,1.6:j,2:\\r,2.5:\\r", frames=300
+    )
 TILES = {f"style-{s}": Shot(34, 30, TILE + f'style="{s}"') for s in STYLES}
 TILES |= {f"palette-{p}": Shot(34, 30, TILE + f'style="solid";[theme];palette="{p}"') for p in PALETTES}
 
@@ -330,6 +347,8 @@ def main(names):
         jobs |= LIBRARY
     if "cover" in want:
         jobs |= COVER
+    if "settings-pages" in want:
+        jobs |= SETTINGS_PAGES
     if "styles" in want:
         jobs |= {n: s for n, s in TILES.items() if n.startswith("style-")}
     if "palettes" in want:
@@ -338,7 +357,7 @@ def main(names):
     def one(item):
         name, shot = item
         out = os.path.join(HERE if name in SHOTS else tmp, name + ".png")
-        if name in LIVE or name in LYRICS or name in LIBRARY or name in COVER:
+        if name in LIVE or name in LYRICS or name in LIBRARY or name in COVER or name in SETTINGS_PAGES:
             live = os.environ.get("LAVATUI_SHOT_OUT", tempfile.gettempdir())
             out = os.path.join(live, name + ".png")
         render(run(shot), out)

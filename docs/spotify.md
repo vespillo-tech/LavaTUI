@@ -7,6 +7,10 @@ needs none of this.
 
 ## Setup (once)
 
+The app walks you through this: press `,` and pick *music & lyrics* →
+*spotify*. It opens the dashboard, copies the redirect address, takes the
+Client ID by paste (and checks it), then logs in. The same steps by hand:
+
 1. Go to <https://developer.spotify.com/dashboard>, log in, and click
    **Create app**.
 2. Fill in a name (e.g. `LavaTUI`) and a description; both appear on the

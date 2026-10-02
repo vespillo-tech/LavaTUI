@@ -89,6 +89,13 @@ impl FakeWeb {
         s.events.push_back(Event::LoggedIn { saved: true });
     }
 
+    /// The browser came back with an error.
+    pub fn fail_login(&self, error: Error) {
+        let mut s = self.state();
+        s.login_pending = false;
+        s.events.push_back(Event::LoginFailed(error));
+    }
+
     /// Answer the held requests.
     pub fn release(&self) {
         let mut s = self.state();

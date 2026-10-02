@@ -15,11 +15,11 @@
  app
  m       minimal
  ?       this help
+ ,       settings
  q       quit
  b       status bar
  d       debug info
  ctrl-l  redraw
-
 ── style picker ──
 ~~~~~~~~~ ‹ solid › ~~~~~~~~~~
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

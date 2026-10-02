@@ -176,9 +176,9 @@ impl Model {
     }
 
     /// Whether anything needs the player: the music, lyrics or cover
-    /// widget.
+    /// widget, or the Spotify setup (it says how the app is doing).
     pub fn media_on(&self) -> bool {
-        self.music_on() || self.lyrics_on() || self.cover_on()
+        self.music_on() || self.lyrics_on() || self.cover_on() || self.spotify_setup_open()
     }
 
     /// How covers are drawn here and now (`art.detail` resolved).

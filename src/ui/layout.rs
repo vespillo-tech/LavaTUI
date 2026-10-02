@@ -160,6 +160,8 @@ pub const HUGE: (u16, u16) = (200, 56);
 /// (§4.3) and the picker's side sheet (§4.4).
 pub const HELP_SHEET: (u16, u16) = (68, 20);
 pub const PICKER_SHEET: (u16, u16) = (80, 16);
+/// The settings screen's centred sheet; below it, a full-screen page.
+pub const SETTINGS_SHEET: (u16, u16) = (66, 18);
 /// §1.3: the status bar, toasts, and the panel's date line (rows only).
 const STATUS_BAR: (u16, u16) = (30, 14);
 const TOASTS: (u16, u16) = (16, 4);

@@ -20,6 +20,9 @@ pub mod library;
 pub mod picker;
 #[cfg(test)]
 mod render_tests;
+pub mod settings;
+#[cfg(test)]
+mod settings_tests;
 #[cfg(test)]
 mod tests;
 
@@ -104,6 +107,7 @@ pub fn draw(frame: &mut Frame, model: &Model, lamp: &mut LampState) {
         Overlay::Help { scroll } => help::draw(buf, area, scroll, model),
         Overlay::Picker(p) => picker::draw(buf, area, layout, &p, model),
         Overlay::Library(v) => library::draw(buf, area, layout, &v, model),
+        Overlay::Settings(v) => settings::draw(buf, area, &v, model),
     }
 }
 
@@ -154,5 +158,6 @@ pub fn overlay_footprint(area: Rect, layout: &Layout, model: &Model) -> Option<R
         Overlay::Help { .. } => help::footprint(area),
         Overlay::Picker(p) => picker::placement(area, layout, &p).map(|p| p.footprint()),
         Overlay::Library(v) => library::placement(area, layout, &v, model).map(|p| p.footprint()),
+        Overlay::Settings(v) => settings::footprint(area, &v),
     }
 }
