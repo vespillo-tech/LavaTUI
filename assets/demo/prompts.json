@@ -1,0 +1,28 @@
+{
+  "model": "gpt-image-2-5-sunburst",
+  "provider": "Venice",
+  "size": "1024x1024",
+  "quality": "high",
+  "covers": [
+    {
+      "out": "heat-rises-bloom.jpg",
+      "prompt": "Create an entirely original square music album sleeve for an invented band. A finished album cover, edge to edge, not a record mockup, not a poster on a wall. Professional art direction, one striking large subject and strong tonal separation, readable composition even at 40 pixels. Quiet psychedelic atmosphere fitting a lava-lamp evening. No reference to any existing album, artist, trademark, or brand; no borrowed artwork; no watermark. Only the two specified lines of invented artist/album text, correctly spelled. Keep the typography crisp and deliberately composed; leave the central subject unobstructed. Subject: one enormous glowing amber-orange flower growing from a dark volcanic ridge, its broad translucent sculptural petals like molten wax, a slender black stem rising from the ridge at the lower edge. The bloom occupies most of the center, backlit like a small sun, against a flat very dark oxblood sky. Art medium: tactile photographic collage with restrained fine film grain and lithographic warmth; dramatic but simple, no tiny busy details. Palette: near-black burgundy, burnt orange, bright honey amber, small cream highlights. Place large cream elegant serif lettering \"HEAT RISES\" across the upper margin, and smaller widely spaced cream capitals \"THE PARAFFINS\" across the lower margin. A bold, organic, memorable indie psychedelic sleeve."
+    },
+    {
+      "out": "heat-rises-moons.jpg",
+      "prompt": "Create an entirely original square music album sleeve for an invented band. A finished album cover, edge to edge, not a record mockup, not a poster on a wall. Professional art direction, one striking large subject and strong tonal separation, readable composition even at 40 pixels. Quiet psychedelic atmosphere fitting a lava-lamp evening. No reference to any existing album, artist, trademark, or brand; no borrowed artwork; no watermark. Only the two specified lines of invented artist/album text, correctly spelled. Keep the typography crisp and deliberately composed; leave the central subject unobstructed. An alternative sleeve for the same invented album. Subject: two enormous pearlescent violet moons, one from the left and one from the right, touching at the center, with a thin glowing hot-pink seam between them. Their tactile surface resembles carved wax, softly ribbed, not flat gradient discs. One undulating magenta reflection extends down into a still dark pool; low horizon, huge round subjects dominating the composition. Art medium: surreal studio photograph with rich print texture, clean unbusy graphic silhouette. Palette: black plum, lavender, electric pink, pale warm ivory highlights. Place small widely spaced ivory capitals \"THE PARAFFINS\" at the top and large ivory serif lettering \"HEAT RISES\" at the bottom. Dreamy, slow, intimate, distinctive album design."
+    },
+    {
+      "out": "lamplight-window.jpg",
+      "prompt": "Create an entirely original square music album sleeve for an invented band. A finished album cover, edge to edge, not a record mockup, not a poster on a wall. Professional art direction, one striking large subject and strong tonal separation, readable composition even at 40 pixels. Quiet psychedelic atmosphere fitting a lava-lamp evening. No reference to any existing album, artist, trademark, or brand; no borrowed artwork; no watermark. Only the two specified lines of invented artist/album text, correctly spelled. Keep the typography crisp and deliberately composed; leave the central subject unobstructed. Subject: a single large rectangular amber-lit window in a dark teal house facade at night, filling the central half of the sleeve. Through the glass is the clear silhouette of a warm table lamp with a broad simple shade and one leafy plant; outside, deep blue broad leaves frame the window asymmetrically. A pale small crescent moon above. Art medium: beautifully painted gouache with cinematic lighting and tangible paper texture, sophisticated limited color graphic shapes, spacious and restful; no people. Palette: deep midnight navy, teal foliage, warm honey-yellow and coral light, pale mint. Place large clean pale mint serif lettering \"LAMPLIGHT\" across the top margin and smaller widely spaced pale mint capitals \"WAX AND WANE\" across the bottom margin. Cozy nocturnal indie album sleeve, large recognizable window and lamp silhouettes."
+    }
+  ],
+  "output_format": "png",
+  "stored_assets": {
+    "size": "400x400",
+    "format": "jpeg",
+    "quality": 88,
+    "resize_filter": "Lanczos",
+    "progressive": true
+  }
+}

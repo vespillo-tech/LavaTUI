@@ -5,8 +5,8 @@
 #
 # Needs vhs (with ttyd + ffmpeg) and gifsicle. Builds the release binary,
 # runs it with a fixed --seed, a scratch config (your own settings are
-# untouched) and the hidden --demo player (made-up songs, an abstract
-# cover and invented lyrics: no real music in the GIF). Then it walks
+# untouched) and the hidden --demo player (made-up songs, original
+# covers and invented lyrics: no real music in the GIF). Then it walks
 # through styles, palettes, the style picker, the clock and timer on the
 # lamp, the music widgets, a glimpse of the settings and minimal mode.
 #

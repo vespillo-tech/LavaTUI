@@ -1,14 +1,13 @@
 //! `--demo` (hidden): a made-up player for screenshots and the README
 //! demo, so no real song, cover or lyric ever lands in a committed image.
 //!
-//! Three invented tracks by invented artists, each with an abstract cover
-//! drawn here (handed to the art worker through [`art::stash`], so nothing
+//! Three invented tracks by invented artists, each with an original cover
+//! embedded here (handed to the art worker through [`art::stash`], so nothing
 //! is downloaded) and invented synced lyrics served by a canned LRCLIB
 //! ([`Canned`]: nothing goes to lrclib.net and nothing is cached). The
 //! player is a [`FakeSource`]: it plays in real time and every player key
 //! works. The Spotify library stays off (no Client ID, no keyring).
 
-use std::io::Cursor;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -17,13 +16,13 @@ use crate::lyrics::client::{Http, Lrclib, Reply};
 use crate::media::{FakeSource, Snapshot, Status, Track, art};
 
 /// Title (letters and spaces only: it's matched in the lookup URL),
-/// artist, album, length in seconds, the cover's two hues, the lyrics.
+/// artist, album, length in seconds, the cover's encoded bytes, the lyrics.
 struct Song {
     title: &'static str,
     artist: &'static str,
     album: &'static str,
     secs: u64,
-    hues: (f32, f32),
+    cover: &'static [u8],
     words: &'static [&'static str],
 }
 
@@ -33,7 +32,7 @@ const SONGS: &[Song] = &[
         artist: "The Paraffins",
         album: "Heat Rises",
         secs: 214,
-        hues: (12.0, 40.0),
+        cover: include_bytes!("../assets/demo/heat-rises-bloom.jpg"),
         words: &[
             "Down at the bottom where the warm light grows",
             "A little wax is waking, and it slowly goes",
@@ -56,7 +55,7 @@ const SONGS: &[Song] = &[
         artist: "The Paraffins",
         album: "Heat Rises",
         secs: 187,
-        hues: (300.0, 330.0),
+        cover: include_bytes!("../assets/demo/heat-rises-moons.jpg"),
         words: &[
             "Two slow shapes in the purple glow",
             "Drifting closer, moving slow",
@@ -74,7 +73,7 @@ const SONGS: &[Song] = &[
         artist: "Wax and Wane",
         album: "Lamplight",
         secs: 402,
-        hues: (180.0, 150.0),
+        cover: include_bytes!("../assets/demo/lamplight-window.jpg"),
         words: &[
             "Late at night the room is blue",
             "And the lamp is humming through",
@@ -101,7 +100,7 @@ pub fn source(now: Instant) -> FakeSource {
             artist: song.artist.into(),
             album: song.album.into(),
             duration: Duration::from_secs(song.secs),
-            artwork_url: art::stash(cover(song.hues)).unwrap_or_default(),
+            artwork_url: art::stash(song.cover.to_vec()).unwrap_or_default(),
         })
         .collect();
     let snapshot = Snapshot {
@@ -173,50 +172,6 @@ fn lrc(song: &Song) -> String {
     out
 }
 
-/// An abstract cover, 400 px square, as PNG: a dark gradient in the first
-/// hue with three soft glowing discs in both.
-fn cover((a, b): (f32, f32)) -> Vec<u8> {
-    const N: u32 = 400;
-    let discs = [
-        (0.32, 0.38, 0.26, a),
-        (0.68, 0.62, 0.22, b),
-        (0.55, 0.22, 0.12, b),
-    ];
-    let image = image::RgbImage::from_fn(N, N, |x, y| {
-        let (u, v) = (x as f32 / N as f32, y as f32 / N as f32);
-        let mut rgb = hsl(a, 0.45, 0.08 + 0.10 * v);
-        for &(cx, cy, r, hue) in &discs {
-            let d = ((u - cx).powi(2) + (v - cy).powi(2)).sqrt() / r;
-            let glow = (1.0 - d).clamp(0.0, 1.0).powf(0.6);
-            let disc = hsl(hue, 0.85, 0.35 + 0.30 * glow);
-            for (c, d) in rgb.iter_mut().zip(disc) {
-                *c += (d - *c) * glow;
-            }
-        }
-        image::Rgb(rgb.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8))
-    });
-    let mut png = Vec::new();
-    let _ = image.write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png);
-    png
-}
-
-/// HSL (hue in degrees) to RGB in 0..=1.
-fn hsl(h: f32, s: f32, l: f32) -> [f32; 3] {
-    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
-    let h = h.rem_euclid(360.0) / 60.0;
-    let x = c * (1.0 - (h % 2.0 - 1.0).abs());
-    let (r, g, b) = match h as u32 {
-        0 => (c, x, 0.0),
-        1 => (x, c, 0.0),
-        2 => (0.0, c, x),
-        3 => (0.0, x, c),
-        4 => (x, 0.0, c),
-        _ => (c, 0.0, x),
-    };
-    let m = l - c / 2.0;
-    [r + m, g + m, b + m]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,8 +181,13 @@ mod tests {
     fn every_song_has_a_cover_and_synced_lyrics() {
         let client = Lrclib::with_http(Canned, "demo:");
         for song in SONGS {
-            let png = cover(song.hues);
-            assert!(art::Art::decode(&png, false).is_ok(), "{}", song.title);
+            assert!(
+                art::Art::decode(song.cover, false).is_ok(),
+                "{}",
+                song.title
+            );
+            let pixels = art::Art::decode(song.cover, true).expect("full-picture cover");
+            assert!(pixels.hires.is_some(), "{}", song.title);
             let track = LyricsTrack {
                 title: song.title.into(),
                 artist: song.artist.into(),

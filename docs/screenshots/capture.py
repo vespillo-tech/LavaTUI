@@ -19,8 +19,8 @@ Scratch configs say `[ui] welcome = false` (the card would cover every
 shot) unless the shot is of the welcome card.
 
 `music`, `music-lava` and `spotify-setup` run with the hidden `--demo`
-flag: a made-up player with invented songs, an abstract cover drawn by
-the app and invented lyrics, so they are safe to commit.
+flag: a made-up player with invented songs, original embedded covers
+and invented lyrics, so they are safe to commit.
 
 The live sets below read the real player instead:
 `live` (the now-playing widget, beside the lamp and on the lava) and

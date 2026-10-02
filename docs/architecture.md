@@ -250,10 +250,10 @@ Pillow). The animated demo is `docs/screenshots/demo.tape` (vhs, then
 gifsicle; the tape has the exact commands and the size budget).
 
 Pictures with music use the hidden `--demo` flag (`src/demo.rs`): a
-made-up player with invented songs and artists, an abstract cover drawn
-by the app and invented lyrics served by a canned LRCLIB. Nothing goes to
-the network, no account is touched, and no real album art or song ends
-up in a committed image.
+made-up player with invented songs and artists, original covers embedded
+from `assets/demo/` and invented lyrics served by a canned LRCLIB.
+Nothing goes to the network, no account is touched, and no real album
+art or song ends up in a committed image.
 
 ```sh
 cargo build --release
