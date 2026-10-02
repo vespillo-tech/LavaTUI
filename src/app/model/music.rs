@@ -63,9 +63,8 @@ impl Default for Music {
 }
 
 impl Music {
-    /// Use `connect` for the player (tests: a `FakeSource`) and `load_art`
+    /// Use `connect` for the player (tests and `--demo`: a `FakeSource`) and `load_art`
     /// for covers, from the next time the widget is placed.
-    #[cfg(test)]
     pub fn connect_with(
         &mut self,
         connect: impl Fn() -> Box<dyn MediaSource> + 'static,

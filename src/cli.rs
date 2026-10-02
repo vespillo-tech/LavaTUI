@@ -50,6 +50,10 @@ pub struct Cli {
     #[arg(long, value_name = "PATH", hide = true)]
     pub trace: Option<PathBuf>,
 
+    /// A made-up player, cover and lyrics (screenshots, the README demo).
+    #[arg(long, hide = true)]
+    pub demo: bool,
+
     /// Panic after rendering N frames, to check the terminal is restored.
     #[arg(long, value_name = "N", hide = true)]
     pub panic_after: Option<u64>,
@@ -93,6 +97,7 @@ impl Cli {
             seed: self.seed,
             max_frames: self.frames,
             config_path: self.config,
+            demo: self.demo,
         }
     }
 }

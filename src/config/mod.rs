@@ -507,6 +507,8 @@ pub struct Session {
     pub max_frames: Option<u64>,
     /// Use this config file instead of the XDG one.
     pub config_path: Option<PathBuf>,
+    /// `--demo`: the made-up player, cover and lyrics (`crate::demo`).
+    pub demo: bool,
 }
 
 /// A setting the CLI overrode for this session. Once the user changes it

@@ -1,630 +1,407 @@
-# lavatui
+# LavaTUI
 
-A lava lamp for your terminal. Blobs of wax warm on the heater, rise,
-cool, sink, merge and split, and you can draw them in nine render
-styles: smooth half-blocks, braille, halftone, a synthwave sunset,
-digital rain, a topographic map and more. Next to the lamp sit a clock and a pomodoro timer,
-and, if you want it, what's playing in Spotify, cover art included.
-Turn those off with one key and you just have the lamp.
+[![CI](https://github.com/vespillo-tech/LavaTUI/actions/workflows/ci.yml/badge.svg)](https://github.com/vespillo-tech/LavaTUI/actions/workflows/ci.yml)
 
-![lavatui demo: the lamp cycling through render styles and palettes, the style picker previewing styles live, and minimal mode](docs/screenshots/demo.gif)
+A lava lamp for your terminal.
 
-Built with Rust and [ratatui](https://ratatui.rs). It's one small binary
-with no runtime dependencies and no Nerd Fonts.
+Warm blobs of wax rise from the bottom, cool off at the top and sink
+back down. On the way they bump, join up and break apart, just like a
+real lamp. You can draw the wax in nine styles and eight colour themes.
+A clock, a focus timer and the song you're playing can sit beside the
+lamp or float on top of it. Or turn everything off and just watch the
+wax.
 
-## Gallery
+![LavaTUI in action: changing styles and colours, the clock and timer on the lamp, the music card, lyrics and album cover, the settings, and lamp-only mode](docs/screenshots/demo.gif)
 
-**The full TUI** at 120×36: the solid style, the blocks clock and a
-running pomodoro.
+It runs in the terminal window you already use, on macOS, Linux and
+Windows. It's one small program. You don't need special fonts.
 
-![lavatui at 120×36: the lamp in the solid style, the blocks clock and a running pomodoro](docs/screenshots/hero.png)
+**Contents:**
+[Pictures](#pictures) ·
+[Install](#install) ·
+[First run](#first-run) ·
+[Keys](#keys) ·
+[Settings](#settings) ·
+[Music](#music) ·
+[Privacy](#privacy) ·
+[Terminals](#terminals) ·
+[Questions](#questions-and-fixes) ·
+[Platforms](#platforms) ·
+[Contributing](#contributing) ·
+[License](#license)
 
-**Nine render styles.** These are all the same seed and the same moment,
-in minimal mode:
+## Pictures
 
-![the render styles side by side](docs/screenshots/styles.png)
+The lamp with the clock and a running focus timer:
 
-**Eight palettes:**
+![LavaTUI in a 120 by 36 window: the wax in the solid style, a big clock and a focus timer](docs/screenshots/hero.png)
 
-![the eight palettes side by side](docs/screenshots/palettes.png)
+**Nine styles.** Press `s` to switch. This is the same lamp at the same
+moment in each one:
 
-| **Minimal mode** (`m`): just the lamp | **Help** (`?`): the lamp keeps going behind it |
+![the nine styles side by side: solid, outline, ascii, braille, halftone, synthwave, matrix, topo and chrome](docs/screenshots/styles.png)
+
+**Eight colour themes.** Press `p` to switch:
+
+![the eight colour themes side by side: lava, ultraviolet, abyss, toxic, synthwave, mono, paper and ansi](docs/screenshots/palettes.png)
+
+| **Music beside the lamp**, with the cover and lyrics on it | **Everything on the lamp**: music, clock and lyrics |
 |---|---|
-| ![minimal mode, braille in ultraviolet](docs/screenshots/minimal.png) | ![help overlay](docs/screenshots/help.png) |
-| **Style picker** (`S`) with live preview | **16 colours** (`--color 16`) |
-| ![style picker over a synthwave lamp](docs/screenshots/picker.png) | ![ascii style in 16 colours](docs/screenshots/color16.png) |
+| ![the music card beside the lamp, with the album cover and the lyrics floating on the wax](docs/screenshots/music.png) | ![the music card, a big clock and the lyrics all floating on the wax](docs/screenshots/music-lava.png) |
+| **Clock and timer on the lamp** (`t`, `f`) | **Clock on the lamp, timer beside it** |
+| ![the clock and timer floating on the wax](docs/screenshots/overlay.png) | ![the clock on the wax in the braille style, the timer beside it](docs/screenshots/overlay-mix.png) |
+| **Settings** (`,`) | **Spotify setup** (inside the settings) |
+| ![the settings screen over the lamp](docs/screenshots/settings.png) | ![the Spotify setup page, with steps 1 to 4](docs/screenshots/spotify-setup.png) |
+| **Help** (`?`): every key | **Style picker** (`Shift+S`): try before you choose |
+| ![the help screen listing every key](docs/screenshots/help.png) | ![the style picker over the lamp](docs/screenshots/picker.png) |
+| **Lamp only** (`m`) | **The welcome card** on the first run |
+| ![just the lamp, with a small clock in the corner](docs/screenshots/minimal.png) | ![the welcome card with the five main keys](docs/screenshots/welcome.png) |
+| **A tall, thin window**: the clock moves below | **A tiny window**: lamp and a small clock |
+| ![a tall, thin window with the clock under the lamp](docs/screenshots/portrait.png) | ![a tiny window with just the lamp and the time](docs/screenshots/tiny.png) |
 
-| **On the lava** (`t`, `f`): clock and pomodoro over the wax | **Clock on the lava, pomodoro beside it** |
-|---|---|
-| ![clock and pomodoro on the lava, solid style](docs/screenshots/overlay.png) | ![clock on the lava in braille, pomodoro in the side panel](docs/screenshots/overlay-mix.png) |
+It also works in terminals with only 16 colours:
 
-| Portrait terminal (36×56): panel moves below | Tiny terminal (26×10): lamp + clock chip |
-|---|---|
-| ![tall narrow terminal in abyss](docs/screenshots/portrait.png) | ![tiny terminal](docs/screenshots/tiny.png) |
+![the ascii style in 16 colours](docs/screenshots/color16.png)
 
-## Features
-
-- **The wax is simulated.** Heat comes from the base. Warm wax gets
-  buoyant and rises, cools at the top and sinks back, and it merges, necks
-  and splits on the way. The wax area is conserved, and every run is
-  deterministic for a given `--seed`.
-- **9 render styles** that you can cycle with `s` or pick with `S`
-  (live preview): solid, outline, ascii, braille, halftone, synthwave,
-  matrix, topo, chrome.
-- **8 palettes**: lava, ultraviolet, abyss, toxic, synthwave, mono, paper
-  (light) and ansi (your terminal's own colours).
-- **Edge to edge.** The wax fills the window, with the clock and
-  pomodoro beside it (or below it in a tall, narrow terminal). A
-  wide, short terminal gets them side by side in a strip under the lamp,
-  a very large one two columns, a cramped portrait one rows across the
-  width: whichever keeps the widgets largest.
-- **Widgets go where you want them.** The clock (`t`), the pomodoro
-  (`f`), music (`a`), lyrics (`y`) and the album cover (`o`) each sit in
-  the side panel, on the lava, or off.
-  On the lava each has its own spot (centre, top, the corners, bottom):
-  `l` moves the one you last put there, `L` picks another. They float
-  right on the lamp with no background: the wax runs up to every stroke,
-  and each word turns dark over bright wax and light over the liquid, so
-  it stays readable over every style (`dock.backing = "soft"` brings
-  back a soft pool of liquid behind them). They spread out without
-  touching. What
-  matters most right now keeps its size longest (a running pomodoro,
-  then playing music, then the clock); when space runs out the rest
-  shrink, then fold into one row of chips in the corner
-  (`14:32 · ▸ 18:24 · ▶ Song – Artist`), never covering the lamp.
-- **Now playing** (`a`, off by default): the Spotify desktop app's track
-  with a small cover beside it, title, artist, album, a progress bar,
-  play state and volume, beside the lamp or on the lava. It shrinks from
-  that card down to `▶ title – artist`, and says calmly
-  what to do when Spotify isn't open or needs permission (with no room
-  for the widget, a small `♪ open Spotify` / `♪ see Shift+A` note in the
-  corner instead). `Shift+A` turns on the music controls: `space`
-  play/pause, `n`/`p` next/previous, `←`/`→` seek, `↑`/`↓` volume, `esc`
-  back (a quiet `music controls · Esc back` line says they're on). It never blocks a frame: the player is polled on
-  its own thread, only while the widget is shown, and covers are fetched
-  and cached (`$XDG_CACHE_HOME/lavatui/art`) in the background. On Linux
-  and Windows it shows any player (Spotify first); see
-  [Platform support](#platform-support).
-- **Your Spotify library** (optional): browse your playlists (`b`),
-  open the ones you own or share and play any track in them, add the
-  playing track to a playlist (`a`), and like or unlike it (`s`; a `♥` in
-  the widget). With Premium, shuffle and repeat (`x` / `r`) work too.
-  This needs a one-time setup (a free Spotify developer app of your own;
-  the app walks you through it: press `,`, then *music & lyrics* →
-  *spotify*), and **the account that makes that app needs Premium**. See
-  [Spotify library: before you start](#spotify-library-before-you-start).
-  Now playing, the music controls, the cover and lyrics need none of it.
-  All of it runs on a worker thread; the lamp never waits for Spotify.
-- **Album cover** (`o`, off by default): the playing track's cover as a
-  widget of its own, beside the lamp or on the lava (top right by
-  default), small / medium / large / as big as fits (`art.size`). In
-  **kitty and Ghostty it's the real picture** (the kitty graphics
-  protocol, sent once per track and size, then just cells that never
-  flicker), and in iTerm2, WezTerm, foot, mlterm and Konsole too (their
-  own picture formats: iTerm2 images or sixel); elsewhere it's drawn in
-  text cells: fine (2 × 3 pixels a cell, where the terminal draws those
-  glyphs), medium (2 × 2) or coarse (1 × 2). `Shift+O` cycles the cover
-  quality (auto → photo → fine → medium → coarse; auto picks the best your
-  terminal has, and the message says what it actually uses). Clicking it plays / pauses.
-  With the cover widget on, the music card leaves its own small cover
-  out (`art.inline = false` drops that one for good).
-- **Mouse**: the music widget has quiet buttons (`◂◂ ‖ ▸▸`, `♡ + ≡`) and a
-  progress bar you can click to seek; pickers and the playlist browser
-  click and scroll. Every button has a key.
-- **Lyrics** (`y`, off by default): the playing track's words from
-  [lrclib.net](https://lrclib.net), in time with the song: the current
-  line bold and bright, the ones around it dim, a gentle fade from line
-  to line, dots through the instrumental breaks. Five lines, three, or
-  one, on the lava (bottom centre) or beside it; plain lyrics scroll with
-  the song when there's no timing. Turning it on sends each track's title,
-  artist, album and length to lrclib.net.
-- **Clock faces**: blocks, segment, analog, binary, words and text. Each
-  face comes in several sizes, and the largest one that fits is used; on
-  a very large terminal the panel widens for the biggest ones.
-- **Pomodoro timer** (`space`) with focus and break phases, cycle dots,
-  a phase-change flash and an optional bell.
-- **It looks right at any size.** It works from 1×1 to a 4K full-screen
-  terminal. When space runs out, the panel collapses into a chip, and
-  nothing is ever truncated or overlapping.
-- **Colour fallbacks are automatic**: truecolor → 256 (perceptual,
-  hue-preserving match) → 16 → `NO_COLOR`. Every style still reads in 16
-  colours and in monochrome.
-- **Minimal mode** (`m` / `-m`) shows just the lamp, with a tiny clock
-  in the corner.
-- **It's light on resources.** About 2 % of a core at 80×24 and 5 %
-  at 200×60, at 60 fps. It drops to 10 fps when the terminal loses focus
-  and sleeps while frozen. See [Performance](#performance).
+The songs, cover and lyrics in these pictures are made up for the demo.
 
 ## Install
 
-You need Rust 1.88 or newer (`rustup update` if `cargo` says otherwise).
-There's no published crate yet, so build it from a checkout of this
-repository:
+### Download it (easiest)
+
+1. Go to the [Releases page](https://github.com/vespillo-tech/LavaTUI/releases)
+   and open the newest release.
+2. Download the file for your computer:
+
+   | Computer | File name ends in |
+   |---|---|
+   | Mac with Apple chip (M1 or newer) | `aarch64-apple-darwin.tar.gz` |
+   | Mac with Intel chip | `x86_64-apple-darwin.tar.gz` |
+   | Linux (64-bit PC) | `x86_64-unknown-linux-gnu.tar.gz` |
+   | Windows (64-bit) | `x86_64-pc-windows-msvc.zip` |
+
+3. Unpack it. Inside is the program, `lavatui` (or `lavatui.exe` on
+   Windows).
+4. Open a terminal in that folder and run `./lavatui` (on Windows:
+   `.\lavatui.exe`).
+
+To run it from anywhere, move the program to a folder on your `PATH`,
+like `/usr/local/bin` or `~/.local/bin`.
+
+On a Mac, the first try may say the program "can't be opened" or "is
+damaged". That's because it was downloaded from the web and isn't signed
+by Apple. To allow it, run this once in the same folder:
 
 ```sh
-cargo install --path .     # puts `lavatui` in ~/.cargo/bin
+xattr -d com.apple.quarantine ./lavatui
+```
+
+### With Rust's `cargo`
+
+If you have [Rust](https://rustup.rs) 1.88 or newer:
+
+```sh
+cargo install --git https://github.com/vespillo-tech/LavaTUI
 lavatui
 ```
 
-Or run it in place with `cargo run --release`. Use a release build: the
-simulation is too slow in debug.
+### From the source code
 
-**Terminal:** a truecolor terminal looks best (iTerm2, kitty, WezTerm,
-Alacritty, Ghostty, Windows Terminal, recent GNOME Terminal and others).
-The colour depth is detected from `NO_COLOR`, `COLORTERM` and `TERM`, and
-the app falls back on its own, or you can force a depth with `--color`.
-Any font with Unicode block elements and braille works, so no Nerd Font
-is needed. On macOS, Terminal.app has no truecolor and gets the 256-colour
-path.
-
-**Translucent terminals:** with `background-opacity < 1` and
-`background-opacity-cells = true`, Ghostty draws a cell's background
-see-through but its glyph opaque, so a half-block cell split across two
-colours shows its lower or upper half darker. The lamp is drawn for this:
-halves that look alike become one colour, and the liquid is always the
-(see-through) background. In such a Ghostty (`display.cells = "auto"`
-reads its config at start; apps that embed Ghostty's terminal, like
-Ghostex, don't count: they don't read that config) wax cells are never split at all, so wax and
-pool show no half-row streaks; it costs a little colour detail inside the
-wax, which is why opaque terminals don't get it. Set
-`display.cells = "translucent"` for another terminal that blends this
-way (or a Ghostty configured on the command line), `"opaque"` to turn
-it off. Album covers in text cells follow the same rule (one colour a
-cell when translucent); kitty graphics (pixels) are unaffected. See
-[Ghostty's opacity settings](https://ghostty.org/docs/config/reference#background-opacity-cells).
-
-**macOS Terminal:** Terminal.app draws block glyphs (`█ ▀ ▄`) a little
-short of the top of each cell, so wax drawn with them shows a dark line
-between every row. There (`display.cells = "auto"` checks
-`TERM_PROGRAM=Apple_Terminal`) wax is drawn as cell background wherever
-it can be, and half blocks are turned so the top half is the background;
-the lamp, covers and widgets look the same as anywhere else, without the
-lines. The Ghostex app's terminal gets the same (it draws block glyphs
-a hair short now and then: small dark ticks in moving wax). Set
-`display.cells = "background"` for another terminal that
-does this (or Terminal.app inside tmux). In the settings screen (`,`)
-it's *stripe fix*.
-
-## Usage
-
-```
-Usage: lavatui [OPTIONS]
-
-Options:
-  -m, --minimal         Just the lamp: no panels, status bar or hints
-      --fps <N>         Target render frames per second (the simulation rate is fixed separately)
-      --style <NAME>    Render style for this session (e.g. solid, outline, ascii, braille, chrome)
-      --palette <NAME>  Palette for this session (lava, ultraviolet, abyss, toxic, synthwave, mono, paper, ansi)
-      --color <DEPTH>   Colour depth, instead of detecting it from the environment [possible values: auto, truecolor, 256, 16, none]
-      --seed <U64>      Seed the wax simulation: the same seed always plays out the same lamp (default: a new seed every launch)
-      --config <PATH>   Read and write settings here instead of the XDG config dir
-  -h, --help            Print help
-  -V, --version         Print version
+```sh
+git clone https://github.com/vespillo-tech/LavaTUI
+cd LavaTUI
+cargo run --release
 ```
 
-Flags apply to the current session only and are never written back to
-the config file. A setting you change in the app is saved as usual. An
-unknown `--style` or `--palette` name exits with the list of valid ones.
+Use `--release`. Without it, the lamp runs much more slowly.
 
-### Keys
+## First run
 
-| Key | Action |
+Start it with `lavatui`. A small welcome card shows the five keys you
+need most. Press any key to put it away. Press `w` to bring it back.
+
+- `s` changes the look, and `p` changes the colours.
+- `Space` starts a 25-minute focus timer.
+- `?` shows every key.
+- `,` opens the settings.
+- `q` quits.
+
+Your choices are saved by themselves. Next time, the lamp looks the way
+you left it.
+
+You can also start it in a few ways (these don't change your saved
+settings):
+
+| Command | What it does |
 |---|---|
-| **Lamp** | |
-| `s` / `Shift+S` | next style / choose a style |
-| `p` / `Shift+P` | next colours / choose colours |
-| `[` / `]` | heat − / + (5 steps) |
-| `-` / `+` (`=`) | sim speed ×0.25 … ×4 |
-| `z` | freeze / unfreeze the lamp |
+| `lavatui -m` | just the lamp, nothing else |
+| `lavatui --style braille` | start with a style |
+| `lavatui --palette abyss` | start with a colour theme |
+| `lavatui --seed 7` | the same wax pattern every time |
+| `lavatui --fps 30` | draw 30 frames a second (less work for your computer) |
+| `lavatui --help` | list every option |
+
+## Keys
+
+A capital letter means hold Shift: `S` is Shift+S.
+
+**The lamp**
+
+| Key | What it does |
+|---|---|
+| `s` / `S` | next style / pick a style |
+| `p` / `P` | next colours / pick colours |
+| `[` / `]` | less heat / more heat |
+| `-` / `+` | slower / faster |
+| `z` | pause the wax |
 | `0` | reset heat and speed |
-| `Shift+R` | a new wax pattern |
-| **Clock & timer** | |
-| `c` / `Shift+C` | next clock face / choose a clock face (with a preview) |
-| `Shift+T` | 12h / 24h |
-| `space` | focus timer start / pause / resume |
-| `n` | skip to the next phase |
-| `r` `r` | reset the timer (press twice within 2 s) |
-| **Widgets** | |
-| `t` | clock: beside the lamp → on the lamp → off |
-| `f` | timer: beside the lamp → on the lamp → off |
-| `a` | music (now playing): beside the lamp → on the lamp → off |
-| `Shift+A` | music controls on (see below) |
-| `y` | lyrics: beside the lamp → on the lamp → off (sends the song's title, artist, album and length to lrclib.net) |
-| `o` | album cover: beside the lamp → on the lamp → off |
-| `Shift+O` | cover quality: auto → photo → fine → medium → coarse |
-| `l` | move the selected item on the lamp: centre, top, the corners, bottom |
-| `Shift+L` | select which item on the lamp `l` moves |
-| **App** | |
-| `m` | lamp only on/off |
-| `b` | status bar on/off |
-| `d` | performance info (fps, frame time, samples) |
-| `ctrl-l` | force a full redraw |
+| `R` | a new wax pattern |
+
+**Clock and timer**
+
+| Key | What it does |
+|---|---|
+| `c` / `C` | next clock face / pick a clock face |
+| `T` | 12-hour or 24-hour clock |
+| `Space` | start or pause the focus timer |
+| `n` | skip to the next part (focus or break) |
+| `r` `r` | reset the timer (press `r` twice) |
+
+**Where things go**
+
+Each of these keys moves one item along: beside the lamp, then on the
+lamp, then off.
+
+| Key | Item |
+|---|---|
+| `t` | clock |
+| `f` | focus timer |
+| `a` | music (what's playing) |
+| `y` | lyrics |
+| `o` | album cover (`O` changes the picture quality) |
+| `l` / `L` | move an item around on the lamp / pick which item `l` moves |
+
+**The app**
+
+| Key | What it does |
+|---|---|
+| `m` | lamp only, on or off |
 | `?` | help |
 | `,` | settings |
-| `w` | show the welcome tips again |
-| `q` / `ctrl-c` | quit |
+| `w` | the welcome card again |
+| `b` | status bar on or off |
+| `d` | performance info (frames per second) |
+| `Ctrl+L` | redraw the screen |
+| `q` or `Ctrl+C` | quit |
 
-Capital letters mean hold Shift. `esc` never quits: it closes overlays
-and the welcome card. When help or a picker is open, `q` closes it
-instead of quitting.
+**Music controls**
 
-On the first start a small welcome card shows the main keys; the first
-key you press puts it away (and does what it always does). In a very
-small window it waits, showing just `? help · q quit`, until there's room.
+Press `A` (Shift+A) to turn on the music controls. While they're on,
+these keys control your music instead. A line at the top of the lamp
+says they're on. Press `Esc` to go back.
 
-- **Music controls** (after `Shift+A`, until `esc`, `q` or `Shift+A`): `space` play /
-  pause, `n` / `p` next / previous, `←` / `→` (`h` / `l`) seek 10 s,
-  `↑` / `↓` (`k` / `j`, `+` / `-`) volume, `x` / `r` shuffle / repeat
-  where the player supports them (Spotify's AppleScript doesn't; logged
-  in with Premium they go through the Web API), `s` like / unlike, `a` add
-  to playlist, `b` playlists, `i` log in to Spotify (again, twice: log
-  out). They take the keyboard like an overlay, so they can reuse `space`,
-  `n` and `p`; the status bar shows them while they're on, and a quiet
-  `music controls · Esc back` line at the top of the lamp says so at any
-  size. If the player has a problem the music widget has no room to
-  show, the controls show it in a small card.
-- **In the playlist browser:** `j`/`k` move, `enter` (or `l`) opens a
-  playlist you own or share (others: plays it) or plays a track in it
-  (the rest of the playlist follows with Premium, and on macOS without;
-  see [Platform support](#platform-support) for Linux and Windows), `p`
-  plays the whole playlist, `g`/`G` and page up/down jump, `esc` (or `h`) goes
-  back, `q` closes. The add-to-playlist picker lists only playlists you
-  can add to; `enter` adds.
-- **Finding a playlist or song:** press `/` in the browser and type part
-  of its name (for songs, the artist works too). The list shrinks to what
-  matches as you type; `enter` picks, the arrow keys move, `backspace`
-  deletes, and `esc` clears it.
-- **In help:** `j`/`k` or `↑`/`↓` scroll. `?`, `esc` or `q` close it;
-  `,` opens the settings.
-- **In the settings:** `↑`/`↓` move, `←`/`→` change the value, `enter`
-  opens a page or presses a button, `tab` jumps to the next page, `esc`
-  goes back and `q` or `,` closes. Click a row to pick it, again to
-  change it. To paste the Spotify Client ID, press `enter` on its row (or
-  just paste), then `enter` to save.
-- **In pickers:** `j`/`k` or `↑`/`↓` move (with live preview), `1`–`9`
-  jump, `enter` or `space` save, and `esc` or `q` cancel (small pickers
-  say `Enter save · Esc cancel` themselves). Pressing the
-  opening key again keeps the choice and closes the picker. In the tiny
-  inline picker, `h`/`l` and `←`/`→` move too.
-- **Mouse** (on by default; *controls* in the settings turns it off): click the
-  music widget's buttons and progress bar, click the cover to play /
-  pause, click or drag on the lamp to
-  heat the wax there, scroll in help, and scroll or click in pickers and
-  the playlist browser (a click picks, a double-click keeps / opens). To
-  select text in the terminal while the mouse is on, hold **shift** while
-  dragging (**option** in macOS Terminal and iTerm2).
+| Key | What it does |
+|---|---|
+| `Space` | play or pause |
+| `n` / `p` | next song / previous song |
+| `←` / `→` | jump back or ahead 10 seconds |
+| `↑` / `↓` | volume up or down |
+| `x` / `r` | shuffle / repeat (where your player allows it) |
+| `s` | like or unlike the song (Spotify setup needed) |
+| `a` | add the song to a playlist (Spotify setup needed) |
+| `b` | browse your playlists (Spotify setup needed) |
+| `i` | log in to Spotify (press twice to log out) |
 
-This table matches the single `KEYMAP` table in `src/ui/keymap.rs`. That
-table also drives the in-app help, so the help can't drift from the
-actual bindings.
+**In lists and pickers**, use the arrow keys (or `j` and `k`) to move.
+`Enter` chooses. `Esc` goes back. In the playlist list, press `/` and
+type to find a playlist or song.
 
-## Platform support
+**The mouse** works too. Click the music buttons, or click the progress
+bar to jump in the song. Click or drag on the lamp to warm the wax. Scroll
+in help and lists. To select text with the mouse, hold `Shift` while you
+drag (in Terminal and iTerm2 on a Mac, hold `Option`). You can turn the
+mouse off in the settings.
 
-The lamp, clock, pomodoro and config work the same everywhere; config,
-cache and data go where each OS expects them (`directories`). Only now
-playing differs:
+## Settings
+
+Press `,` to open the settings. You'll find six pages: look, clock &
+timer, widgets, music & lyrics, controls, and window. Use the arrow
+keys: `↑` and `↓` pick a line, and `←` and `→` change it. You see each
+change on the lamp right away. Changes save by themselves. Each page has
+a "reset" line to undo your changes.
+
+Prefer a text file? The settings live in `config.toml`:
+
+| System | Folder |
+|---|---|
+| macOS | `~/Library/Application Support/lavatui/` |
+| Linux | `~/.config/lavatui/` |
+| Windows | `%APPDATA%\lavatui\config\` |
+
+The [settings file guide](docs/configuration.md) lists every setting.
+
+## Music
+
+LavaTUI can show what you're playing: the song, the artist, the album
+cover and a progress bar. Press `a` to turn it on. Press `y` for lyrics
+and `o` for a large album cover.
+
+### Works with no setup
+
+- **On a Mac:** the Spotify app. The first time, your Mac asks if your
+  terminal may control Spotify. Say OK. (If you said no, change it in
+  System Settings › Privacy & Security › Automation.)
+- **On Linux:** most music players, Spotify first.
+- **On Windows:** most apps that show up in the Windows media controls,
+  Spotify first.
+
+You can play, pause, skip, seek and change the volume. Some players
+ignore shuffle and repeat. LavaTUI notices, tells you, and stops
+offering them. You also get the
+album cover and lyrics, all with no account and no setup. LavaTUI never
+opens your music app for you. It only shows a player that is already
+running.
+
+The cover is a real picture in kitty, Ghostty, iTerm2, WezTerm, foot,
+mlterm and Konsole. In other terminals it's drawn with text blocks.
+
+### Optional: your Spotify library
+
+With a one-time setup you can also browse your playlists, play songs from
+them, like songs and add songs to playlists. Please check these rules
+from Spotify first:
+
+- **You make your own free Spotify developer app.** LavaTUI only needs
+  its Client ID. That's not a password or a secret. The setup takes about
+  two minutes.
+- **The person who makes the developer app needs Spotify Premium.** If
+  that Premium ends, the library stops working for everyone who uses
+  the app.
+- **At most 5 Spotify accounts can use one app, and that includes the
+  owner.** The owner adds each person by email in the app's settings,
+  under *User Management*.
+- **Shuffle, repeat and playing a whole playlist** also need Premium on
+  your own account, with Spotify playing on one of your devices. (On a
+  Mac, and with Spotify on Linux, shuffle and repeat only work this way.)
+- **On Windows,** LavaTUI asks Spotify which song your account is
+  playing. It uses the answer only when the title and artist match, and
+  the length or album too.
+
+To start, press `,` and choose *music & lyrics*, then *spotify*. The
+app walks you through each step. More detail is in
+[the Spotify guide](docs/spotify.md).
+
+## Privacy
+
+- **Lyrics** come from [lrclib.net](https://lrclib.net), a free and open
+  lyrics site. While lyrics are on, LavaTUI sends it the title, artist,
+  album and length of each song you play. It sends nothing while lyrics
+  are off (they start off). Answers are saved on your computer, so each
+  song is looked up only once.
+- **Album covers** are downloaded from your music player's image link
+  and saved on your computer.
+- **Spotify login:** your login is kept in your computer's password
+  store (Keychain on a Mac, Credential Manager on Windows, the Secret
+  Service on Linux). If there isn't one, it's kept in a file only you can
+  read. Logging out deletes it. LavaTUI talks only to Spotify for this.
+- Nothing else leaves your computer. There's no tracking.
+
+## Terminals
+
+LavaTUI works in any modern terminal. These look best, with full colour
+and real album covers:
+
+- [Ghostty](https://ghostty.org), [kitty](https://sw.kovidgoyal.net/kitty/),
+  [WezTerm](https://wezterm.org) and [iTerm2](https://iterm2.com)
+- Windows Terminal, GNOME Terminal, Konsole and Alacritty (full colour;
+  in some of them the cover is drawn with text)
+
+LavaTUI checks what your terminal can do and adjusts on its own. A few
+notes:
+
+- **Terminal on a Mac:** macOS 26 and newer show full colour. Older
+  versions show 256 colours, and LavaTUI switches by itself. Terminal
+  leaves a thin dark line between rows of block characters. LavaTUI
+  notices this and draws the lamp in a way that hides the lines.
+- **Inside tmux or screen** under the Mac Terminal, LavaTUI can't tell
+  it's Terminal. If you see thin lines in the wax, open the settings,
+  go to *look* and set *stripe fix* to *lines between rows*.
+- **See-through windows:** in Ghostty with a see-through background,
+  LavaTUI draws the wax so it doesn't show stripes. It reads your
+  Ghostty settings to know when.
+- **Ghostex** also gets the stripe fix on its own.
+
+## Questions and fixes
+
+**The colours look wrong or flat.**
+Your terminal may not say how many colours it has. Try
+`lavatui --color truecolor`. If that looks broken, try `--color 256`.
+The settings screen can save this choice (*look* › *colour range*).
+
+**There are thin lines between the rows of wax.**
+In the settings, on the *look* page, set *stripe fix* to *lines between
+rows*.
+
+**I can't select text with the mouse.**
+Hold `Shift` while you drag (`Option` in Terminal and iTerm2 on a Mac).
+Or turn the mouse off in the settings (*controls* page).
+
+**The music card says Spotify isn't open.**
+Start your music app and play a song. LavaTUI doesn't open it for you.
+On a Mac, also check System Settings › Privacy & Security ›
+Automation.
+
+**Space doesn't start the timer.**
+The music controls may be on (a line at the top says so). Press `Esc`
+to leave them.
+
+**No lyrics for a song.**
+lrclib.net doesn't have every song. Lyrics also need an internet
+connection the first time.
+
+**Spotify says it "refused this account".**
+Your account isn't on the developer app's list, or its owner has no
+Premium. See [the Spotify guide](docs/spotify.md).
+
+**It uses too much of my computer.**
+Try `--fps 30`, or a style like `braille`. LavaTUI already slows down
+when its window isn't in front, and it sleeps when the wax is paused.
+
+**How do I get my settings back to normal?**
+Each settings page has a reset line. Or delete `config.toml` (see
+[Settings](#settings)).
+
+## Platforms
 
 | | macOS | Linux | Windows |
 |---|---|---|---|
-| Builds (`cargo check --all-targets`) | ✓ (aarch64) | ✓ (x86_64-unknown-linux-gnu) | ✓ (x86_64-pc-windows-msvc) |
-| Tested on real hardware | ✓ | in Linux (Docker) with a stand-in player; not yet on a desktop | not yet |
-| Now playing via | AppleScript, one long-lived `osascript` | MPRIS on the D-Bus session bus (zbus) | System Media Transport Controls |
-| Players | the Spotify desktop app | any MPRIS player, Spotify first | any app in the media flyout, Spotify first |
-| Play/pause, next/previous, seek | ✓ | ✓ | ✓ |
-| Volume | ✓ | ✓ if the player has it | – (SMTC has no volume: no readout, the keys say so) |
-| Shuffle / repeat | – (no-ops in Spotify 1.2) | ✓ if the player honours them (Spotify: through your account) | ✓ if the app honours them |
-| Cover art | ✓ | ✓ (`https` art URLs, so Spotify) | ✓ (the session's thumbnail; untested on real Windows) |
-| Like / add the playing song (library setup) | ✓ | ✓ Spotify songs | ✓ Spotify songs, once your account's player reports the same song (a moment after it changes) |
-| Play from the playlist browser | ✓, the rest of the playlist follows | with Premium and Spotify playing: ✓; otherwise just that song | with Premium and Spotify playing: ✓; otherwise it says so |
-| Launches the player? | never | never | never |
-| Permission | macOS asks once (Automation) | none | none |
+| The lamp, clock and timer | ✓ | ✓ | ✓ |
+| Tested on a real computer | ✓ | in a test setup, with a stand-in music player | not yet |
+| Music | the Spotify app | most players | most players (untested) |
+| Album covers | ✓ | ✓ | ✓ (untested) |
+| Volume control | ✓ | most players | – |
+| Shuffle and repeat | with Spotify login and Premium | most players; Spotify with login and Premium | most players |
+| Spotify library | ✓ | ✓ | ✓ (untested) |
 
-Linux players vary: Spotify has long reported its position as 0 over
-MPRIS (the bar then counts on from where it was first seen, or from
-where you last skipped or paused in LavaTUI) and ignored
-shuffle and repeat. If a player ignores shuffle or repeat, the app
-notices, says so, and stops offering them; for Spotify, logging in to
-your account (with Premium) makes them work. Anything a player leaves
-out falls back quietly.
-Like and add work only for Spotify songs: local files, ads and other
-players have nothing for Spotify to save, and the app says so. Windows'
-media controls don't say which Spotify song is playing, so there the app
-asks Spotify's servers what your account is playing and uses it only when
-it is clearly the same song: the same title and artist, and the same
-length or album. They also can't be told what to play, so the
-playlist browser plays through Spotify's servers there, which needs
-Premium and Spotify open and playing on a device.
+Windows music support is new and hasn't been tried on a real Windows
+computer yet. If you try it, please
+[tell us how it went](https://github.com/vespillo-tech/LavaTUI/issues).
+The [technical notes](docs/architecture.md#platforms) have the details.
 
-## Configuration
+## Contributing
 
-You don't need to edit anything by hand: press `,` for the settings
-screen. Its pages (look, clock & timer, widgets, music & lyrics,
-controls, window) cover every everyday setting in plain words, show each
-change on the lamp as you make it, and save on their own. Each page can
-be put back to how it started.
-
-![The settings screen](docs/screenshots/settings.png)
-
-Settings are saved on their own, 1 s after a change and on quit, to:
-
-- `$XDG_CONFIG_HOME/lavatui/config.toml` if `XDG_CONFIG_HOME` is set to an
-  absolute path, else
-- `~/.config/lavatui/config.toml` on Linux, or
-- `~/Library/Application Support/lavatui/config.toml` on macOS,
-
-or to the file given with `--config`. Every key is optional. Here are the
-defaults:
-
-```toml
-[display]
-fps = 60                 # 1..=240
-color = "auto"           # auto | truecolor | 256 | 16 | none
-cell_aspect = 2.0        # cell height / width; used only when the terminal doesn't report pixels
-cells = "auto"           # auto | opaque | translucent | background: see-through cells, or blocks short of the cell (macOS Terminal)
-
-[lamp]
-style = "solid"          # see Render styles
-heat = 3                 # 1..=5
-speed = 1.0              # 0.25 | 0.5 | 1 | 2 | 4
-
-[theme]
-palette = "lava"         # see Palettes
-transparent = false      # true = never paint the background (keeps terminal transparency)
-
-[clock]
-face = "blocks"          # blocks | segment | analog | binary | words | text
-hour24 = true
-
-[pomodoro]
-focus_min = 25
-short_break_min = 5
-long_break_min = 15
-cycles = 4               # focus phases before a long break
-bell = true
-
-[ui]
-mode = "full"            # full | minimal (lamp only)
-status_bar = true
-welcome = true           # the welcome card at start; off once dismissed (w shows it)
-
-[minimal]
-clock = "corner"         # corner | off
-
-[input]
-mouse = true             # shift-drag (option-drag on macOS) still selects text
-
-[dock]
-clock = "side"           # side | overlay | off
-pomodoro = "side"        # side | overlay | off
-music = "off"            # side | overlay | off
-lyrics = "off"           # side | overlay | off (on = lookups on lrclib.net)
-cover = "off"            # side | overlay | off
-# each widget's spot on the lava:
-# center | top | top-right | bottom-right | bottom | bottom-left | top-left
-anchor = { clock = "center", pomodoro = "center", music = "top-left", lyrics = "bottom", cover = "top-right" }
-backing = "none"         # none (text floats on the lamp) | soft (a veiled pool behind)
-
-[art]
-detail = "auto"          # auto | pixels (photo) | sextant (fine) | quadrant (medium) | halfblock (coarse)
-size = "medium"          # small (16 cols) | medium (24) | large (34) | fill (up to 64)
-inline = true            # the music card's own small cover (while the cover widget is off)
-
-[spotify]
-client_id = ""           # for the Web API library features, see docs/spotify.md
-                         # ("" = off; LAVATUI_SPOTIFY_CLIENT_ID works too)
-```
-
-Music needs nothing set up: it talks to the Spotify desktop app. The
-first time, macOS asks whether your terminal may control Spotify; if you
-said no, the widget tells you where to change it (System Settings ›
-Privacy & Security › Automation).
-
-### Spotify library: before you start
-
-Now playing, the music controls, the cover and lyrics work without any
-of this. Your playlists, likes and "add to playlist" need a one-time
-setup, and Spotify only allows it for some accounts. Check these first
-(Spotify's rules, checked on 2026-10-01):
-
-- **You make your own free Spotify developer app** and give LavaTUI its
-  Client ID. No secret and no password: just the ID. The app walks you
-  through it in about two minutes: press `,`, then *music & lyrics* →
-  *spotify*.
-- **The Spotify account that makes the developer app needs Premium.** If
-  that Premium ends, the library stops working for everyone who uses the
-  app.
-- **At most 5 Spotify accounts can use the app, including its owner.**
-  The owner adds each one by email under *User Management* in the app's settings.
-  Sharing your Client ID with a friend only works once they're on that
-  list.
-- **Shuffle, repeat and playing playlists through Spotify** also need
-  Premium on your own account, and Spotify playing on one of your
-  devices.
-
-If something goes wrong:
-
-- **You can log in, but then see "Spotify refused this account".** The
-  account isn't on the app's list, or the app's owner has no Premium.
-  Fix that on the Spotify dashboard, then in *spotify* setup press
-  `enter` twice on *connect* to disconnect, and once more to connect.
-- **The login page says the redirect address is wrong.** The address in
-  step 2 must be exactly `http://127.0.0.1:8731/callback`.
-- **"Spotify login expired" or "log in to Spotify again".** A login
-  lasts six months, and one made before shuffle and repeat existed can't
-  use them. Log in afresh: `A`, then `i` (if you're still logged in,
-  `i` twice logs out first).
-
-Spotify's pages on this:
-[quota modes](https://developer.spotify.com/documentation/web-api/concepts/quota-modes),
-[the February 2026 changes](https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide),
-[the July 2026 changes](https://developer.spotify.com/documentation/web-api/references/changes/july-2026).
-More detail for developers: [docs/spotify.md](docs/spotify.md).
-
-Lyrics are **off until you place them** (`y`): with the widget on, the
-title, artist, album and length of each track you play are sent to
-[lrclib.net](https://lrclib.net), a free, open lyrics database, and the
-answers are kept in your cache dir (`$XDG_CACHE_HOME/lavatui/lyrics`).
-Nothing is sent while it's off.
-
-The file is meant to be edited by hand, even while the lamp runs. A bad
-value (or a style, palette or face that doesn't exist) is ignored, a value
-out of range is clamped (`config: lamp.heat 99 → 5`), and the rest of the
-file still applies; keys lavatui doesn't know are reported but kept. The
-toast names the first problem; if there are more, all of them are printed
-when you quit. A TOML syntax error is reported with its line and the lamp
-starts from the defaults.
-
-Settings from older versions load without a word: a single `dock.anchor =
-"top"` puts every widget there (saved per widget next time), `lamp.frame` and
-`lamp.lighting` are ignored (and dropped at the next save), `clock.show =
-false` becomes `dock.clock = "off"`, a removed
-style (`heatmap`, `dither`, `crt`) becomes `solid`, and `minimal.clock =
-"under"` means `corner`.
-
-Saving only writes the settings you changed in the app, into the file as
-it is at that moment, so your hand edits to anything else survive. Your
-comments, key order and unknown keys are kept, and saves write through
-symlinks, so a dotfile manager's link stays intact. If a save would
-overwrite something lavatui couldn't use (an ignored or clamped value, a
-broken file, bytes that aren't UTF-8), the file is first copied to
-`config.toml.bak`. A file that's mid-edit and not valid TOML is left alone
-until it is. A read-only config (or folder), or a path that isn't a
-regular file (`/dev/null`, a fifo), is never written; a toast says so once.
-
-## Render styles
-
-| Style | What it looks like |
-|---|---|
-| `solid` | Smooth wax in half blocks, coloured by temperature, with anti-aliased edges. The default. |
-| `outline` | Just the wax surface, as a thin braille contour coloured by temperature. |
-| `ascii` | A classic ` .:-=+*#%@` density ramp. It gets denser toward the core and with heat. |
-| `braille` | Filled wax at 2×4 dots per cell, with an engraving-like stipple that thins toward the skin. |
-| `halftone` | Newsprint: a 45° screen of round dots that swell toward the hot core. |
-| `synthwave` | A 1986 sunset: striped retro-sun blobs over a neon perspective grid. |
-| `matrix` | Digital rain that only shows where it crosses the wax. |
-| `topo` | A topographic map of the wax field, with contour lines and elevation tints. |
-| `chrome` | Glossy blown glass: domes with a body shade, a specular glint and a fresnel rim. (`glass` still works as an old name.) |
-
-## Palettes
-
-| Palette | Mood |
-|---|---|
-| `lava` | The 1970s original: red-orange wax in amber oil. The default. |
-| `ultraviolet` | A blacklight poster: violet to hot pink in deep indigo. |
-| `abyss` | Deep sea: teal wax glowing to seafoam in navy water. |
-| `toxic` | Radioactive slime: moss to acid yellow-green. |
-| `synthwave` | A 1986 sunset: hot pink → coral → gold, with a cyan accent. |
-| `mono` | Graphite grayscale. It suits halftone and braille. |
-| `paper` | The light theme: rust-red ink on cream, for light terminals. |
-| `ansi` | Uses your terminal's own 16-colour theme and default background. |
-
-## Performance
-
-Measured on an Apple M5 laptop under background load (load average
-3–5), so treat them as rough. The real runs are from before v1.1 (the
-release binary in a pty, truecolor, 60 fps, 15 s each, with the glass
-frame since removed); render times are `bench_lamp` on v1.1.
-
-| Measurement | Result |
-|---|---|
-| Launch → first frame → exit (`--frames 1`, 80×24) | ~30 ms (median 34, min 29). The sim starts pre-warmed. |
-| CPU at 80×24, solid or braille | ~2.3 % of one core |
-| CPU at 200×60, solid / braille | 4.6 % / 4.9 % |
-| Output at 80×24 / 200×60, solid | ~10 KB/s / ~55 KB/s |
-| Output in braille (80×24 / 200×60) | ~5 KB/s / ~21 KB/s |
-
-Braille changes few cells per frame, so it is the cheapest to send.
-
-With music on and Spotify playing, the cost is lost in the noise: 3.4 %
-of a core at 80×24 with the music panel vs 3.4 % with music off (60 s
-each, solid). Spotify is asked once a second through one `osascript`
-process that stays up, two Apple events per poll (~25 ms, ~0.4 % of a
-core); starting `osascript` for every poll used to cost 12.6 %.
-Lyrics read the same player (so on their own they cost about the same as
-music) and add nothing measurable on top of it; the lookup is one request
-per track, on its own thread, and cached.
-
-The cover widget costs nothing per frame either: at 120×36 the median
-draw is 0.24 ms with music alone and 0.24–0.25 ms with the cover in any
-detail (sextant, quadrant, half block, pixels), and bytes per frame are
-unchanged, since the cover's cells never change between frames (its text
-cells are worked out once per track and size). In pixels mode the
-picture (a ≤ 400 px PNG, ~370 KB as base64) is sent once per track and
-size, at most 96 KB a frame (a few frames), inside the frame's
-synchronized update; `tools/kitty_check.py` shows exactly what goes out
-(`tools/inline_check.py` does the same for iTerm2 images and sixel, which
-are sent whole, once, when the cover appears, moves or changes size). If
-your terminal can show pictures but isn't recognised, set
-`LAVATUI_GRAPHICS` to `kitty`, `iterm` or `sixel` (or `none`). Otherwise
-lavatui asks the terminal once at start whether it really can, and draws
-the cover in text until it says yes (inside tmux, screen, zellij or
-Ghostex it doesn't try).
-
-Here is the render time per frame at 200×60 in truecolor: the field
-sampling plus the style draw (`bench_lamp`: a full-area lamp, two sim
-steps per frame):
-
-| Style | Time | | Style | Time |
-|---|---|---|---|---|
-| solid | 0.23 ms | | synthwave | 0.50 ms |
-| outline | 0.33 ms | | matrix | 0.12 ms |
-| ascii | 0.14 ms | | topo | 0.70 ms |
-| braille | 0.39 ms | | chrome | 0.41 ms |
-| halftone | 0.14 ms | | | |
-
-Every style stays under 0.8 ms at 200×60, in truecolor and in 256
-colours (0.16–0.76 ms there, with the dither pass). The design target
-is 8 ms. At 80×24, every style takes 0.02–0.14 ms. If frames ever get
-slow, adaptive quality first lowers the sample grid and then halves the
-frame rate (never below 30 fps). It recovers on its own and never changes
-your settings.
-
-To reproduce:
-
-```sh
-cargo test --release -- --ignored --nocapture bench_lamp    # per style, bytes per frame
-cargo test --release -- --ignored --nocapture bench_fill    # field sampler + sim step
-```
-
-## Development
-
-```sh
-cargo test                                   # unit, render-snapshot and layout-sweep tests
-cargo fmt --check && cargo clippy --all-targets -- -D warnings
-UPDATE_SNAPSHOTS=1 cargo test                # rewrite snapshots (review the diff)
-cargo run --release -- --config /tmp/x.toml  # try settings without touching your config
-```
-
-- [`docs/design.md`](docs/design.md) is the layout and visual design
-  contract: breakpoints, hide order, palettes, keymap and performance
-  targets.
-- [`CLAUDE.md`](CLAUDE.md) has the architecture overview (sim, field,
-  render, theme, layout and app model) and step-by-step guides for
-  adding a render style, a clock face or a key.
-
-All the logic is pure and unit-tested: the simulation, layout, clock,
-pomodoro and the app model. Only `ui/` and `app/mod.rs` touch the
-terminal.
-
-The screenshots are generated from the release binary with a fixed seed
-and a scratch config. Rerun them after visible changes:
-
-```sh
-python3 docs/screenshots/capture.py          # the PNGs (needs pyte + pillow; see its docstring)
-vhs docs/screenshots/demo.tape               # the demo GIF (needs vhs), then crop + optimise:
-gifsicle -O3 --crop 6,0+984x580 -b docs/screenshots/demo.gif
-```
+Bug reports, ideas and code are all welcome. See
+[CONTRIBUTING.md](CONTRIBUTING.md). How the code fits together,
+performance numbers and design notes are in
+[docs/architecture.md](docs/architecture.md) and
+[docs/design.md](docs/design.md). What changed between versions is in
+the [CHANGELOG](CHANGELOG.md).
 
 ## License
 
-Licensed under either of
+LavaTUI is free and open source. You may use it under either the
+[MIT license](LICENSE-MIT) or the [Apache License 2.0](LICENSE-APACHE),
+whichever you prefer.
 
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
-- MIT License ([LICENSE-MIT](LICENSE-MIT))
-
-at your option.
-
-Unless you explicitly state otherwise, any contribution intentionally
-submitted for inclusion in the work by you, as defined in the Apache-2.0
-license, shall be dual licensed as above, without any additional terms or
-conditions.
+Unless you say otherwise, anything you contribute is licensed the same
+way, with no extra terms.

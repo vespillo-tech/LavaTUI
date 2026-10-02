@@ -272,7 +272,8 @@ impl Model {
             safe_glyphs: crate::cells::safe_glyphs(),
             kitty: Kitty::default(),
             inline: Inline::default(),
-            library: Library::new(settings.spotify_client_id()),
+            // The demo never touches a real account (or the keyring).
+            library: Library::new(settings.spotify_client_id().filter(|_| !session.demo)),
             lyrics: LyricsState::default(),
             lava_focus: None,
             welcome: settings.ui.welcome,
@@ -299,6 +300,13 @@ impl Model {
             copy: None,
             settings,
         };
+        if session.demo {
+            model.music.connect_with(
+                || Box::new(crate::demo::source(Instant::now())),
+                crate::media::art::ArtLoader::start,
+            );
+            model.lyrics.start_with(crate::demo::lyrics);
+        }
         model.warm_up(area, seed);
         if let Some(problem) = loaded.problem {
             model.toast(problem);

@@ -155,6 +155,7 @@ cargo run --release -- -m            # just the lamp, no chrome (--minimal)
 cargo run --release -- --fps 30      # target render fps (1..=240, default 60)
 cargo run --release -- --config /tmp/x.toml   # use a scratch config file
 cargo run --release -- --frames 300  # hidden: exit after N frames (smoke test / timing)
+cargo run --release -- --demo        # hidden: made-up player, cover and lyrics (screenshots)
 cargo test                           # unit tests (sim, render, layout sweep, keymap, model, config)
 cargo fmt --check                    # formatting gate
 cargo clippy --all-targets -- -D warnings   # lint gate
@@ -175,13 +176,20 @@ sized pty sessions and summarizes frame intervals/spike locations; see
 `tools/trace_frames.py --summarize /tmp/ghostty-frames.csv` prints native
 terminal interval percentiles and every >2-period gap with its measured stage.
 `docs/screenshots/capture.py` does exactly this (pyte + Pillow) and
-regenerates the README screenshots; rerun it after visible changes.
+regenerates the README screenshots; rerun it after visible changes, and
+look at every image. Music shots use `--demo`; never commit real album
+art or real song names. `docs/screenshots/demo.tape` (vhs + gifsicle)
+makes the README GIF; keep it under 5 MB (the tape says how).
 `tools/linux/run.sh [--amd64]` builds, lints and tests on real Linux in Docker,
 runs the MPRIS live tests against `tools/linux/fake_mpris.py` (also as Spotify)
 and drives lavatui in a pty with the music widget (`tools/linux/pty_check.py`;
 screens in `target/linux-check/`).
-`README.md` is the user-facing overview (features, keys, config, perf
-numbers); `docs/design.md` is the layout/visual contract.
+`README.md` is the public, plain-language guide (aim for a Flesch-Kincaid
+grade of 9 or lower; every key it lists must exist in `KEYMAP`);
+technical detail goes in `docs/architecture.md` (modules, platforms, perf
+numbers, screenshots) and `docs/configuration.md` (every setting);
+`CHANGELOG.md` is per version, in user-facing words; `docs/design.md` is
+the layout/visual contract.
 
 ## Architecture Overview
 
@@ -189,7 +197,14 @@ numbers); `docs/design.md` is the layout/visual contract.
                 hook that restores the terminal), run app, `ratatui::restore`.
 - `cli.rs`    — clap derive flags (`-m/--minimal`, `--fps`, `--style`,
                 `--palette`, `--color`, `--seed`, `--config`, hidden
-                `--frames`, `--panic-after`) → `config::Session` (session-only overrides).
+                `--frames`, `--trace`, `--panic-after`, `--demo`) →
+                `config::Session` (session-only overrides).
+- `demo.rs`   — `--demo`: invented songs (`FakeSource`), abstract covers
+                drawn as PNG and `art::stash`ed, invented synced lyrics
+                from a canned LRCLIB (`Canned`, no cache); `Model::new`
+                injects them (`Music::connect_with`,
+                `LyricsState::start_with`) and keeps the Spotify library
+                off. For screenshots and the README GIF.
 - `config/`   — `Settings`: the persisted TOML surface of design §9 (serde,
                 every field defaulted, `sanitized()` clamps). `Session` layers
                 CLI flags on top; `to_persist` puts the file's values back for
@@ -209,7 +224,9 @@ numbers); `docs/design.md` is the layout/visual contract.
                 `<widget name> = side|overlay|off` per registered widget
                 (a flattened map, so a new widget needs no config code).
 - `app/`      — `mod.rs` is the loop only: poll input until the frame
-                deadline → `Model::update(action)` (any input draws at once;
+                deadline → `Model::update(action)` (input draws at once, or when the
+                period since the last frame is up: never above the fps,
+                `timing::input_frame_at`;
                 queued events are drained first, as one burst that
                 `replies.rs` strips of terminal replies (DCS/OSC/APC, DA2
                 tails) crossterm reads as keys; the wait is recomputed from
@@ -381,7 +398,9 @@ numbers); `docs/design.md` is the layout/visual contract.
                 (any MPRIS player via zbus, Spotify first), Windows
                 `smtc.rs` (system media controls, Spotify first; no
                 volume/URIs; covers from the thumbnail stream via
-                `art::stash`); `capabilities()` says what each can do,
+                `art::stash`); `capabilities()` says what each can do (read after
+                every exchange: MPRIS's `ModesCheck` withdraws shuffle/repeat
+                from a player seen to ignore them),
                 `FakeSource` for tests, `art.rs`: `ArtLoader` (cover fetch
                 https-only on its thread, or `lavatui-thumb:` bytes a
                 backend stashed; disk cache in
