@@ -665,7 +665,7 @@ mod tests {
         assert_eq!(neighbour(SONG[4], 20, 2), ["Cooling at the top…"]);
     }
 
-    fn message(texts: &[&str]) -> Show {
+    fn message(texts: &[&str]) -> Show<'static> {
         Show::Message(texts.iter().map(|t| t.to_string()).collect())
     }
 
