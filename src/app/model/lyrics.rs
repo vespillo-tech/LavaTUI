@@ -51,8 +51,8 @@ pub struct LyricsState {
     /// When the current line last changed (not on a seek), and the line
     /// before it: the fade between the two.
     pub changed: Option<(Instant, Option<usize>)>,
-    /// The widest line, in columns (forms are sized by it, per song).
-    pub widest: u16,
+    /// What the widget's forms are sized by, per song.
+    pub sizing: dock::LyricsSizing,
 }
 
 impl Default for LyricsState {
@@ -66,7 +66,7 @@ impl Default for LyricsState {
             syncer: Syncer::default(),
             cursor: None,
             changed: None,
-            widest: 0,
+            sizing: dock::LyricsSizing::default(),
         }
     }
 }
@@ -85,7 +85,7 @@ impl LyricsState {
         self.found = None;
         self.cursor = None;
         self.changed = None;
-        self.widest = 0;
+        self.sizing = dock::LyricsSizing::default();
         self.syncer.reset();
     }
 
@@ -156,7 +156,7 @@ impl LyricsState {
         if let Some(response) = self.service.as_mut().and_then(LyricsService::poll) {
             self.found = Some(match response.answer {
                 Answer::Lyrics(lyrics) => {
-                    self.widest = widest(&lyrics);
+                    self.sizing = sizing(&lyrics);
                     Fetch::Lyrics(lyrics)
                 }
                 Answer::NotFound => Fetch::NotFound,
@@ -203,15 +203,13 @@ impl LyricsState {
     }
 }
 
-/// The widest line's display width.
-fn widest(lyrics: &Lyrics) -> u16 {
-    use unicode_width::UnicodeWidthStr;
-    let w = match lyrics {
-        Lyrics::Synced(s) => s.lines.iter().map(|l| l.text.width()).max(),
-        Lyrics::Plain(lines) => lines.iter().map(|l| l.width()).max(),
-        Lyrics::Instrumental => None,
-    };
-    w.unwrap_or(0).min(usize::from(u16::MAX)) as u16
+/// How the widget's forms are sized for `lyrics`.
+fn sizing(lyrics: &Lyrics) -> dock::LyricsSizing {
+    match lyrics {
+        Lyrics::Synced(s) => dock::LyricsSizing::of(s.lines.iter().map(|l| l.text.as_str())),
+        Lyrics::Plain(lines) => dock::LyricsSizing::of(lines.iter().map(String::as_str)),
+        Lyrics::Instrumental => dock::LyricsSizing::default(),
+    }
 }
 
 impl Model {

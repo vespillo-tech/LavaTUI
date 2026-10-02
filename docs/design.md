@@ -141,13 +141,17 @@ strip under a full-width lamp; 250 × 70 with music on goes to two
 columns (clock + pomodoro | music), a single column being taller than
 half the screen; a cramped portrait (70 × 40 with music) wraps the
 pomodoro and music into one row instead of shrinking music to its
-compact form. Cost: ~1 µs a frame by default, ≤ 60 µs with four widgets
-anywhere (`bench_layout`).
+compact form. Cost (`bench_layout`, release, a busy machine): ~1 µs a
+frame by default; with four widgets ~20 µs on average, up to ~170 µs in
+cramped sizes where little fits and every combination is tried (the
+lyrics' song-sized forms, lava-uqi, took four beside the lamp from ~45
+to ~140 µs there), under 1 % of a 60 fps frame.
 
 Below 200 cols the panel's inner width is at most 36 − 2 = 34. From 200
 cols up the panel grows only as far as the face it holds needs, up to
 56 (inner 54): blocks XL (51 × 8) shows at Huge, blocks L with seconds
-(54 × 5) when the terminal is ≥ 200 cols but under 56 rows. Narrower
+(54 × 5) when the terminal is ≥ 200 cols but under 56 rows. The
+lyrics' one-row form grows it the same way (§4.6 *Lyrics*). Narrower
 faces keep the 36-col panel. Face size is still tried largest first
 within the §1.3 hide order (the date line goes before a smaller face).
 
@@ -1278,33 +1282,69 @@ little behind the extrapolation (< 400 ms back over a line start) keeps
 the line instead of flicking back; a jump of more than 1.5 s from where
 the position should be is a seek, followed at once without a fade.
 
-Forms (W = the song's widest line, clamped to 20..=56, fixed per song so
-nothing jumps from line to line; on the lava the stack limits of 60 % of
-the lamp's width pick the narrower ones on small lamps):
+**Never cut off** (lava-uqi). The line being sung always shows
+whole, wherever the widget is and however squeezed the screen: lines
+wrap between words, never mid-word, and a form only exists if it holds
+the song's longest line. Before, the side forms were the panel's width ×
+5 / 3 / 1 rows whatever the song: in a crowded panel the 1-row form cut
+the current line with `…`, a 3-row one cut a line needing three rows
+(`coming down to try ag…`), neighbours were cut mid-word (`thought
+beh…`), and at 200+ cols the two-column panel gave lyrics a 20-col
+column of `…`s. The rules:
 
-| form | size | shows |
-|---|---|---|
-| five | W × 5 | two lines back, the current line, two ahead |
-| three | W × 3 | one back, the current line, one ahead |
-| narrower | 36 / 24 × 3 | the same |
-| line | W / 36 / 24 × 1 | the current line alone |
-| side | panel width × 5 / 3 / 1 | the same, filling the panel |
+1. **Forms are sized by the song**, once, when its lyrics arrive, so
+   nothing jumps from line to line. Each keeps **R** rows for the
+   current line: the most rows any of the song's lines wraps onto at
+   the form's width.
+2. **Neighbours** (the dim lines around it) show whole when they fit in
+   the rows left, else on one row cut after a word with `…` (a trailing
+   `,;:` goes too: `Floating like a thought…`). Only a single word wider
+   than the form is ever cut inside.
+3. **Beside the lamp** the forms fill the panel's width, each offered at
+   the narrowest width (≥ 20) that holds every line in one, two and
+   three rows, and at 20 in as many rows as that takes. A panel wider
+   than the form's width only spares rows, which the lines after the
+   current one use. From 200 cols up the panel grows for the one-row
+   width (up to 56, like the clock's widest faces), so on a big screen
+   every line fits on one row; in the two-column panel the lyrics'
+   column is at least its form's width.
+4. **Room is traded by rank, as for every widget** (§4.6 *Ranks*): the
+   lyrics (2 while playing) keep their size over the clock (1); against
+   music and the cover (also 2) registry order decides, so the cover
+   shrinks first, then lyrics (five → three → the line alone), then
+   music.
+5. **No cramped form:** when even the line alone doesn't fit, the
+   widget leaves for the chip row (`♪ current line`, cut after a word)
+   rather than showing a clipped line. It doesn't move itself onto the
+   lava: where things go stays the user's choice (`y`).
+
+Forms, most preferred first (W = the song's widest line, clamped to
+20..=56; on the lava the stack limits of 60 % of the lamp's width pick
+the narrower ones on small lamps):
+
+| form | on the lava | beside the lamp | shows |
+|---|---|---|---|
+| five | W × (4 + R) | fill × (4 + R) | two lines back, the current line, two ahead |
+| three | W, 36, 24 × (2 + R) | fill × (2 + R) | one back, the current line, one ahead |
+| line | W, 36, 24 × R | fill × R | the current line alone |
 
 ```
-        Cooling at the top it drifts        ← two back (dim)
-                 And falls                  ← one back (dim)
-     Every blob that ever broke away        ← current: bold `text`,
-   comes home again to the warm pool…          wrapped onto 2 rows if wide
-                                            ← (the next line made way)
+        Cooling at the top it drifts          ← two back (dim)
+                 And falls                    ← one back (dim)
+ Every blob that ever broke away comes home   ← current: bold `text`, whole,
+       again to the warm pool below              on the R (here 2) rows kept
+         Round and round it turns             ← one ahead (dim)
+                 Slow rise                    ← two ahead
 ```
+
+The current line starts on the row under the ones kept for the lines
+before it; when it takes fewer than R rows, the lines after it move up.
 
 **Look: no backing needed.** Role colours only, so it reads with or
 without the soft backing (none by default: the floating text's ink adapts
 to the wax, §4.6 "The backing"): the current
 line bold `text`, the others `dim`, lined up by the anchor (centred at
-the bottom). A line too wide for the form is cut with `…`, except the
-current one, which wraps onto the row below in the 3- and 5-row forms
-(the next line gives way). **Transitions**: a new line brightens from
+the bottom). **Transitions**: a new line brightens from
 `dim` to `text` over 320 ms while the line it replaced dims back (truecolor
 and 256 blend; 16 colours switch at the half-way point); the rows step,
 they don't scroll (a terminal can't move text by less than a row). A
@@ -1318,7 +1358,7 @@ playing`, `♪ …`). **Plain lyrics** (LRCLIB has no timing) scroll with the
 track's progress, the middle line `text`, the rest `dim`, never bold (it
 isn't a claim about what's being sung).
 
-**Chip:** `♪ current line` (≤ 32 cols) while playing synced lyrics, `♪`
+**Chip:** `♪ current line` (≤ 32 cols, cut after a word) while playing synced lyrics, `♪`
 in a gap; none otherwise. **Frozen lamp:** the idle loop also wakes at the
 next line's start (and during a fade).
 

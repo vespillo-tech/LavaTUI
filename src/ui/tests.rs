@@ -11,9 +11,18 @@ use super::layout::*;
 use crate::clock::{self, Face, Tier};
 use crate::dock::cover::{CoverSize, Show as CoverShow, cover_forms};
 use crate::dock::{
-    Anchor, LyricsShow, Place, Show, WidgetForm, clock_forms, clock_parts, lyrics_forms,
-    music_forms, pomodoro_forms,
+    Anchor, LyricsShow, LyricsSizing, Place, Show, WidgetForm, clock_forms, clock_parts,
+    lyrics_forms, music_forms, pomodoro_forms,
 };
+
+/// The lyrics the sweeps size the lyrics widget by: lines up to 44 wide.
+fn song() -> LyricsSizing {
+    LyricsSizing::of([
+        "Every blob that ever broke away comes home",
+        "Slow rise, slow rise",
+        "Cooling at the top it drifts and falls again",
+    ])
+}
 
 /// A dock setup to lay out: where the clock (index 0), the pomodoro (1),
 /// music (2), the lyrics widget (3, only when `lyrics`) and the cover (4,
@@ -125,9 +134,7 @@ impl Case {
             items.push(DockItem {
                 place: if self.lyrics { p[3] } else { Place::Off },
                 anchor: self.anchors[3],
-                forms: forms(p[3], &|p| {
-                    lyrics_forms(&LyricsShow::Lines { widest: 44 }, p)
-                }),
+                forms: forms(p[3], &|p| lyrics_forms(&LyricsShow::Lines(&song()), p)),
                 chip: self.music_track.then_some(20),
                 rank: if self.music_track { 2 } else { 0 },
             });

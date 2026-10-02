@@ -314,6 +314,11 @@ const LRC: &str = "[00:05.00]Wax rises slowly through the amber light\\n\
 /// The lyrics widget on a fake player `secs` into the song, its lines
 /// already fetched (from a mock LRCLIB), placed by `presses` of `y`.
 pub(super) fn lyrics(m: &mut Model, t: Instant, presses: usize, secs: u64) {
+    lyrics_lrc(m, t, presses, secs, LRC);
+}
+
+/// [`lyrics`] with the song's LRC given (lines `\\n` apart: it's JSON).
+fn lyrics_lrc(m: &mut Model, t: Instant, presses: usize, secs: u64, lrc: &str) {
     use crate::lyrics::LyricsService;
     use crate::lyrics::client::Lrclib;
     use crate::lyrics::client::tests::{Mock, ok};
@@ -340,7 +345,7 @@ pub(super) fn lyrics(m: &mut Model, t: Instant, presses: usize, secs: u64) {
         || ArtLoader::preloaded(COVER, Art::solid(Rgb(200, 120, 40))),
     );
     let body = format!(
-        r#"{{"trackName":"Slow Rise","artistName":"The Paraffins","duration":214.0,"instrumental":false,"syncedLyrics":"{LRC}"}}"#
+        r#"{{"trackName":"Slow Rise","artistName":"The Paraffins","duration":214.0,"instrumental":false,"syncedLyrics":"{lrc}"}}"#
     );
     m.lyrics.start_with(move || {
         let mock = Mock::new([ok(&body)]);
@@ -359,6 +364,114 @@ pub(super) fn lyrics(m: &mut Model, t: Instant, presses: usize, secs: u64) {
     }
     assert!(m.lyrics.cursor.is_some(), "lyrics never arrived");
     m.toast = None;
+}
+
+/// A song for [`lyrics_are_never_clipped`]: the demo's lines and a long
+/// one, a line every 5 s from 0:05 (a gap at the fifth).
+const SONG: &[&str] = &[
+    "Down at the bottom where the warm light grows",
+    "A little wax is waking, and it slowly goes",
+    "Up through the amber, taking its time",
+    "Nothing in a hurry, nothing on the line",
+    "",
+    "Slow rise, slow rise",
+    "Floating like a thought behind your eyes",
+    "Cooling at the top and coming down to try again",
+    "Every blob that ever broke away comes home again to the warm pool below",
+    "Round and round the evening turns",
+];
+
+/// lava-uqi: wherever the lyrics widget lands (beside the lamp with the
+/// clock, a running timer, music and the cover, or on the lava), at any
+/// size, the line being sung shows whole, and no line is cut inside a
+/// word; the chip, too, cuts only after a word.
+#[test]
+fn lyrics_are_never_clipped() {
+    let lrc: String = SONG
+        .iter()
+        .enumerate()
+        .map(|(i, l)| format!("[00:{:02}.00]{l}\\n", 5 + 5 * i))
+        .collect();
+    let lyrics_at = WIDGETS.iter().position(|w| w.name() == "lyrics").unwrap();
+    let normal = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    // A row cut with `…` is the start of a line, ending after a word.
+    let cut_cleanly = |row: &str| {
+        let Some(kept) = row.trim().strip_suffix('…') else {
+            return true;
+        };
+        let kept = kept.trim_start_matches(crate::glyphs::RICH.note);
+        SONG.iter().any(|line| {
+            let line = normal(line);
+            line.starts_with(kept)
+                && matches!(
+                    line[kept.len()..].chars().next(),
+                    Some(' ' | ',' | ';' | ':')
+                )
+        })
+    };
+    for presses in [1, 2] {
+        let (mut m, t0) = model(120, 36, 1);
+        m.update(Action::PomodoroToggle, t0);
+        if presses == 1 {
+            music(&mut m, t0, Status::Playing, 1);
+            m.update(Action::Place("cover"), t0);
+        }
+        lyrics_lrc(&mut m, t0, presses, 0, &lrc);
+        let mut checked = 0;
+        for (i, line) in SONG.iter().enumerate() {
+            let now = t0 + std::time::Duration::from_millis(5_500 + 5_000 * i as u64);
+            for cols in (40..=260).step_by(11) {
+                for rows in (14..=80).step_by(6) {
+                    let area = Rect::new(0, 0, cols, rows);
+                    m.tick(now, area, local());
+                    let ctx = format!("{cols}x{rows} line {i} presses {presses}");
+                    if let Some(chip) = WIDGETS[lyrics_at].chip(&m) {
+                        assert!(cut_cleanly(&chip.text), "{ctx}: chip {:?}", chip.text);
+                    }
+                    let Some(placed) = m.layout.placed(lyrics_at).copied() else {
+                        continue;
+                    };
+                    let align = m
+                        .layout
+                        .panel
+                        .iter()
+                        .chain(&m.layout.on_lava)
+                        .find(|s| s.items.iter().any(|p| p.widget == lyrics_at))
+                        .map(|s| s.align)
+                        .unwrap();
+                    let backdrop = if presses == 1 {
+                        Backdrop::Panel
+                    } else {
+                        Backdrop::Lava
+                    };
+                    let mut buf = Buffer::empty(area);
+                    WIDGETS[lyrics_at].draw(
+                        &m,
+                        placed.form,
+                        placed.rect,
+                        Look { backdrop, align },
+                        &mut buf,
+                    );
+                    let r = placed.rect;
+                    let shown: Vec<String> = (r.y..r.bottom())
+                        .map(|y| (r.x..r.right()).map(|x| buf[(x, y)].symbol()).collect())
+                        .collect();
+                    for row in &shown {
+                        assert!(cut_cleanly(row), "{ctx}: {row:?} in {shown:#?}");
+                    }
+                    if !line.is_empty() {
+                        let all = normal(&shown.join(" "));
+                        assert!(
+                            all.contains(&normal(line)),
+                            "{ctx}: {line:?} not whole in {shown:#?}"
+                        );
+                    }
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 1000, "only {checked} layouts had the lyrics");
+    }
 }
 
 const COVER: &str = "https://i.example/cover";
