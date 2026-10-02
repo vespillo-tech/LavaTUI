@@ -175,6 +175,10 @@ sized pty sessions and summarizes frame intervals/spike locations; see
 terminal interval percentiles and every >2-period gap with its measured stage.
 `docs/screenshots/capture.py` does exactly this (pyte + Pillow) and
 regenerates the README screenshots; rerun it after visible changes.
+`tools/linux/run.sh [--amd64]` builds, lints and tests on real Linux in Docker,
+runs the MPRIS live tests against `tools/linux/fake_mpris.py` (also as Spotify)
+and drives lavatui in a pty with the music widget (`tools/linux/pty_check.py`;
+screens in `target/linux-check/`).
 `README.md` is the user-facing overview (features, keys, config, perf
 numbers); `docs/design.md` is the layout/visual contract.
 
@@ -241,13 +245,25 @@ numbers); `docs/design.md` is the layout/visual contract.
                 and writes it on normal/error exit (not panic). Fps: 10 unfocused; frozen
                 frames sleep until the clock / pomodoro readout changes
                 (`idle_until`); `frame_drawn` feeds adaptive quality.
-- `cells.rs`  — `display.cells = "auto"`: whether the terminal shows cell
-                backgrounds see-through with opaque glyphs (Ghostty with
-                `background-opacity` < 1 + `background-opacity-cells`;
-                reads its config files and `config-file` includes once at
-                start; `Model::translucent_cells` → `LampOptions.translucent`;
+- `cells.rs`  — `display.cells = "auto"` → `Cells`: `Translucent` when the
+                terminal shows cell backgrounds see-through with opaque glyphs
+                (Ghostty with `background-opacity` < 1 +
+                `background-opacity-cells`; reads its config files and
+                `config-file` includes once at start;
+                `Model::translucent_cells` → `LampOptions.translucent`;
                 `Model::cell_opacity`: its `background-opacity`, which
-                floating text's contrast measures backgrounds through).
+                floating text's contrast measures backgrounds through),
+                `Background` when its block glyphs stop short of the cell's
+                top or side (macOS Terminal: `TERM_PROGRAM=Apple_Terminal`;
+                Ghostex / zmx, `cells::hosted`;
+                `ui::draw` ends with `render::fill_from_background`, which
+                turns blocks so their top edge is the cell background).
+                Also `safe_glyphs` (Ghostex / zmx hosts, `LAVATUI_GLYPHS=
+                safe|rich`).
+- `glyphs.rs` — every symbol beyond ASCII / Latin-1 / `▶ … ━ ─` / blocks
+                that widgets and chrome draw (`♪ ♥ ♡ ⇄ ↻ ◂◂ ▸▸ ‖ ≡`,
+                list pointer, pomodoro marks), as `RICH` and `SAFE`;
+                `Model::glyphs()` picks one. New symbols go here.
 - `timing.rs` — pure loop timing: `FixedStep` (accumulator, no per-frame
                 cap: sim time tracks real time × speed at any fps; only a
                 > 1.5 s `STALL` is cut short; `alpha()` for interpolation),

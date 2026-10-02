@@ -28,6 +28,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::{Anchor, Backdrop, ChipText, DockWidget, Look, Place, WidgetForm, align_x};
 use crate::app::{Account, Model};
+use crate::glyphs::Glyphs;
 use crate::media::{Snapshot, Status, Unavailable};
 use crate::theme::Role;
 use crate::ui::keymap::PlayerKey;
@@ -137,62 +138,9 @@ fn message_text(text: &str, g: &Glyphs) -> String {
     format!("{}{text}", g.note)
 }
 
-/// The glyphs the widget shows its state and controls with.
-#[derive(Debug, PartialEq, Eq)]
-pub struct Glyphs {
-    pub playing: &'static str,
-    pub paused: &'static str,
-    pub stopped: &'static str,
-    pub previous: &'static str,
-    pub next: &'static str,
-    /// Liked (in `accent`) and not (`dim`).
-    pub liked: &'static str,
-    pub unliked: &'static str,
-    pub add: &'static str,
-    pub playlists: &'static str,
-    pub shuffle: &'static str,
-    pub repeat: &'static str,
-    /// Before a message (with its space), or nothing.
-    pub note: &'static str,
-}
-
-/// The usual set.
-pub const RICH: Glyphs = Glyphs {
-    playing: "▶",
-    paused: "‖",
-    stopped: "■",
-    previous: "◂◂",
-    next: "▸▸",
-    liked: "♥",
-    unliked: "♡",
-    add: "+",
-    playlists: "≡",
-    shuffle: "⇄",
-    repeat: "↻",
-    note: "♪ ",
-};
-
-/// Where the terminal can't be trusted with more ([`Model::safe_glyphs`]:
-/// hosts embedding Ghostty's terminal drew no `◂◂ ‖ ▸▸ ≡` there, though
-/// `▶` and `…` were fine): ASCII and Latin-1, and `▶`.
-pub const SAFE: Glyphs = Glyphs {
-    playing: "▶",
-    paused: "||",
-    stopped: "#",
-    previous: "«",
-    next: "»",
-    liked: "<3",
-    unliked: "<3",
-    add: "+",
-    playlists: "=",
-    shuffle: "shuf",
-    repeat: "rep",
-    note: "",
-};
-
-/// The model's glyph set.
+/// The model's glyph set ([`crate::glyphs`]).
 pub fn glyphs(model: &Model) -> &'static Glyphs {
-    if model.safe_glyphs { &SAFE } else { &RICH }
+    model.glyphs()
 }
 
 /// `▶`, `‖` or `■`.
@@ -292,7 +240,7 @@ impl DockWidget for Music {
     fn chip(&self, model: &Model) -> Option<ChipText> {
         let snap = model.music.snapshot.as_ref()?;
         if let Status::Unavailable(reason) = &snap.status {
-            return problem_chip(reason, snap.player_name());
+            return problem_chip(reason, snap.player_name(), glyphs(model));
         }
         snap.track.as_ref()?;
         if !matches!(snap.status, Status::Playing | Status::Paused) {
@@ -307,12 +255,13 @@ impl DockWidget for Music {
 
 /// The chip for a player problem: the next step when it's short, else
 /// where to read it (the music controls' note).
-fn problem_chip(reason: &Unavailable, player: &str) -> Option<ChipText> {
+fn problem_chip(reason: &Unavailable, player: &str, g: &Glyphs) -> Option<ChipText> {
+    let note = g.note;
     let text = match reason {
         Unavailable::Unsupported => return None,
-        Unavailable::NotRunning if player.contains(' ') => "♪ open your player".into(),
-        Unavailable::NotRunning => format!("♪ open {player}"),
-        _ => "♪ see Shift+A".into(),
+        Unavailable::NotRunning if player.contains(' ') => format!("{note}open your player"),
+        Unavailable::NotRunning => format!("{note}open {player}"),
+        _ => format!("{note}see Shift+A"),
     };
     Some(ChipText {
         text: fit(&text, CHIP_MAX),
@@ -402,8 +351,9 @@ fn heart(model: &Model) -> Option<(String, Role)> {
 
 /// The card's controls row: `◂◂  ‖  ▸▸` left, `♡  +  ≡` (or `log in`)
 /// right, all quiet. Without the mouse only the heart shows, and only when
-/// the track is liked. Right-hand controls drop from the end, then the
-/// left ones go, rather than crowd.
+/// the track is liked (the row says how to reach the player keys instead:
+/// [`keys_hint`]). Right-hand controls drop from the end, then the left
+/// ones go, rather than crowd.
 fn card_controls(model: &Model, snap: &Snapshot, r: Rect) -> Vec<Control> {
     let mouse = model.settings.input.mouse;
     let g = glyphs(model);
@@ -482,8 +432,41 @@ fn card_controls(model: &Model, snap: &Snapshot, r: Rect) -> Vec<Control> {
         });
         x += w + sep;
     }
+    // The status line's `▶` / `‖` reads as a button, so it is one too
+    // (drawn by `status`, hence no text here).
+    if mouse {
+        out.push(Control {
+            rect: Rect::new(r.x, r.y + 5, width(glyph(snap, g)).min(r.width), 1),
+            button: Button::PlayPause,
+            text: String::new(),
+            ink: Role::Text,
+        });
+    }
     out
 }
+
+/// What the controls row says instead of the buttons when the mouse is
+/// off and the player keys aren't on (lava-1xk.32: an empty row read as
+/// broken buttons): how to reach them. `None` when the heart leaves it no
+/// room.
+fn keys_hint(model: &Model, r: Rect, controls: &[Control]) -> Option<&'static str> {
+    if model.settings.input.mouse || model.music.keys {
+        return None;
+    }
+    // Three columns clear of the heart, if there is one.
+    let right = controls
+        .iter()
+        .map(|c| c.rect.x.saturating_sub(3))
+        .min()
+        .unwrap_or(r.right());
+    [KEYS_HINT, KEYS_HINT_SHORT]
+        .into_iter()
+        .find(|hint| r.x + width(hint) <= right)
+}
+
+/// [`keys_hint`]'s words (the short one fits beside the heart).
+const KEYS_HINT: &str = "Shift+A music keys";
+const KEYS_HINT_SHORT: &str = "Shift+A keys";
 
 /// The compact form's controls: the play glyph and the heart (at the end
 /// of the title row).
@@ -602,12 +585,16 @@ impl Pen<'_, '_> {
         self.buf_line(r, 0, &track.name, text, align);
         self.buf_line(r, 1, &track.artist, dim, align);
         self.buf_line(r, 2, &track.album, dim, align);
-        for c in card_controls(self.model, self.snap, r) {
+        let controls = card_controls(self.model, self.snap, r);
+        for c in &controls {
             let mut style = theme.text(c.ink);
             if self.lava {
                 style = style.add_modifier(Modifier::BOLD);
             }
             self.buf.set_string(c.rect.x, c.rect.y, &c.text, style);
+        }
+        if let Some(hint) = keys_hint(self.model, r, &controls) {
+            self.buf.set_string(r.x, r.y + 3, hint, dim);
         }
         self.bar(Rect::new(r.x, r.y + 4, r.width, 1));
         self.status(Rect::new(r.x, r.y + 5, r.width, 1));
@@ -863,13 +850,16 @@ mod tests {
         let long = "Allow control of Spotify: System Settings › Privacy & Security \
                     › Automation › your terminal › Spotify";
         for (place, w) in [(Place::Side, 20), (Place::Overlay, 30)] {
-            let forms = music_forms(&Show::Message(message_text(long, &RICH)), place);
+            let forms = music_forms(
+                &Show::Message(message_text(long, &crate::glyphs::RICH)),
+                place,
+            );
             assert_eq!(forms.len(), 1);
             assert!(forms[0].size.width <= w, "{forms:?}");
             assert!(forms[0].size.height >= 3);
         }
         let short = music_forms(
-            &Show::Message(message_text("Spotify isn't running", &RICH)),
+            &Show::Message(message_text("Spotify isn't running", &crate::glyphs::RICH)),
             Place::Overlay,
         );
         assert_eq!(short[0].size, ratatui::layout::Size::new(23, 1));

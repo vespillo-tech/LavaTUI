@@ -19,6 +19,7 @@ use std::time::{Duration, Instant, SystemTime};
 use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
 
+use crate::cells::Cells;
 use crate::clock::{
     self, ClockTime, Face, PhaseEnd, Pomodoro, PomodoroConfig, Status, format_remaining,
 };
@@ -154,11 +155,15 @@ pub struct Model {
     /// The pixel protocol the environment promises, being checked with the
     /// terminal (the app writes its query once at start).
     pub probe: Option<Probe>,
+    /// How the terminal draws cells, as far as the environment and
+    /// Ghostty's config tell (read once at start, for `display.cells =
+    /// "auto"`).
+    pub detected_cells: Cells,
     /// The window's opacity when Ghostty's config makes cell backgrounds
-    /// see-through (read once at start, for `display.cells = "auto"`).
+    /// see-through (read with `detected_cells`).
     pub ghostty_opacity: Option<f32>,
     /// Draw only glyphs every terminal font has (read once at start;
-    /// `dock::music`'s controls).
+    /// [`Model::glyphs`]).
     pub safe_glyphs: bool,
     /// The cover as a real picture: what the terminal holds and what's on
     /// its way (bytes the loop writes after each frame).
@@ -231,6 +236,7 @@ impl Model {
         let mut world = World::new(seed, 1.0);
         world.set_heat(settings.lamp.heat);
         let (caps, unconfirmed) = Caps::detect();
+        let (detected_cells, ghostty_opacity) = crate::cells::detect();
         let mut model = Model {
             style: StyleId::by_name(&settings.lamp.style).unwrap_or_default(),
             theme: Theme::new(
@@ -261,7 +267,8 @@ impl Model {
             music: Music::default(),
             caps,
             probe: unconfirmed.map(|p| Probe::new(p, now)),
-            ghostty_opacity: crate::cells::detect(),
+            detected_cells,
+            ghostty_opacity,
             safe_glyphs: crate::cells::safe_glyphs(),
             kitty: Kitty::default(),
             inline: Inline::default(),
@@ -710,10 +717,29 @@ pub fn speed_toast(speed: SimSpeed) -> String {
 pub const ASSUMED_OPACITY: f32 = 0.75;
 
 impl Model {
-    /// Whether the lamp draws for see-through cell backgrounds
-    /// (`display.cells`; see `render::cell::half_block`).
+    /// The symbols widgets and chrome draw with ([`crate::glyphs`]).
+    pub fn glyphs(&self) -> &'static crate::glyphs::Glyphs {
+        if self.safe_glyphs {
+            &crate::glyphs::SAFE
+        } else {
+            &crate::glyphs::RICH
+        }
+    }
+
+    /// How cells are drawn (`display.cells`).
+    pub fn cells(&self) -> Cells {
+        match self.settings.display.cells {
+            CellsChoice::Auto => self.detected_cells,
+            CellsChoice::Opaque => Cells::Opaque,
+            CellsChoice::Translucent => Cells::Translucent,
+            CellsChoice::Background => Cells::Background,
+        }
+    }
+
+    /// Whether the lamp draws for see-through cell backgrounds (see
+    /// `render::cell::half_block`).
     pub fn translucent_cells(&self) -> bool {
-        self.cell_opacity().is_some()
+        self.cells() == Cells::Translucent
     }
 
     /// With see-through cell backgrounds, how opaque they are: Ghostty's
@@ -722,11 +748,8 @@ impl Model {
     /// What a background shows as is worked out over a dark desktop
     /// (`Theme::shown_luminance`), for floating text's contrast.
     pub fn cell_opacity(&self) -> Option<f32> {
-        match self.settings.display.cells {
-            CellsChoice::Auto => self.ghostty_opacity,
-            CellsChoice::Opaque => None,
-            CellsChoice::Translucent => Some(self.ghostty_opacity.unwrap_or(ASSUMED_OPACITY)),
-        }
+        self.translucent_cells()
+            .then(|| self.ghostty_opacity.unwrap_or(ASSUMED_OPACITY))
     }
 }
 

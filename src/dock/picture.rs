@@ -29,6 +29,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 use crate::media::art::Art;
+use crate::render::{quadrant, sextant};
 use crate::theme::{NEAR, Rgb, Theme};
 
 /// How a cover is drawn in text cells.
@@ -198,31 +199,6 @@ fn split(pixels: &[Rgb]) -> (u8, Rgb, Rgb) {
 fn distance(a: Rgb, b: Rgb) -> u32 {
     let d = |x: u8, y: u8| (i32::from(x) - i32::from(y)).pow(2) as u32;
     d(a.0, b.0) + d(a.1, b.1) + d(a.2, b.2)
-}
-
-/// The quadrant glyph whose ink is `mask` (1 top left, 2 top right, 4
-/// bottom left, 8 bottom right).
-fn quadrant(mask: u8) -> char {
-    const GLYPHS: [char; 16] = [
-        ' ', '▘', '▝', '▀', '▖', '▌', '▞', '▛', '▗', '▚', '▐', '▜', '▄', '▙', '▟', '█',
-    ];
-    GLYPHS[usize::from(mask & 15)]
-}
-
-/// The sextant glyph whose ink is `mask` (1, 2 the top row, 4, 8 the
-/// middle, 16, 32 the bottom; left then right). Unicode 13 has all but
-/// the empty, full and half ones, which Block Elements already had.
-fn sextant(mask: u8) -> char {
-    match mask & 63 {
-        0 => ' ',
-        21 => '▌',
-        42 => '▐',
-        63 => '█',
-        m => {
-            let skipped = u32::from(m > 21) + u32::from(m > 42);
-            char::from_u32(0x1FB00 + u32::from(m) - 1 - skipped).unwrap_or('█')
-        }
-    }
 }
 
 #[cfg(test)]

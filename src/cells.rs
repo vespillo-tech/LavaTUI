@@ -1,5 +1,13 @@
-//! Whether the terminal shows cell backgrounds see-through while glyphs
-//! stay opaque (`display.cells = "auto"`). Ghostty does with
+//! How the terminal draws cells, for `display.cells = "auto"` ([`Cells`]).
+//!
+//! macOS Terminal draws block glyphs (`█ ▀ ▄`) short of the cell's top, so
+//! wax drawn as glyphs shows a dark line along every row; it's told by
+//! `TERM_PROGRAM=Apple_Terminal` ([`short_blocks`]). Ghostex's renderer
+//! draws them a hair short of the cell's side now and then, dark ticks in
+//! moving wax ([`hosted`]): both get [`Cells::Background`].
+//!
+//! Ghostty may show cell backgrounds see-through while glyphs
+//! stay opaque. It does with
 //! `background-opacity` < 1 and `background-opacity-cells = true`: a
 //! half-block cell split across two wax colours then shows its background
 //! half darker, a seam (see `render::cell::half_block`). Nothing in the
@@ -16,18 +24,42 @@ use std::path::{Path, PathBuf};
 /// Includes followed at most (Ghostty's `config-file`), against cycles.
 const MAX_FILES: usize = 16;
 
-/// The window's opacity when cell backgrounds are see-through, from the
-/// environment and Ghostty's config files; never in tests.
-pub fn detect() -> Option<f32> {
+/// How cells are drawn so they look right in the terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cells {
+    /// Glyphs and backgrounds both opaque, blocks filling the cell.
+    Opaque,
+    /// See-through backgrounds, opaque glyphs: wax only ever as glyphs
+    /// (`render::cell::half_block`).
+    Translucent,
+    /// Block glyphs short of the cell: wax as background wherever it can
+    /// be (`render::fill_from_background`).
+    Background,
+}
+
+/// From the environment and Ghostty's config files; never in tests. With
+/// [`Cells::Translucent`], the window's opacity too.
+pub fn detect() -> (Cells, Option<f32>) {
     if cfg!(test) {
-        return None;
-    }
-    if hosted(std::env::vars_os().map(|(k, _)| k.to_string_lossy().into_owned())) {
-        return None;
+        return (Cells::Opaque, None);
     }
     let var = |k: &str| std::env::var(k).ok();
+    let names = std::env::vars_os().map(|(k, _)| k.to_string_lossy().into_owned());
+    if short_blocks(var) || hosted(names) {
+        return (Cells::Background, None);
+    }
     let home = directories::BaseDirs::new().map(|d| d.home_dir().to_path_buf());
-    opacity(var, home, |p| std::fs::read_to_string(p).ok())
+    match opacity(var, home, |p| std::fs::read_to_string(p).ok()) {
+        Some(o) => (Cells::Translucent, Some(o)),
+        None => (Cells::Opaque, None),
+    }
+}
+
+/// Whether the terminal (`var` reads one variable) draws block glyphs
+/// short of the cell's top: macOS Terminal, measured at its default font
+/// and spacing (the glyph fills the bottom 25 of 30 pixels).
+pub fn short_blocks(var: impl Fn(&str) -> Option<String>) -> bool {
+    var("TERM_PROGRAM").as_deref() == Some("Apple_Terminal")
 }
 
 /// Whether the environment (its variable `names`) says we run inside a
@@ -212,6 +244,14 @@ mod tests {
 
     fn home() -> Option<PathBuf> {
         Some(PathBuf::from("/h"))
+    }
+
+    #[test]
+    fn macos_terminal_has_short_blocks() {
+        assert!(short_blocks(env(&[("TERM_PROGRAM", "Apple_Terminal")])));
+        assert!(!short_blocks(env(GHOSTTY)));
+        assert!(!short_blocks(env(&[("TERM_PROGRAM", "iTerm.app")])));
+        assert!(!short_blocks(env(&[])));
     }
 
     #[test]

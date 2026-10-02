@@ -107,8 +107,19 @@ impl Page {
     }
 }
 
-const SPOTIFY_INTRO: &str = "Play, pause and skip work with the Spotify app on its own. \
-    Playlists and likes need a one-time setup, about two minutes: follow steps 1 to 4.";
+const SPOTIFY_INTRO: &str = "Play, pause, skip, covers and lyrics work with no setup. \
+    Playlists and likes need your own free Spotify developer app: steps 1 to 4, about two \
+    minutes.";
+
+/// Who can use the library (Spotify's development-mode rules, checked
+/// 2026-10-01: developer.spotify.com/documentation/web-api/concepts/quota-modes).
+pub(super) const ELIGIBILITY: &str = "The account that makes the Spotify app needs Premium. At most 5 \
+    accounts can use it, the owner included, each added under User Management.";
+
+/// What to do when Spotify refuses a logged-in account (lava-1xk.26).
+pub(super) const REFUSED: &str = "Spotify refused this account: the app's owner needs \
+    Premium, and others must be added under User Management. Then disconnect and connect \
+    again.";
 
 /// The open settings screen: which page, whether the keys move between
 /// pages or within one, and the cursor.
@@ -156,6 +167,7 @@ pub enum Item {
     Reset(Page),
     // The Spotify setup.
     SetupStatus,
+    Eligibility,
     Dashboard,
     CopyAddress,
     ClientId,
@@ -280,10 +292,11 @@ const COLOR_RANGES: [ColorChoice; 5] = [
     ColorChoice::Ansi16,
     ColorChoice::None,
 ];
-const STRIPE_FIXES: [CellsChoice; 3] = [
+const STRIPE_FIXES: [CellsChoice; 4] = [
     CellsChoice::Auto,
     CellsChoice::Opaque,
     CellsChoice::Translucent,
+    CellsChoice::Background,
 ];
 const COVER_SIZES: [CoverSize; 4] = [
     CoverSize::Small,
@@ -306,7 +319,8 @@ fn stripe_fix_name(c: CellsChoice) -> &'static str {
     match c {
         CellsChoice::Auto => "automatic",
         CellsChoice::Opaque => "off",
-        CellsChoice::Translucent => "on",
+        CellsChoice::Translucent => "see-through window",
+        CellsChoice::Background => "lines between rows",
     }
 }
 
@@ -397,7 +411,14 @@ impl Model {
             Page::Controls => out.push(Mouse),
             Page::Window => out.extend([LampOnly, HintLine, Smoothness, CornerClock]),
             Page::Spotify => {
-                out.extend([SetupStatus, Dashboard, CopyAddress, ClientId, Connect]);
+                out.extend([
+                    SetupStatus,
+                    Eligibility,
+                    Dashboard,
+                    CopyAddress,
+                    ClientId,
+                    Connect,
+                ]);
                 if self.library.account() == Account::LoggingIn {
                     out.push(CopyLoginLink);
                 }
@@ -467,10 +488,12 @@ impl Model {
                 "How many colours to use. Leave it on automatic unless colours look wrong.",
             ),
             Item::StripeFix => choice(
-                "see-through window fix",
+                "stripe fix",
                 stripe_fix_name(s.display.cells),
-                "Stops thin stripes in the wax when your terminal window is see-through \
-                 (Ghostty with background opacity). Automatic checks Ghostty's settings.",
+                "Stops thin stripes in the wax. See-through window: for a see-through \
+                 terminal window (Ghostty with background opacity). Lines between rows: for \
+                 dark lines between the rows of wax (macOS Terminal, Ghostex). Automatic picks for \
+                 your terminal.",
             ),
             Item::Face => choice(
                 "clock face",
@@ -620,7 +643,17 @@ impl Model {
             Item::SetupStatus => row(
                 "status",
                 self.spotify_status().into(),
-                SPOTIFY_INTRO,
+                if self.library.refused.is_some() {
+                    REFUSED
+                } else {
+                    SPOTIFY_INTRO
+                },
+                Kind::Info,
+            ),
+            Item::Eligibility => row(
+                "before you start",
+                "Premium needed".into(),
+                ELIGIBILITY,
                 Kind::Info,
             ),
             Item::Dashboard => row(
@@ -720,6 +753,14 @@ impl Model {
                 "waiting for browser",
                 "Allow access in your browser, then come back. Press enter to cancel.".into(),
             ),
+            Account::LoggedIn if lib.refused.is_some() => (
+                if self.armed(Item::Connect) {
+                    "press enter again"
+                } else {
+                    "refused"
+                },
+                REFUSED.into(),
+            ),
             Account::LoggedIn => {
                 let name = lib
                     .me
@@ -788,6 +829,9 @@ impl Model {
 
     /// One or two words for where the Spotify setup stands.
     fn spotify_status(&self) -> &'static str {
+        if self.library.refused.is_some() {
+            return "refused";
+        }
         if self.settings.spotify_client_id().is_none() {
             return "not set up";
         }
@@ -1282,11 +1326,9 @@ impl Model {
             Page::Widgets => s.dock = d.dock,
             Page::Music => {
                 s.art = d.art;
-                for w in ["lyrics"] {
-                    if let Some((_, widget)) = dock::by_name(w) {
-                        s.dock.set(widget, d.dock.place(widget));
-                        s.dock.set_anchor(widget, d.dock.anchor(widget));
-                    }
+                if let Some((_, widget)) = dock::by_name("lyrics") {
+                    s.dock.set(widget, d.dock.place(widget));
+                    s.dock.set_anchor(widget, d.dock.anchor(widget));
                 }
             }
             Page::Controls => s.input = d.input,

@@ -463,6 +463,19 @@ Ghostex, which ignore its config) two wax halves never split: they become their 
 colour detail *inside* the wax (never the silhouette) for no seams; the
 256-colour dither then works a cell at a time.
 
+**Block glyphs short of the cell.** macOS Terminal draws `█ ▀ ▄` from
+the font into the bottom ~5/6 of the cell; the top sixth is always the
+cell background, so wax drawn as glyphs on the dark liquid shows a dark
+line along every row. With `display.cells = "background"` (or `"auto"`
+with `TERM_PROGRAM=Apple_Terminal`, or in Ghostex, whose renderer leaves
+the odd block glyph a hair short of the cell's side: dark ticks in moving
+wax) the finished frame goes through
+`render::fill_from_background`: every block glyph whose top row is
+mostly ink (on a tie, whose cell is) becomes its complement in swapped
+colours (`█` → a space on its colour, `▀` → `▄`, `▛` → `▗`, sextants
+alike, `▓` → `░`). It looks the same on any opaque terminal; only cells
+in the terminal's own colours (`Reset`) can't swap.
+
 The sim lives in **world units**, independent of the terminal:
 
 * World height is always `1.0`. World width is `A_region` (the visual
@@ -1281,7 +1294,7 @@ Every everyday setting, in plain words, so nobody needs `config.toml`
 keys do; `ui/settings.rs` places and draws it.
 
 * **Pages:** *look* (style, colours, heat, speed, background, colour
-  range, see-through window fix), *clock & timer* (face, time format,
+  range, stripe fix), *clock & timer* (face, time format,
   focus / break lengths, long break after, sound at the end), *widgets*
   (each widget beside the lamp / on the lamp / off, its position while on
   the lamp, what things on the lamp sit on), *music & lyrics* (Spotify,
@@ -1315,8 +1328,11 @@ keys do; `ui/settings.rs` places and draws it.
   `⏎`; the wheel moves. Status bar hints: `↑↓ move  ⏎ open  esc close`,
   in a page `↑↓ move  ←→ change  ⏎ choose  esc back`.
 * **Spotify setup** (*music & lyrics* → *spotify*, and what a library
-  key opens while there's no Client ID): `status`, then four numbered
-  steps: `1 make a spotify app` opens developer.spotify.com/dashboard in
+  key opens while there's no Client ID, or while Spotify refuses the
+  logged-in account): `status` (`refused`, with what to fix, when
+  Spotify refused the account), `before you start` (`Premium needed`:
+  the app owner's Premium and the 5-person allowlist, read before step
+  1), then four numbered steps: `1 make a spotify app` opens developer.spotify.com/dashboard in
   the browser (off the input path), `2 add this address` copies the
   redirect URI with OSC 52 (the explanation shows it too, to type),
   `3 paste the client id` is a text field (`⏎` to type, or just paste:

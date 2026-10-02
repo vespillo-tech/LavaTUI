@@ -19,6 +19,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Rect, Size};
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::Widget;
+use unicode_width::UnicodeWidthStr;
 
 use super::draw::Pen;
 use super::pomodoro::{Pomodoro, Status, format_remaining};
@@ -52,6 +53,8 @@ pub struct PomodoroWidget<'a> {
     pomodoro: &'a Pomodoro,
     now: Instant,
     style: PomodoroStyle,
+    /// The one-row form's mark while running and while paused.
+    marks: (&'a str, &'a str),
 }
 
 impl<'a> PomodoroWidget<'a> {
@@ -60,7 +63,15 @@ impl<'a> PomodoroWidget<'a> {
             pomodoro,
             now,
             style: PomodoroStyle::default(),
+            marks: ("▸", "‖"),
         }
+    }
+
+    /// The marks for running and paused (a terminal that can't draw `▸`
+    /// and `‖` gets ASCII ones).
+    pub fn marks(mut self, running: &'a str, paused: &'a str) -> Self {
+        self.marks = (running, paused);
+        self
     }
 
     pub fn style(mut self, style: PomodoroStyle) -> Self {
@@ -123,14 +134,14 @@ impl Widget for &PomodoroWidget<'_> {
 
         if h == 1 {
             let glyph = match p.status() {
-                Status::Running => Some('▸'),
-                Status::Paused => Some('‖'),
+                Status::Running => Some(self.marks.0),
+                Status::Paused => Some(self.marks.1),
                 Status::Idle => None,
             };
-            match glyph {
-                Some(g) if w >= time_w + 2 => {
-                    pen.put(0, 0, g, self.live());
-                    pen.text(2, 0, &time, self.live());
+            match glyph.map(|g| (g, g.width())) {
+                Some((g, gw)) if gw > 0 && w > time_w + gw => {
+                    pen.text(0, 0, g, self.live());
+                    pen.text(gw + 1, 0, &time, self.live());
                 }
                 _ => pen.text(0, 0, &time, self.live()),
             }

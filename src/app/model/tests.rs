@@ -693,6 +693,7 @@ mod music {
     fn fake(now: Instant) -> FakeSource {
         let track = Track {
             id: "fake:1".into(),
+            uri: None,
             name: "Slow Rise".into(),
             artist: "The Paraffins".into(),
             album: "Heat Rises".into(),
@@ -1226,8 +1227,11 @@ mod music {
             tick(&mut m, t0);
             tick(&mut m, t0);
             let backend = ratatui::backend::CrosstermBackend::new(Vec::<u8>::new());
-            let mut terminal = ratatui::Terminal::new(backend).unwrap();
-            terminal.resize(m.layout.area).unwrap();
+            // Fixed: a fullscreen terminal would ask the real one its size.
+            let options = ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Fixed(m.layout.area),
+            };
+            let mut terminal = ratatui::Terminal::with_options(backend, options).unwrap();
             let mut lamp = crate::render::LampState::default();
             terminal
                 .draw(|f| crate::ui::draw(f, &m, &mut lamp))
@@ -1524,6 +1528,7 @@ mod lyrics {
     fn track(id: &str, name: &str) -> Track {
         Track {
             id: id.into(),
+            uri: crate::media::spotify_track_uri(id),
             name: name.into(),
             artist: "The Paraffins".into(),
             album: "Heat Rises".into(),

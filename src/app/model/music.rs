@@ -112,11 +112,11 @@ impl Music {
         Capabilities {
             shuffle: own.shuffle || web.shuffle,
             repeat: own.repeat || web.repeat,
-            volume: own.volume,
+            ..own
         }
     }
 
-    fn source_capabilities(&self) -> Capabilities {
+    pub(super) fn source_capabilities(&self) -> Capabilities {
         self.source
             .as_ref()
             .map_or(Capabilities::NONE, |s| s.capabilities())
@@ -144,6 +144,10 @@ impl Music {
             return Err(snap
                 .unavailable_message()
                 .unwrap_or_else(|| "connecting…".into()));
+        }
+        // Never queued (nor shown as playing) where it would do nothing.
+        if !self.source_capabilities().uris {
+            return Err(format!("{} can't be told what to play", snap.player_name()));
         }
         self.send(command.ok_or("can't play that")?, now);
         Ok(())
@@ -405,7 +409,7 @@ impl Model {
                 self.web_mode(false);
                 return;
             }
-            PlayerKey::Shuffle | PlayerKey::Repeat if self.library.modes().is_some() => {
+            PlayerKey::Shuffle | PlayerKey::Repeat if self.web_modes().is_some() => {
                 self.toast("Spotify won't change that for what's playing");
                 return;
             }

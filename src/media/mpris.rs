@@ -13,8 +13,9 @@
 //! missing or the wrong type just falls back to a neutral value, and a
 //! command the player refuses is ignored.
 //!
-//! Untested against a real Linux desktop: it is built and its parsing is
-//! unit tested, nothing more.
+//! Tested on Linux against `tools/linux/fake_mpris.py` (a player with
+//! Spotify's quirks too) on a private session bus: the `live` tests,
+//! `tools/linux/run.sh`. Not yet against real players on a desktop.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -157,8 +158,15 @@ pub fn track(metadata: &HashMap<String, Meta>) -> Option<Track> {
         _ if !name.is_empty() => format!("{name}\u{1f}{artist}\u{1f}{album}"),
         _ => return None,
     };
+    // Spotify names its track in `xesam:url` (older versions only in the
+    // trackid); a local file, an ad or another player names none.
+    let uri = ["xesam:url", "mpris:trackid"]
+        .iter()
+        .filter_map(|key| metadata.get(*key).and_then(Meta::text))
+        .find_map(super::spotify_track_uri);
     Some(Track {
         id,
+        uri,
         name,
         artist,
         album,
@@ -172,13 +180,19 @@ pub fn track(metadata: &HashMap<String, Meta>) -> Option<Track> {
 
 /// Players that always report `Position` 0 (Spotify, for years) would
 /// send the progress bar back to the start every poll: while the same
-/// track carries on playing, a 0 means "unknown" and the last read's
-/// position, moved on to now, stands. (A real restart of the same track
-/// shows at the next seek or track change.)
+/// track stays loaded, playing or paused, a 0 means "unknown" and the last
+/// read's position, moved on to now, stands. `last` has our own commands
+/// applied ([`Snapshot::apply`]), so a seek, pause or restart (`Previous`)
+/// sent from here moves it too; one made in the player itself shows at
+/// the next track change.
 pub fn keep_position(fresh: &mut Snapshot, last: Option<&Snapshot>) {
+    let loaded = |snap: &Snapshot| matches!(snap.status, Status::Playing | Status::Paused);
     if let Some(last) = last
         && fresh.position.is_zero()
-        && fresh.continues(last)
+        && loaded(fresh)
+        && loaded(last)
+        && fresh.track.is_some()
+        && fresh.track.as_ref().map(|t| &t.id) == last.track.as_ref().map(|t| &t.id)
     {
         fresh.position = last.position_at(fresh.sampled_at);
     }
@@ -324,12 +338,14 @@ mod bus {
                 self.last = None;
             }
             for command in commands {
+                let now = Instant::now();
                 // A command the player refuses doesn't spoil the read.
-                let _ = call(
-                    &conn,
-                    &bus,
-                    &plan(command, self.last.as_ref(), Instant::now()),
-                );
+                if call(&conn, &bus, &plan(command, self.last.as_ref(), now)).is_ok()
+                    && let Some(last) = &mut self.last
+                {
+                    // What it did, for `keep_position` to carry on from.
+                    last.apply(command, now);
+                }
             }
             let props: HashMap<String, OwnedValue> = conn
                 .call_method(
@@ -365,9 +381,13 @@ mod bus {
             snap
         }
 
-        /// MPRIS has all of them; whether a player honours them varies.
+        /// MPRIS has all of them (whether a player honours them varies)
+        /// but no contexts: a track in its playlist plays alone.
         fn capabilities(&self) -> Capabilities {
-            Capabilities::ALL
+            Capabilities {
+                contexts: false,
+                ..Capabilities::ALL
+            }
         }
     }
 
@@ -464,6 +484,246 @@ mod bus {
     }
 }
 
+/// The backend against `tools/linux/fake_mpris.py` on a real session bus:
+/// `tools/linux/run.sh mpris` (Docker), or on a Linux desktop
+/// `dbus-run-session -- cargo test mpris::live -- --ignored --test-threads=1`
+/// (needs python3-dbus-next; a private bus keeps real players out of it).
+#[cfg(all(test, target_os = "linux"))]
+mod live {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Child, Command as Process, Stdio};
+    use std::thread;
+
+    use super::*;
+    use crate::media::worker::testing::{fast, wait_for};
+    use crate::media::worker::{Backend, Polled};
+    use crate::media::{MediaSource, Unavailable};
+
+    const S: Duration = Duration::from_secs(1);
+    const MS: Duration = Duration::from_millis(1);
+    const FAKE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tools/linux/fake_mpris.py");
+
+    /// A running fake player; killed (and so off the bus) on drop.
+    struct Fake(Child);
+
+    impl Fake {
+        fn start(args: &[&str]) -> Self {
+            let mut child = Process::new("python3")
+                .arg(FAKE)
+                .args(args)
+                .stdout(Stdio::piped())
+                .spawn()
+                .expect("python3 tools/linux/fake_mpris.py");
+            let mut stdout = BufReader::new(child.stdout.take().unwrap());
+            let mut line = String::new();
+            stdout.read_line(&mut line).unwrap();
+            assert!(line.starts_with("ready "), "fake player said {line:?}");
+            // Keep draining its call log so it never blocks on a full pipe.
+            thread::spawn(move || for _ in stdout.lines() {});
+            Self(child)
+        }
+    }
+
+    impl Drop for Fake {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    fn not_running(snap: &Snapshot) -> bool {
+        snap.status == Status::Unavailable(Unavailable::NotRunning)
+    }
+
+    fn title(snap: &Snapshot) -> &str {
+        snap.track.as_ref().map_or("", |t| t.name.as_str())
+    }
+
+    /// Off the bus: the name is released when the process's connection
+    /// closes, a moment after the kill.
+    fn gone(mpris: &mut Mpris) -> Snapshot {
+        for _ in 0..200 {
+            let snap = mpris.exchange(&[]);
+            if not_running(&snap) {
+                return snap;
+            }
+            thread::sleep(MS * 10);
+        }
+        panic!("player still on the bus");
+    }
+
+    #[test]
+    #[ignore = "needs a D-Bus session bus and python3-dbus-next (tools/linux/run.sh mpris)"]
+    fn every_field_and_command_round_trips() {
+        let mut mpris = Mpris::new();
+        assert!(not_running(&mpris.exchange(&[])), "no player yet");
+
+        let fake = Fake::start(&[]);
+        let snap = mpris.exchange(&[]);
+        assert_eq!(snap.player.as_deref(), Some("Fake Player"));
+        assert_eq!(snap.status, Status::Playing);
+        let track = snap.track.as_deref().unwrap();
+        assert_eq!(track.id, "/org/lavatui/fake/track/t0");
+        assert_eq!(track.name, "Slow Bloom");
+        assert_eq!(track.artist, "The Wax Hearts");
+        assert_eq!(track.album, "Lamp Light");
+        assert_eq!(track.duration, S * 241);
+        assert_eq!(track.artwork_url, "file:///nonexistent/lavatui-fake-t0.png");
+        assert!(
+            (S * 12..S * 15).contains(&snap.position),
+            "{:?}",
+            snap.position
+        );
+        assert_eq!(snap.volume, 50);
+        assert!(!snap.shuffle && !snap.repeat);
+
+        let snap = mpris.exchange(&[Command::PlayPause]);
+        assert_eq!(snap.status, Status::Paused);
+        let paused_at = snap.position;
+        thread::sleep(MS * 200);
+        assert_eq!(
+            mpris.exchange(&[]).position,
+            paused_at,
+            "paused stands still"
+        );
+        assert_eq!(
+            mpris.exchange(&[Command::PlayPause]).status,
+            Status::Playing
+        );
+
+        let snap = mpris.exchange(&[Command::Next]);
+        assert_eq!(title(&snap), "Convection");
+        assert_eq!(snap.track.as_ref().unwrap().artist, "Mara Vell, Ode Kiri");
+        assert!(snap.position < S, "a new track starts at 0");
+        assert_eq!(title(&mpris.exchange(&[Command::Previous])), "Slow Bloom");
+
+        // SetPosition with the track's id.
+        let snap = mpris.exchange(&[Command::Seek(S * 60)]);
+        assert!(
+            (S * 60..S * 61).contains(&snap.position),
+            "{:?}",
+            snap.position
+        );
+
+        let snap = mpris.exchange(&[Command::SetShuffle(true), Command::SetRepeat(true)]);
+        assert!(snap.shuffle && snap.repeat);
+        let snap = mpris.exchange(&[Command::SetShuffle(false), Command::SetRepeat(false)]);
+        assert!(!snap.shuffle && !snap.repeat);
+        assert_eq!(mpris.exchange(&[Command::SetVolume(42)]).volume, 42);
+
+        let snap = mpris.exchange(&[Command::play_uri("fake:song").unwrap()]);
+        assert_eq!(title(&snap), "Opened fake:song");
+        let in_context = Command::play_in_context("fake:other", "fake:album").unwrap();
+        assert_eq!(title(&mpris.exchange(&[in_context])), "Opened fake:other");
+
+        drop(fake);
+        let snap = gone(&mut mpris);
+        assert_eq!(snap.player, None);
+    }
+
+    #[test]
+    #[ignore = "needs a D-Bus session bus and python3-dbus-next (tools/linux/run.sh mpris)"]
+    fn without_a_track_id_seek_is_relative() {
+        let _fake = Fake::start(&["--no-trackid", "--paused"]);
+        let mut mpris = Mpris::new();
+        let snap = mpris.exchange(&[]);
+        assert_eq!(snap.status, Status::Paused);
+        assert_eq!(
+            snap.track.as_ref().unwrap().id,
+            "Slow Bloom\u{1f}The Wax Hearts\u{1f}Lamp Light"
+        );
+        assert_eq!(snap.position, S * 12);
+        // Seek(offset) from where it is: 12 s → 100 s.
+        assert_eq!(mpris.exchange(&[Command::Seek(S * 100)]).position, S * 100);
+        assert_eq!(mpris.exchange(&[Command::Seek(S * 30)]).position, S * 30);
+    }
+
+    #[test]
+    #[ignore = "needs a D-Bus session bus and python3-dbus-next (tools/linux/run.sh mpris)"]
+    fn spotify_is_preferred_and_its_quirks_handled() {
+        let _other = Fake::start(&["--name", "aplayer"]);
+        let _spotify = Fake::start(&["--spotify"]);
+        let mut mpris = Mpris::new();
+        let snap = mpris.exchange(&[]);
+        // Chosen over "aplayer", which sorts first.
+        assert_eq!(snap.player.as_deref(), Some("Spotify"));
+        assert_eq!(snap.track.as_ref().unwrap().id, "/com/spotify/track/faket0");
+        // Position always reads 0: unknown on the first read ...
+        assert_eq!(snap.position, Duration::ZERO);
+        thread::sleep(MS * 300);
+        // ... then carried on from the last read while the track plays.
+        let snap = mpris.exchange(&[]);
+        assert!(
+            (MS * 250..S).contains(&snap.position),
+            "{:?}",
+            snap.position
+        );
+
+        // A seek isn't undone by the next read's 0.
+        let snap = mpris.exchange(&[Command::Seek(S * 100)]);
+        assert!(
+            (S * 100..S * 101).contains(&snap.position),
+            "{:?}",
+            snap.position
+        );
+        thread::sleep(MS * 200);
+        let snap = mpris.exchange(&[]);
+        assert!(
+            (S * 100..S * 101).contains(&snap.position),
+            "{:?}",
+            snap.position
+        );
+        // Nor is a pause, or the resume after it.
+        let snap = mpris.exchange(&[Command::PlayPause]);
+        assert_eq!(snap.status, Status::Paused);
+        assert!(
+            (S * 100..S * 101).contains(&snap.position),
+            "{:?}",
+            snap.position
+        );
+        let snap = mpris.exchange(&[Command::PlayPause]);
+        assert_eq!(snap.status, Status::Playing);
+        assert!(
+            (S * 100..S * 101).contains(&snap.position),
+            "{:?}",
+            snap.position
+        );
+        // A new track does start at 0.
+        let snap = mpris.exchange(&[Command::Next]);
+        assert_eq!(snap.track.as_ref().unwrap().id, "/com/spotify/track/faket1");
+        assert_eq!(snap.position, Duration::ZERO);
+
+        // Shuffle / repeat are accepted and ignored: the read says so.
+        let snap = mpris.exchange(&[Command::SetShuffle(true), Command::SetRepeat(true)]);
+        assert!(!snap.shuffle && !snap.repeat);
+        // Volume works.
+        assert_eq!(mpris.exchange(&[Command::SetVolume(70)]).volume, 70);
+    }
+
+    /// The whole source, as the app uses it: the worker thread, optimistic
+    /// commands, the player going away and coming back.
+    #[test]
+    #[ignore = "needs a D-Bus session bus and python3-dbus-next (tools/linux/run.sh mpris)"]
+    fn polled_source_follows_the_player() {
+        let source = Polled::spawn(Mpris::new(), fast());
+        wait_for(&source, "no player", not_running);
+        let fake = Fake::start(&[]);
+        wait_for(&source, "the track", |s| title(s) == "Slow Bloom");
+        source.next();
+        wait_for(&source, "next", |s| title(s) == "Convection");
+        source.play_pause();
+        wait_for(&source, "paused", |s| s.status == Status::Paused);
+        source.set_volume(10);
+        wait_for(&source, "volume", |s| s.volume == 10);
+        drop(fake);
+        wait_for(&source, "player gone", not_running);
+        let _fake = Fake::start(&["--spotify"]);
+        wait_for(&source, "spotify", |s| {
+            s.player.as_deref() == Some("Spotify") && title(s) == "Slow Bloom"
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -514,12 +774,55 @@ mod tests {
     #[test]
     fn parses_spotify_metadata() {
         let track = track(&spotify_metadata()).unwrap();
+        // The object path stays the id (seeking needs it); the URL says
+        // which Spotify track it is.
         assert_eq!(track.id, "/com/spotify/track/0DZXVpUtPUom1VO6h5a0SU");
+        assert_eq!(
+            track.uri.as_deref(),
+            Some("spotify:track:0DZXVpUtPUom1VO6h5a0SU")
+        );
         assert_eq!(track.name, "Life");
         assert_eq!(track.artist, "Sigur Rós, Jónsi");
         assert_eq!(track.album, "Dreamcatcher");
         assert_eq!(track.duration, Duration::from_millis(303_440));
         assert!(track.artwork_url.starts_with("https://i.scdn.co/"));
+    }
+
+    #[test]
+    fn only_spotify_tracks_get_a_spotify_uri() {
+        let with = |entries: Vec<(&str, Meta)>| {
+            let mut m = spotify_metadata();
+            m.remove("xesam:url");
+            m.extend(entries.into_iter().map(|(k, v)| (k.to_owned(), v)));
+            track(&m).unwrap()
+        };
+        // Older Spotify: the URI as the trackid, no URL.
+        let old = with(vec![(
+            "mpris:trackid",
+            text("spotify:track:7xGfFoTpQ2E7fRF5lN10tr"),
+        )]);
+        assert_eq!(
+            old.uri.as_deref(),
+            Some("spotify:track:7xGfFoTpQ2E7fRF5lN10tr")
+        );
+        // An ad, a local file, another player: no URI, nothing guessed.
+        for (id, url) in [
+            (
+                "/com/spotify/ad/000000012c4a1bd4",
+                "https://open.spotify.com/ad/x",
+            ),
+            (
+                "/com/spotify/local/Someone/Album/Song/215",
+                "spotify:local:Someone:Album:Song:215",
+            ),
+            (
+                "/org/videolan/vlc/playlist/7",
+                "file:///home/someone/Music/a.flac",
+            ),
+        ] {
+            let t = with(vec![("mpris:trackid", text(id)), ("xesam:url", text(url))]);
+            assert_eq!((t.id.as_str(), t.uri), (id, None), "{url}");
+        }
     }
 
     #[test]
@@ -711,6 +1014,34 @@ mod tests {
         let mut fresh = playing(0, t0 + S);
         keep_position(&mut fresh, None);
         assert_eq!(fresh.position, Duration::ZERO);
+        // Paused, and the resume after it (our command applied to `last`).
+        let mut paused = last.clone();
+        paused.apply(&Command::PlayPause, t0 + S);
+        let mut fresh = playing(0, t0 + S * 3);
+        fresh.status = Status::Paused;
+        keep_position(&mut fresh, Some(&paused));
+        assert_eq!(fresh.position, S * 6);
+        paused.apply(&Command::PlayPause, t0 + S * 3);
+        let mut fresh = playing(0, t0 + S * 4);
+        keep_position(&mut fresh, Some(&paused));
+        assert_eq!(fresh.position, S * 7);
+        // A seek sent from here.
+        let mut sought = last.clone();
+        sought.apply(&Command::Seek(S * 100), t0);
+        let mut fresh = playing(0, t0 + S);
+        keep_position(&mut fresh, Some(&sought));
+        assert_eq!(fresh.position, S * 101);
+        // Another track starts at 0; so does a stopped player.
+        let mut other = playing(0, t0 + S);
+        let mut t = (**other.track.as_ref().unwrap()).clone();
+        t.id = "/com/spotify/track/other".into();
+        other.track = Some(Arc::new(t));
+        keep_position(&mut other, Some(&last));
+        assert_eq!(other.position, Duration::ZERO);
+        let mut stopped = playing(0, t0 + S);
+        stopped.status = Status::Stopped;
+        keep_position(&mut stopped, Some(&last));
+        assert_eq!(stopped.position, Duration::ZERO);
     }
 
     #[test]

@@ -26,7 +26,7 @@ mod styles;
 mod tests;
 
 pub use canvas::{At, Canvas, LIQUID};
-pub use cell::Pixel;
+pub use cell::{Pixel, fill_from_background, quadrant, sextant};
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;

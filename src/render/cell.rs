@@ -1,7 +1,8 @@
 //! Glyph helpers shared by styles.
 
-use ratatui::buffer::Cell;
-use ratatui::style::Color;
+use ratatui::buffer::{Buffer, Cell};
+use ratatui::layout::Rect;
+use ratatui::style::{Color, Modifier};
 
 use crate::theme::{NEAR, Theme};
 
@@ -124,6 +125,111 @@ impl<'t> HalfBlocks<'t> {
     }
 }
 
+/// Redraw the block glyphs in `area` for terminals whose block glyphs stop
+/// short of the cell's top (macOS Terminal leaves the top sixth of every
+/// cell to the background): a wax-coloured `█` there shows a dark line
+/// along each row. Each block is turned, where it can be, so the colour
+/// along its top edge is the cell's background, which fills the cell:
+/// `█` becomes a space on its colour, `▀` a `▄` in swapped colours, and
+/// quadrants and sextants their complement when ink holds more of the top
+/// row (on a tie, more of the cell). `▓` becomes `░`. Every cell looks the
+/// same on a terminal that does fill its blocks.
+///
+/// Left alone: cells whose colours can't swap (`Color::Reset`, the
+/// terminal's own colours, means one thing as ink and another as
+/// background) and reversed cells.
+pub fn fill_from_background(buf: &mut Buffer, area: Rect) {
+    let area = area.intersection(buf.area);
+    for y in area.top()..area.bottom() {
+        let start = buf.index_of(area.x, y);
+        for cell in &mut buf.content[start..start + usize::from(area.width)] {
+            fill_cell(cell);
+        }
+    }
+}
+
+/// [`fill_from_background`] for one cell.
+#[inline]
+fn fill_cell(cell: &mut Cell) {
+    let mut chars = cell.symbol().chars();
+    let (Some(ch), None) = (chars.next(), chars.next()) else {
+        return;
+    };
+    // Most cells: spaces, text, braille.
+    if !matches!(ch, '\u{2580}'..='\u{259F}' | '\u{1FB00}'..='\u{1FB3B}')
+        || cell.modifier.contains(Modifier::REVERSED)
+    {
+        return;
+    }
+    let flipped = match ch {
+        '▓' => Some('░'),
+        _ => match block_mask(ch) {
+            Some((mask, n)) => {
+                let (ink, top) = (mask.count_ones(), (mask & 3).count_ones());
+                let flip = top == 2 || (top == 1 && 2 * ink > n);
+                flip.then(|| match n {
+                    4 => quadrant(!mask & 15),
+                    _ => sextant(!mask & 63),
+                })
+            }
+            None => None,
+        },
+    };
+    let Some(to) = flipped else {
+        return;
+    };
+    // The ink becomes the background; the old background the ink, unless
+    // nothing is left to ink.
+    if cell.fg == Color::Reset || (to != ' ' && cell.bg == Color::Reset) {
+        return;
+    }
+    let (fg, bg) = (cell.bg, cell.fg);
+    cell.set_char(to).set_fg(fg).set_bg(bg);
+}
+
+/// The quadrant glyphs by ink mask (1 top left, 2 top right, 4 bottom
+/// left, 8 bottom right).
+const QUADRANTS: [char; 16] = [
+    ' ', '▘', '▝', '▀', '▖', '▌', '▞', '▛', '▗', '▚', '▐', '▜', '▄', '▙', '▟', '█',
+];
+
+/// The quadrant glyph whose ink is `mask` (see [`QUADRANTS`]).
+pub fn quadrant(mask: u8) -> char {
+    QUADRANTS[usize::from(mask & 15)]
+}
+
+/// The sextant glyph whose ink is `mask` (1, 2 the top row, 4, 8 the
+/// middle, 16, 32 the bottom; left then right). Unicode 13 has all but
+/// the empty, full and half ones, which Block Elements already had.
+pub fn sextant(mask: u8) -> char {
+    match mask & 63 {
+        0 => ' ',
+        21 => '▌',
+        42 => '▐',
+        63 => '█',
+        m => {
+            let skipped = u32::from(m > 21) + u32::from(m > 42);
+            char::from_u32(0x1FB00 + u32::from(m) - 1 - skipped).unwrap_or('█')
+        }
+    }
+}
+
+/// A block glyph's ink mask and how many parts it has: a quadrant (or
+/// half, or full) block in 4, a sextant in 6. Both have two columns, so
+/// the top row is bits 1 and 2.
+#[inline]
+pub(super) fn block_mask(ch: char) -> Option<(u8, u32)> {
+    if let Some(i) = QUADRANTS.iter().position(|&q| q == ch) {
+        return Some((i as u8, 4));
+    }
+    let i = u32::from(ch).checked_sub(0x1FB00).filter(|&i| i < 60)?;
+    // Undo `sextant`'s skips of 21 and 42.
+    let mut m = i + 1;
+    m += u32::from(m >= 21);
+    m += u32::from(m >= 42);
+    Some((m as u8, 6))
+}
+
 /// An empty cell: a space on `bg`. The foreground is left as it was.
 #[inline]
 pub fn blank(cell: &mut Cell, bg: Color) {
@@ -173,6 +279,8 @@ pub fn braille(bits: u8) -> char {
 mod tests {
     use super::*;
     use crate::theme::{ColorDepth, Palette, Rgb};
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
 
     fn theme(depth: ColorDepth) -> Theme {
         Theme::new(&Palette::all()[0], depth)
@@ -287,6 +395,50 @@ mod tests {
             assert_eq!(at(Pixel::Liquid, Pixel::Ink(none)), "▄");
             assert_eq!(at(Pixel::Ink(none), Pixel::Ink(none)), "█");
             assert_eq!(at(Pixel::Liquid, Pixel::Liquid), " ");
+        }
+    }
+
+    #[test]
+    fn blocks_turn_to_show_their_top_edge_as_background() {
+        let (a, b) = (Color::Rgb(250, 160, 60), Color::Rgb(20, 10, 30));
+        let filled = |ch: char, fg: Color, bg: Color| {
+            let mut buf = Buffer::empty(Rect::new(0, 0, 1, 1));
+            buf[(0, 0)].set_char(ch).set_fg(fg).set_bg(bg);
+            let area = buf.area;
+            fill_from_background(&mut buf, area);
+            let cell = &buf[(0, 0)];
+            (cell.symbol().chars().next().unwrap(), cell.fg, cell.bg)
+        };
+        assert_eq!(filled('█', a, b), (' ', b, a));
+        assert_eq!(filled('▀', a, b), ('▄', b, a));
+        assert_eq!(filled('▛', a, b), ('▗', b, a));
+        assert_eq!(filled('▓', a, b), ('░', b, a));
+        // Already background on top, or a tie of a top row and a cell.
+        for ch in ['▄', ' ', '▌', '▘', '▚', '░', 'x', '⣿'] {
+            assert_eq!(filled(ch, a, b), (ch, a, b), "{ch}");
+        }
+        // Sextants: top row, else most of the cell.
+        assert_eq!(filled(sextant(3), a, b), (sextant(60), b, a));
+        assert_eq!(
+            filled(sextant(1 | 4 | 8 | 16), a, b),
+            (sextant(2 | 32), b, a)
+        );
+        assert_eq!(filled(sextant(1 | 4 | 8), a, b), (sextant(1 | 4 | 8), a, b));
+        // The terminal's own colours can't swap.
+        assert_eq!(filled('█', Color::Reset, b), ('█', Color::Reset, b));
+        assert_eq!(filled('▀', a, Color::Reset), ('▀', a, Color::Reset));
+        assert_eq!(filled('█', a, Color::Reset), (' ', Color::Reset, a));
+    }
+
+    #[test]
+    fn every_block_glyph_round_trips_its_mask() {
+        for m in 0..16 {
+            assert_eq!(block_mask(quadrant(m)), Some((m, 4)));
+        }
+        for m in 1..63 {
+            if ![21, 42].contains(&m) {
+                assert_eq!(block_mask(sextant(m)), Some((m, 6)));
+            }
         }
     }
 }
