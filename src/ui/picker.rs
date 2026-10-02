@@ -352,7 +352,7 @@ pub fn draw(buf: &mut Buffer, area: Rect, layout: &Layout, picker: &Picker, mode
     for (row, (i, name)) in items.iter().enumerate().skip(first).take(rows).enumerate() {
         let y = list.y + row as u16;
         let (marker, style) = if i == picker.cursor {
-            ("▸ ", accent)
+            (model.glyphs().pointer, accent)
         } else {
             ("  ", text)
         };

@@ -127,7 +127,8 @@ pub fn draw_status(buf: &mut Buffer, r: Rect, model: &Model) {
 
     // Left: ● style · palette.
     let mut left: Vec<(String, Style)> = if model.frozen {
-        vec![("‖ ".into(), accent), ("frozen".into(), text)]
+        let paused = format!("{} ", model.glyphs().paused);
+        vec![(paused, accent), ("frozen".into(), text)]
     } else {
         vec![
             ("● ".into(), accent),

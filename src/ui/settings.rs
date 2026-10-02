@@ -277,7 +277,7 @@ pub fn draw(buf: &mut Buffer, area: Rect, view: &SettingsView, model: &Model) {
         }
     }
     if let Some(pages) = g.pages {
-        draw_pages(buf, pages, view, &ink);
+        draw_pages(buf, pages, view, &ink, model.glyphs().pointer);
     }
     if let Some(header) = g.header {
         buf.set_stringn(
@@ -309,7 +309,7 @@ pub fn draw(buf: &mut Buffer, area: Rect, view: &SettingsView, model: &Model) {
     }
 }
 
-fn draw_pages(buf: &mut Buffer, r: Rect, view: &SettingsView, ink: &Inks) {
+fn draw_pages(buf: &mut Buffer, r: Rect, view: &SettingsView, ink: &Inks, pointer: &str) {
     let top = pages_top(view, r);
     for (row, (i, page)) in Page::LIST
         .iter()
@@ -321,8 +321,8 @@ fn draw_pages(buf: &mut Buffer, r: Rect, view: &SettingsView, ink: &Inks) {
         let y = r.y + row as u16;
         let current = i == view.page.index();
         let (marker, style) = match (current, view.in_rows) {
-            (true, false) => ("▸ ", ink.accent),
-            (true, true) => ("▸ ", ink.text),
+            (true, false) => (pointer, ink.accent),
+            (true, true) => (pointer, ink.text),
             (false, _) => ("  ", ink.dim),
         };
         let line = fit(&format!(" {marker}{}", page.title()), r.width);
@@ -352,7 +352,11 @@ fn draw_rows(
     {
         let y = r.y + line as u16;
         let focused = view.in_rows && i == view.cursor;
-        let marker = if focused { "▸ " } else { "  " };
+        let marker = if focused {
+            model.glyphs().pointer
+        } else {
+            "  "
+        };
         let indent = if row.sub { "  " } else { "" };
         let label = format!(" {marker}{indent}{}", row.label);
         let label_style = if focused { ink.accent } else { ink.text };

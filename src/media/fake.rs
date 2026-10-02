@@ -53,6 +53,7 @@ impl FakeSource {
     pub fn demo(now: Instant) -> Self {
         let track = |n: u32, name: &str, artist: &str, album: &str, secs: u64| Track {
             id: format!("fake:track:{n}"),
+            uri: None,
             name: name.into(),
             artist: artist.into(),
             album: album.into(),
@@ -120,6 +121,7 @@ impl FakeSource {
                 let index = found.unwrap_or_else(|| {
                     inner.playlist.push(Arc::new(Track {
                         id: uri.clone(),
+                        uri: super::spotify_track_uri(uri),
                         name: uri.clone(),
                         ..Track::default()
                     }));

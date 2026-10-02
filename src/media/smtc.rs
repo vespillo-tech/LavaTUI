@@ -9,7 +9,9 @@
 //! ([`status`]), the timeline ([`position`]) and the track ([`track`]).
 //!
 //! What SMTC can't do: volume (no such control: `Capabilities::volume` is
-//! off), playing a URI (that would mean launching the player). Cover art
+//! off), playing a URI (`Capabilities::uris` is off: the library plays
+//! through the Web API or says why it can't), or naming the Spotify track
+//! (no URI; the model matches the Web API's player to the track). Cover art
 //! comes as a thumbnail stream, not a URL: the worker reads it once per
 //! track ([`Cover`]) and hands the bytes to the art loader
 //! ([`art::stash`](super::art::stash), lava-75z.16).
@@ -96,10 +98,13 @@ fn ticks(ticks: i64) -> Duration {
 }
 
 /// The track from the session's media properties, if it has a title. SMTC
-/// has no id, so what's playing is what identifies it.
+/// has no id, so what's playing is what identifies it, and no Spotify URI
+/// (the model matches the Web API's player to it instead,
+/// lava-1xk.24).
 pub fn track(title: &str, artist: &str, album: &str, duration: Duration) -> Option<Track> {
     (!title.is_empty()).then(|| Track {
         id: format!("{title}\u{1f}{artist}\u{1f}{album}"),
+        uri: None,
         name: title.to_owned(),
         artist: artist.to_owned(),
         album: album.to_owned(),
@@ -276,9 +281,12 @@ mod backend {
             }
         }
 
+        /// No volume, and nothing to tell the app what to play.
         fn capabilities(&self) -> Capabilities {
             Capabilities {
                 volume: false,
+                uris: false,
+                contexts: false,
                 ..Capabilities::ALL
             }
         }
@@ -327,7 +335,8 @@ mod backend {
                     MediaPlaybackAutoRepeatMode::None
                 })?
                 .join(),
-            // No such controls.
+            // No such controls (and `capabilities` says so: the model
+            // never sends them).
             Command::SetVolume(_) | Command::PlayUri(_) | Command::PlayInContext { .. } => {
                 Ok(false)
             }
