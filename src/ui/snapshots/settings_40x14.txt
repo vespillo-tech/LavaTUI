@@ -1,0 +1,165 @@
+── the list of pages ──
+ settings                     esc close
+
+  ▸ look
+    clock & timer
+    widgets
+    music & lyrics
+    controls
+    window
+
+ How the lamp looks: its style,
+ colours, heat and speed.
+
+
+
+── look ──
+ settings · look               esc back
+
+  ▸ style                    ‹ solid ›
+    colours                       lava
+    heat                         ▮▮▮▯▯
+    speed                           ×1
+    background                 painted
+    colour range              millions
+    see-through window fix   automatic
+    reset this page              reset
+
+ How the wax is drawn.
+
+
+── look, on colours ──
+ settings · look               esc back
+
+    style                        solid
+  ▸ colours                   ‹ lava ›
+    heat                         ▮▮▮▯▯
+    speed                           ×1
+    background                 painted
+    colour range              millions
+    see-through window fix   automatic
+    reset this page              reset
+
+ The colours of the wax, the liquid and
+ the text.
+
+── clock & timer ──
+ settings · clock & timer      esc back
+
+  ▸ clock face              ‹ blocks ›
+    time format                24-hour
+    focus length                25 min
+    short break                  5 min
+    long break                  15 min
+    long break after        4 sessions
+    sound at the end                on
+    reset this page              reset
+
+ How the clock shows the time.
+
+
+── widgets, clock on the lamp ──
+ settings · widgets            esc back
+
+  ▸ clock              ‹ on the lamp ›
+      position                  centre
+    focus timer        beside the lamp
+    music player                   off
+    lyrics                         off
+    album cover                    off
+    behind things on the lamp  nothing
+    reset this page              reset
+
+ The time of day.
+
+
+── music & lyrics ──
+ settings · music & lyrics     esc back
+
+  ▸ spotify                 not set up
+    lyrics                         off
+    cover picture            automatic
+    cover size                  medium
+    small cover with music          on
+    reset this page              reset
+
+ Play, pause and skip work with the
+ Spotify app on its own. Playlists and
+ likes need a one-time setup: press
+ enter.
+
+── controls ──
+ settings · controls           esc back
+
+  ▸ mouse                       ‹ on ›
+    reset this page              reset
+
+ Click buttons, lists and the wax.
+ While it's on, hold Shift (Option in
+ Mac Terminal or iTerm2) to select
+ text.
+
+
+
+
+
+── window ──
+ settings · window             esc back
+
+  ▸ lamp only                  ‹ off ›
+    hint line                    shown
+    smoothness      60 frames a second
+    lamp-only clock      in the corner
+    reset this page              reset
+
+ Hides everything but the lamp and a
+ small clock. Press m to switch at any
+ time.
+
+
+
+── spotify setup ──
+ settings · spotify setup      esc back
+
+  ▸ status                  not set up
+    1  make a spotify app
+    2  add this address           copy
+    3  paste the client id  paste here
+    4  connect                 connect
+    spotify app               checking
+
+ Play, pause and skip work with the
+ Spotify app on its own. Playlists and
+ likes need a one-time setup, about two
+ minutes: follow steps 1 to 4.
+
+── spotify setup, a bad client id ──
+ settings · spotify setup      esc back
+
+    status                  not set up
+    1  make a spotify app
+    2  add this address           copy
+  ▸ 3  paste the client id  …t-secret▏
+    4  connect                 connect
+    spotify app               checking
+
+ That isn't a Client ID: it only has
+ the digits 0-9 and the letters a-f.
+
+
+
+── spotify setup, connected ──
+ settings · spotify setup      esc back
+
+  ▸ status                   connected
+    1  make a spotify app
+    2  add this address           copy
+    3  paste the client id  0123…bcdef
+    4  connect               connected
+    spotify app               checking
+
+ Play, pause and skip work with the
+ Spotify app on its own. Playlists and
+ likes need a one-time setup, about two
+ minutes: follow steps 1 to 4.
+

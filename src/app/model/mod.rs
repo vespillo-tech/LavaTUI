@@ -12,6 +12,7 @@ mod lyrics;
 mod music;
 mod pickers;
 mod saving;
+mod settings_screen;
 
 use std::time::{Duration, Instant, SystemTime};
 
@@ -37,6 +38,7 @@ pub use library::{Account, Library, ListKind, ListView};
 pub use lyrics::{Fetch, LyricsState};
 pub use music::Music;
 pub use pickers::{Picker, PickerKind};
+pub use settings_screen::{Item, Kind, Page, Row, SettingsState, SettingsView};
 
 /// Simulation rate. Fixed; unrelated to the render frame rate.
 pub const SIM_HZ: u32 = 120;
@@ -75,6 +77,8 @@ pub enum Overlay {
     Picker(Picker),
     /// The playlist browser / add-to-playlist picker.
     Library(ListView),
+    /// The settings screen (`,`), with the guided Spotify setup.
+    Settings(SettingsView),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -154,6 +158,10 @@ pub struct Model {
     pub lyrics: LyricsState,
     /// The widget on the lava `l` moves (`L` picks another).
     pub lava_focus: Option<usize>,
+    /// The settings screen's text field and pending confirmations.
+    pub settings_screen: SettingsState,
+    /// The last save failed: why (the settings screen says so).
+    pub save_problem: Option<String>,
 
     // Chrome.
     pub overlay: Overlay,
@@ -176,6 +184,8 @@ pub struct Model {
     pub quit: bool,
     pub bell: bool,
     pub clear: bool,
+    /// Text for the system clipboard (OSC 52).
+    pub copy: Option<String>,
 }
 
 impl Model {
@@ -230,6 +240,8 @@ impl Model {
             library: Library::new(settings.spotify_client_id()),
             lyrics: LyricsState::default(),
             lava_focus: None,
+            settings_screen: SettingsState::default(),
+            save_problem: None,
             overlay: Overlay::None,
             toast: None,
             hud: false,
@@ -247,6 +259,7 @@ impl Model {
             quit: false,
             bell: false,
             clear: false,
+            copy: None,
             settings,
         };
         model.warm_up(area, seed);
@@ -281,6 +294,9 @@ impl Model {
             },
             Overlay::Library(_) => InputMode::Library {
                 inline: self.inline_pickers(),
+            },
+            Overlay::Settings(_) => InputMode::Settings {
+                typing: self.settings_screen.editing,
             },
         }
     }
@@ -559,8 +575,14 @@ impl Model {
             return;
         }
         match self.store.as_mut().unwrap().save(&out) {
-            Ok(()) => self.file = out,
-            Err(problem) => self.toast(problem),
+            Ok(()) => {
+                self.file = out;
+                self.save_problem = None;
+            }
+            Err(problem) => {
+                self.save_problem = Some(problem.clone());
+                self.toast(problem);
+            }
         }
     }
 
@@ -576,8 +598,12 @@ impl Model {
     fn poll_saves(&mut self) {
         while let Some(saver) = &mut self.saver {
             match saver.poll() {
-                Ok(Some((out, Ok(())))) => self.file = out,
+                Ok(Some((out, Ok(())))) => {
+                    self.file = out;
+                    self.save_problem = None;
+                }
                 Ok(Some((_, Err(problem)))) | Err(problem) => {
+                    self.save_problem = Some(problem.clone());
                     self.toast(problem);
                     break;
                 }
@@ -679,5 +705,7 @@ fn pomodoro_config(settings: &Settings) -> PomodoroConfig {
 
 #[cfg(test)]
 mod library_tests;
+#[cfg(test)]
+mod settings_tests;
 #[cfg(test)]
 mod tests;

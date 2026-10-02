@@ -16,7 +16,8 @@ pub const HINTS: &[(&str, &str, u8)] = &[
     ("p", "palette", 2),
     ("m", "minimal", 0),
     ("␣", "pomo", 1),
-    ("?", "help", 5),
+    (",", "settings", 5),
+    ("?", "help", 6),
 ];
 
 /// Hints shown while the player keys are on (`A`).
@@ -54,6 +55,17 @@ pub fn library_hints(kind: ListKind) -> &'static [(&'static str, &'static str, u
         ListKind::AddTo => ADD_HINTS,
     }
 }
+
+/// Hints while the settings screen is open, and while typing in it.
+pub const SETTINGS_HINTS: &[(&str, &str, u8)] = &[
+    ("↑↓", "move", 0),
+    ("←→", "change", 2),
+    ("⏎", "choose", 1),
+    ("esc", "back", 3),
+];
+pub const PAGES_HINTS: &[(&str, &str, u8)] =
+    &[("↑↓", "move", 0), ("⏎", "open", 1), ("esc", "close", 2)];
+pub const TYPING_HINTS: &[(&str, &str, u8)] = &[("⏎", "save", 1), ("esc", "cancel", 2)];
 
 /// Hints shown while a picker is open (also the sheet's own hint row).
 pub const PICKER_HINTS: &[(&str, &str, u8)] =
@@ -123,6 +135,12 @@ pub fn draw_status(buf: &mut Buffer, r: Rect, model: &Model) {
         PICKER_HINTS
     } else if let Overlay::Library(view) = model.overlay {
         library_hints(view.kind)
+    } else if matches!(model.overlay, Overlay::Settings(_)) {
+        match model.settings_view() {
+            _ if model.settings_screen.editing => TYPING_HINTS,
+            Some(view) if !view.in_rows => PAGES_HINTS,
+            _ => SETTINGS_HINTS,
+        }
     } else if model.music.keys {
         PLAYER_HINTS
     } else {

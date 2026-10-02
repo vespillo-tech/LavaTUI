@@ -19,6 +19,8 @@ use ratatui::crossterm::event::{
 pub enum Action {
     Quit,
     Help,
+    /// `,`: the settings screen.
+    Settings,
     /// esc: close the overlay (a picker reverts).
     Close,
     ToggleMinimal,
@@ -70,6 +72,14 @@ pub enum Action {
     Back,
     /// Play the whole playlist under the cursor (or the open one).
     PlayAll,
+    /// The settings screen: the next (`true`) or previous value.
+    Change(bool),
+    /// The settings screen: the next (`true`, tab) or previous page.
+    SwitchPage(bool),
+    /// A character typed into a text field.
+    Type(char),
+    /// Backspace in a text field.
+    Erase,
     // Not keys.
     /// The terminal was resized: relayout and redraw now.
     Resize,
@@ -265,7 +275,12 @@ pub static KEYMAP: &[Row] = &[
     ),
     // m ? q first: the small full-screen help leads with them (§4.3).
     row(App, "m", "minimal", &[(K('m'), A::ToggleMinimal)]),
-    row(App, "?", "this help", &[(K('?'), A::Help)]),
+    row(
+        App,
+        "? ,",
+        "this help · settings",
+        &[(K('?'), A::Help), (K(','), A::Settings)],
+    ),
     row(
         App,
         "q",
@@ -357,6 +372,10 @@ pub enum InputMode {
     Library {
         inline: bool,
     },
+    /// The settings screen; `typing` into its text field.
+    Settings {
+        typing: bool,
+    },
 }
 
 pub fn action_for(event: &Event, mode: InputMode) -> Option<Action> {
@@ -422,6 +441,7 @@ fn key_action(event: &KeyEvent, mode: InputMode) -> Option<Action> {
         },
         InputMode::Help => match (code, key) {
             (KeyCode::Esc, _) | (_, Some(K('?') | K('q'))) => Some(Action::Close),
+            (_, Some(K(','))) => Some(Action::Settings),
             (KeyCode::Up, _) | (_, Some(K('k'))) => Some(Action::Up),
             (KeyCode::Down, _) | (_, Some(K('j'))) => Some(Action::Down),
             _ => None,
@@ -441,6 +461,31 @@ fn key_action(event: &KeyEvent, mode: InputMode) -> Option<Action> {
             (KeyCode::Home, _) | (_, Some(K('g'))) => Some(Action::Edge(false)),
             (KeyCode::End, _) | (_, Some(K('G'))) => Some(Action::Edge(true)),
             (_, Some(K('p'))) => Some(Action::PlayAll),
+            _ => None,
+        },
+        InputMode::Settings { typing: true } => match code {
+            KeyCode::Esc => Some(Action::Back),
+            KeyCode::Enter => Some(Action::Keep),
+            KeyCode::Backspace => Some(Action::Erase),
+            KeyCode::Char(c) if !event.modifiers.contains(KeyModifiers::CONTROL) => {
+                Some(Action::Type(c))
+            }
+            _ => None,
+        },
+        InputMode::Settings { typing: false } => match (code, key) {
+            (KeyCode::Esc, _) | (KeyCode::Backspace, _) => Some(Action::Back),
+            (_, Some(K('q') | K(','))) => Some(Action::Close),
+            (KeyCode::Enter, _) | (_, Some(Key::Space)) => Some(Action::Keep),
+            (KeyCode::Up, _) | (_, Some(K('k'))) => Some(Action::Up),
+            (KeyCode::Down, _) | (_, Some(K('j'))) => Some(Action::Down),
+            (KeyCode::Left, _) | (_, Some(K('h'))) => Some(Action::Change(false)),
+            (KeyCode::Right, _) | (_, Some(K('l'))) => Some(Action::Change(true)),
+            (KeyCode::Tab, _) => Some(Action::SwitchPage(true)),
+            (KeyCode::BackTab, _) => Some(Action::SwitchPage(false)),
+            (KeyCode::PageUp, _) => Some(Action::Page(false)),
+            (KeyCode::PageDown, _) => Some(Action::Page(true)),
+            (KeyCode::Home, _) | (_, Some(K('g'))) => Some(Action::Edge(false)),
+            (KeyCode::End, _) | (_, Some(K('G'))) => Some(Action::Edge(true)),
             _ => None,
         },
         InputMode::Picker { opener, inline } => match (code, key) {
@@ -478,7 +523,10 @@ fn mouse_action(mouse: &MouseEvent, mode: InputMode) -> Option<Action> {
     let (col, row) = (mouse.column, mouse.row);
     let list = matches!(
         mode,
-        InputMode::Help | InputMode::Picker { .. } | InputMode::Library { .. }
+        InputMode::Help
+            | InputMode::Picker { .. }
+            | InputMode::Library { .. }
+            | InputMode::Settings { .. }
     );
     match (mouse.kind, mode) {
         (MouseEventKind::ScrollUp, _) if list => Some(Action::Up),
@@ -491,7 +539,7 @@ fn mouse_action(mouse: &MouseEvent, mode: InputMode) -> Option<Action> {
         }
         (
             MouseEventKind::Down(MouseButton::Left),
-            InputMode::Picker { .. } | InputMode::Library { .. },
+            InputMode::Picker { .. } | InputMode::Library { .. } | InputMode::Settings { .. },
         ) => Some(Action::Click { col, row }),
         _ => None,
     }

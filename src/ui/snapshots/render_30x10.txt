@@ -14,7 +14,7 @@
 
  app
  m       minimal
- ?       this help
+ ? ,     this help · settings
  q       quit · ctrl-c
  b d     status bar · debug
  ctrl-l  redraw

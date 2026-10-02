@@ -33,6 +33,22 @@ const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
 type Connect = Box<dyn Fn() -> Option<Box<dyn Web>>>;
 
+/// Connects to the Web API with `client_id` (none: never).
+#[cfg(not(test))]
+fn connector(client_id: Option<String>) -> Connect {
+    Box::new(move || {
+        client_id
+            .clone()
+            .map(|id| Box::new(crate::spotify_web::SpotifyWeb::new(id)) as Box<dyn Web>)
+    })
+}
+
+/// Tests never reach the real thing: they plug in a fake.
+#[cfg(test)]
+fn connector(_: Option<String>) -> Connect {
+    Box::new(|| None)
+}
+
 /// A list that loads from the Web API.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Listing<T> {
@@ -120,6 +136,8 @@ pub struct Library {
     wants: Vec<(RequestId, Want)>,
     /// The consent page, while a login waits for the browser.
     pub login_url: Option<String>,
+    /// Why the last login didn't work (until the next one starts).
+    pub login_error: Option<String>,
     pub me: Option<User>,
     me_asked: bool,
     pub playlists: Listing<Playlist>,
@@ -137,22 +155,12 @@ impl Library {
     /// The library for `client_id` (none: off). Tests never reach the real
     /// thing (a keyring read could prompt): they plug in a fake.
     pub fn new(client_id: Option<String>) -> Self {
-        #[cfg(not(test))]
-        let connect: Connect = Box::new(move || {
-            client_id
-                .clone()
-                .map(|id| Box::new(crate::spotify_web::SpotifyWeb::new(id)) as Box<dyn Web>)
-        });
-        #[cfg(test)]
-        let connect: Connect = {
-            let _ = client_id;
-            Box::new(|| None)
-        };
         Self {
             web: None,
-            connect,
+            connect: connector(client_id),
             wants: Vec::new(),
             login_url: None,
+            login_error: None,
             me: None,
             me_asked: false,
             playlists: Listing::default(),
@@ -170,6 +178,50 @@ impl Library {
     pub fn connect_with(&mut self, connect: impl Fn() -> Option<Box<dyn Web>> + 'static) {
         self.connect = Box::new(connect);
         self.disconnect();
+    }
+
+    /// A new Client ID (the settings screen): the old client goes, and the
+    /// next sync connects with this one. Tests keep their fake.
+    pub fn set_client_id(&mut self, client_id: Option<String>) {
+        #[cfg(not(test))]
+        {
+            self.connect = connector(client_id);
+        }
+        #[cfg(test)]
+        let _ = client_id;
+        self.disconnect();
+    }
+
+    /// Open the browser on Spotify's consent page (logged out only).
+    pub fn start_login(&mut self) -> Option<String> {
+        let web = self.web.as_mut()?;
+        self.login_error = None;
+        match web.login() {
+            Ok(url) => {
+                self.login_url = Some(url);
+                None
+            }
+            Err(e) => {
+                let e = e.to_string();
+                self.login_error = Some(e.clone());
+                Some(e)
+            }
+        }
+    }
+
+    /// Stop waiting for the browser.
+    pub fn cancel_login(&mut self) {
+        if let Some(web) = &mut self.web {
+            web.cancel_login();
+        }
+        self.login_url = None;
+    }
+
+    /// Forget the login (`LoggedOut` says when it's done).
+    pub fn logout(&mut self) {
+        if let Some(web) = &mut self.web {
+            web.logout();
+        }
     }
 
     fn disconnect(&mut self) {
@@ -306,6 +358,7 @@ impl Library {
             Event::LoggedIn { saved } => {
                 self.forget();
                 self.login_url = None;
+                self.login_error = None;
                 Some(if saved {
                     "logged in to Spotify".into()
                 } else {
@@ -314,6 +367,7 @@ impl Library {
             }
             Event::LoginFailed(e) => {
                 self.login_url = None;
+                self.login_error = Some(e.to_string());
                 Some(e.to_string())
             }
             Event::LoggedOut { expired } => {
@@ -507,9 +561,11 @@ impl Model {
             .as_ref()
             .and_then(|s| s.track.as_ref())
             .map(|t| t.id.clone());
-        let toasts = self
-            .library
-            .sync(self.music_on(), self.now, track.as_deref());
+        let toasts = self.library.sync(
+            self.music_on() || self.spotify_setup_open(),
+            self.now,
+            track.as_deref(),
+        );
         if let Some(last) = toasts.into_iter().last() {
             self.toast(last);
         }
@@ -554,11 +610,14 @@ impl Model {
     /// A library key with no Client ID (or music off) says why.
     fn library_ready(&mut self) -> bool {
         if self.library.account() == Account::Unavailable {
-            self.toast(if self.music_on() {
-                "Spotify library needs a Client ID · see docs/spotify.md"
+            if !self.music_on() {
+                self.toast("music is off · a to show it");
+            } else if self.settings.spotify_client_id().is_none() {
+                // Nothing to log in with yet: the guided setup says how.
+                self.open_settings_at(super::settings_screen::Page::Spotify, true);
             } else {
-                "music is off · a to show it"
-            });
+                self.toast("connecting to Spotify…");
+            }
             return false;
         }
         true
@@ -572,14 +631,10 @@ impl Model {
         }
         let account = self.library.account();
         let lib = &mut self.library;
-        let Some(web) = lib.web.as_mut() else {
-            return;
-        };
         let toast = match account {
             Account::Unavailable => return,
             Account::LoggingIn => {
-                web.cancel_login();
-                lib.login_url = None;
+                lib.cancel_login();
                 "login cancelled".to_owned()
             }
             Account::LoggedIn => {
@@ -589,19 +644,15 @@ impl Model {
                     .is_some_and(|at| now - at < LOGOUT_WINDOW);
                 if armed {
                     // `LoggedOut` toasts when it's done.
-                    web.logout();
+                    lib.logout();
                     return;
                 }
                 lib.logout_armed = Some(now);
                 "press i again to log out of Spotify".to_owned()
             }
-            Account::LoggedOut => match web.login() {
-                Ok(url) => {
-                    lib.login_url = Some(url);
-                    "log in to Spotify in your browser".to_owned()
-                }
-                Err(e) => e.to_string(),
-            },
+            Account::LoggedOut => lib
+                .start_login()
+                .unwrap_or_else(|| "log in to Spotify in your browser".to_owned()),
         };
         self.toast(toast);
     }

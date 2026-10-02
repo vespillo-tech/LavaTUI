@@ -53,7 +53,7 @@ fn local() -> LocalTime {
     }
 }
 
-fn model(cols: u16, rows: u16, seed: u64) -> (Model, Instant) {
+pub(super) fn model(cols: u16, rows: u16, seed: u64) -> (Model, Instant) {
     let dir = std::env::temp_dir().join(format!(
         "lavatui-render-{cols}x{rows}-{seed}-{}",
         std::process::id()
@@ -78,7 +78,7 @@ fn model(cols: u16, rows: u16, seed: u64) -> (Model, Instant) {
     (m, t0)
 }
 
-fn draw(m: &Model, cols: u16, rows: u16) -> Buffer {
+pub(super) fn draw(m: &Model, cols: u16, rows: u16) -> Buffer {
     let mut terminal = Terminal::new(TestBackend::new(cols, rows)).unwrap();
     let mut lamp = LampState::default();
     terminal
@@ -88,7 +88,7 @@ fn draw(m: &Model, cols: u16, rows: u16) -> Buffer {
 }
 
 /// Glyphs row by row, lamp cells as `~` (see the module docs).
-fn picture(m: &Model, buf: &Buffer) -> String {
+pub(super) fn picture(m: &Model, buf: &Buffer) -> String {
     let bg = m.theme.role(Role::Bg);
     let view = m.layout.lamp;
     // The widgets on the lava float on the lamp: print what they draw
@@ -132,7 +132,7 @@ fn picture(m: &Model, buf: &Buffer) -> String {
 }
 
 /// One line of the buffer, as text.
-fn row(buf: &Buffer, y: u16) -> String {
+pub(super) fn row(buf: &Buffer, y: u16) -> String {
     (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect()
 }
 
@@ -703,6 +703,7 @@ fn hint_keys_resolve_through_the_keymap() {
         ("p", Action::NextPalette),
         ("m", Action::ToggleMinimal),
         ("␣", Action::PomodoroToggle),
+        (",", Action::Settings),
         ("?", Action::Help),
     ];
     assert_eq!(HINTS.len(), expect.len());

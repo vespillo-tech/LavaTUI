@@ -12,7 +12,7 @@
 
  app
  m       minimal
- ?       this help
+ ? ,     this help
  q       quit
  b d     status bar
  ctrl-l  redraw
