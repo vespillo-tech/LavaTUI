@@ -13,6 +13,9 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # Optional macOS signing + notarizing (docs/architecture.md, Releases):
+  # it runs only when these secrets are set.
+  HAVE_APPLE_SIGNING: ${{ secrets.MACOS_CERTIFICATE != '' && secrets.APPLE_ID != '' }}
 
 jobs:
   build:
@@ -48,6 +51,57 @@ jobs:
 
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
+
+      # A Developer ID signature lets the Keychain's "Always Allow" survive
+      # updates (an ad-hoc signed binary is a new program each time).
+      - name: Sign and notarize (macOS, when Apple secrets are set)
+        if: runner.os == 'macOS' && env.HAVE_APPLE_SIGNING == 'true'
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password=$(openssl rand -hex 24)
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s \
+            -k "$keychain_password" "$keychain" > /dev/null
+          # The existing search list, one keychain a word.
+          # shellcheck disable=SC2046
+          security list-keychains -d user -s "$keychain" \
+            $(security list-keychains -d user | tr -d '"')
+
+          bin="target/${{ matrix.target }}/release/lavatui"
+          codesign --force --timestamp --options runtime \
+            --identifier io.github.vespillo-tech.lavatui \
+            --keychain "$keychain" --sign "$MACOS_SIGNING_IDENTITY" "$bin"
+          codesign --verify --strict --verbose=2 "$bin"
+
+          # A bare binary can't be stapled; Gatekeeper finds the ticket online.
+          ditto -c -k --keepParent "$bin" "$RUNNER_TEMP/notarize.zip"
+          result=$(xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" --wait \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" --output-format json)
+          echo "$result"
+          status=$(echo "$result" | python3 -c 'import json, sys; print(json.load(sys.stdin)["status"])')
+          if [ "$status" != "Accepted" ]; then
+            echo "::error::notarization: $status (xcrun notarytool log <id> says why)"
+            exit 1
+          fi
+
+      - name: Remove the signing keychain
+        if: always() && runner.os == 'macOS' && env.HAVE_APPLE_SIGNING == 'true'
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
 
       - name: Package
         shell: bash

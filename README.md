@@ -314,8 +314,9 @@ app walks you through each step. More detail is in
   music & lyrics, and press `Enter` twice on "saved lyrics & covers".
 - **Spotify login:** your login is kept in your computer's password
   store (Keychain on a Mac, Credential Manager on Windows, the Secret
-  Service on Linux). If there isn't one, it's kept in a file only you can
-  read. Logging out deletes it. LavaTUI talks only to Spotify for this.
+  Service on Linux). If there isn't one, or you pick *private file* in
+  the Spotify setup, it's kept in a file only you can read. Logging out
+  deletes it. LavaTUI talks only to Spotify for this.
 - Nothing else leaves your computer. There's no tracking.
 
 ## Terminals
@@ -374,6 +375,20 @@ to leave them.
 **No lyrics for a song.**
 lrclib.net doesn't have every song. Lyrics also need an internet
 connection the first time.
+
+**My Mac asks for a password about the "lavatui" keychain.**
+That's macOS guarding your Spotify login. LavaTUI keeps the login in
+your Keychain, and macOS asks before an app reads it. Type your Mac
+password and choose *Always Allow*. LavaTUI reads the login only when
+you first use a Spotify library feature (like, add, playlists, shuffle)
+or open the Spotify setup. It never reads it just to start, and it tells
+you first.
+
+After you update LavaTUI, macOS may ask once more. The downloads aren't
+signed by Apple, so macOS treats each new version as a new app. If you'd
+rather never see the question, press `,`, open *music & lyrics* ›
+*spotify* and set *keep the login in* to *private file*. A file never
+asks, but any program you run could read it.
 
 **Spotify says it "refused this account".**
 Your account isn't on the developer app's list, or its owner has no

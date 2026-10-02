@@ -6,11 +6,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::library::{KEYCHAIN_HEADS_UP, PENDING_FOR};
 use super::*;
 use crate::media::{Capabilities, Command, FakeSource, Snapshot, Status as Play, Track};
 use crate::spotify_web::fake::{FakeWeb, demo, track as web_track};
 use crate::spotify_web::{Error, PlayerState, Repeat, Request, Web};
-use super::library::{KEYCHAIN_HEADS_UP, PENDING_FOR};
 use crate::ui::keymap::{Action, PlayerKey as P};
 
 const PLAYING: &str = "spotify:track:t0";

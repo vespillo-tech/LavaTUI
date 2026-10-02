@@ -68,10 +68,23 @@ the browser shows a "connected" page and LavaTUI has the login. It is kept
 in the OS credential store (macOS Keychain, Windows Credential Manager,
 Secret Service on Linux), or, if there isn't one, in
 `<data dir>/lavatui/spotify-tokens.json`, readable by you only. Logging out
-deletes both.
-`LAVATUI_SPOTIFY_TOKEN_FILE=/path/tokens.json` keeps it in that file
-(0600) instead, never touching the keyring: for headless runs, scripted
-screenshots, or a macOS Keychain that asks again after every rebuild.
+deletes both. `spotify.store = "file"` (the setup's *keep the login in* ›
+*private file*) always uses that file; switching moves a saved login
+across. `LAVATUI_SPOTIFY_TOKEN_FILE=/path/tokens.json` keeps it in that
+file (0600) instead, never touching the keyring: for headless runs,
+scripted screenshots, or a macOS Keychain that asks again after every
+rebuild.
+
+On macOS the Keychain is read only when the login is first needed in a
+session: the first like, add, playlist browse, Web API shuffle / repeat,
+or opening the Spotify setup (lava-1xk.38). A toast says first that macOS
+may ask and to choose *Always Allow*; the key then runs once the login is
+read (it gives up after 30 s). Until then `spotify.logged_in`, a plain
+flag the app keeps in the config, is what shows "connected". The Keychain
+ties *Always Allow* to the program's code signature, and an ad-hoc signed
+build is a new program after every update; a Developer ID signed release
+(see `docs/architecture.md`, Releases) keeps it. Elsewhere the login is
+read at start, as no other store asks.
 
 ## Spotify's rules (checked 2026-10-01)
 
@@ -255,7 +268,9 @@ Notes:
 
 - On macOS, a rebuilt debug binary is a "different app" to the Keychain,
   so the first token read after a rebuild may show a Keychain prompt
-  ("Always Allow" silences it until the next rebuild).
+  ("Always Allow" silences it until the next rebuild). Use
+  `LAVATUI_SPOTIFY_TOKEN_FILE` or `spotify.store = "file"` while
+  developing.
 - The callback server listens on `127.0.0.1:8731` only while a login is
   pending (up to 5 minutes). It ignores anything but `/callback` and
   rejects a `state` mismatch.
