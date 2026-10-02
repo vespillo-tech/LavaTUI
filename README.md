@@ -463,6 +463,13 @@ further, lower the frame rate with `lavatui --fps 30` (or *smoothness*
 on the *window* page of the settings), or pick a simpler style such as
 `braille`.
 
+**The lamp stutters when I make my Ghostty window big.**
+Check Ghostty's shaders first. A shader (glow, a screen look) redraws
+every dot of the window, many times a second. In a big window that is
+a lot of work for your graphics chip, so Ghostty may skip frames even
+while LavaTUI keeps up. Try a smaller window, or switch off the
+heaviest shader (glow is the usual one). A busy computer makes it worse.
+
 **How do I get my settings back to normal?**
 Each settings page has a reset line. Or delete `config.toml` (see
 [Settings](#settings)).
