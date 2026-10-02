@@ -58,7 +58,8 @@ impl Default for ArtSettings {
     }
 }
 
-/// `art.detail`: how covers are drawn.
+/// `art.detail`: how covers are drawn. Stored by the technical names
+/// (`pixels`, `sextant`, …); the names the user reads on screen also load.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Detail {
@@ -66,10 +67,13 @@ pub enum Detail {
     #[default]
     Auto,
     /// Real pixels (kitty graphics protocol).
+    #[serde(alias = "photo")]
     Pixels,
+    #[serde(alias = "fine")]
     Sextant,
+    #[serde(alias = "medium")]
     Quadrant,
-    #[serde(rename = "halfblock")]
+    #[serde(rename = "halfblock", alias = "coarse")]
     HalfBlock,
 }
 
@@ -87,13 +91,14 @@ impl Detail {
         Self::ALL[(i + 1) % Self::ALL.len()]
     }
 
-    pub fn name(self) -> &'static str {
+    /// The name the user reads (toasts, help): how fine the picture is.
+    pub fn label(self) -> &'static str {
         match self {
-            Detail::Auto => "auto",
-            Detail::Pixels => "pixels",
-            Detail::Sextant => "sextant",
-            Detail::Quadrant => "quadrant",
-            Detail::HalfBlock => "halfblock",
+            Detail::Auto => "auto (best available)",
+            Detail::Pixels => Drawn::Pixels.label(),
+            Detail::Sextant => Drawn::Text(TextMode::Sextant).label(),
+            Detail::Quadrant => Drawn::Text(TextMode::Quadrant).label(),
+            Detail::HalfBlock => Drawn::Text(TextMode::HalfBlock).label(),
         }
     }
 }
@@ -130,6 +135,19 @@ pub enum Drawn {
     Text(TextMode),
     /// No picture at all (16 colours without pixels, or no colour).
     None,
+}
+
+impl Drawn {
+    /// How fine the picture is, as the user reads it.
+    pub fn label(self) -> &'static str {
+        match self {
+            Drawn::Pixels => "photo",
+            Drawn::Text(TextMode::Sextant) => "fine",
+            Drawn::Text(TextMode::Quadrant) => "medium",
+            Drawn::Text(TextMode::HalfBlock) => "coarse",
+            Drawn::None => "no pictures in this terminal",
+        }
+    }
 }
 
 /// What the terminal can show, read once at start ([`crate::graphics`]).
@@ -203,23 +221,27 @@ const MESSAGE_W: (u16, u16) = (20, 30);
 pub enum Show {
     /// The cover (or its placeholder while it loads).
     Picture,
-    Message(&'static str),
+    Message(String),
 }
 
 fn show(model: &Model) -> Show {
     if model.pictures() == Drawn::None {
-        return Show::Message("covers need 256 colours");
+        return Show::Message("covers need 256 colours".into());
     }
     let Some(snap) = model.music.snapshot.as_ref() else {
-        return Show::Message("…");
+        return Show::Message("…".into());
     };
     let track = match (&snap.status, &snap.track) {
         (Status::Playing | Status::Paused, Some(track)) => track,
-        (Status::Connecting, _) => return Show::Message("…"),
-        _ => return Show::Message("nothing playing"),
+        (Status::Connecting, _) => return Show::Message("…".into()),
+        // The player's own problem and next step, as the music widget says.
+        (Status::Unavailable(reason), _) => {
+            return Show::Message(reason.message_for(snap.player_name(), "album art"));
+        }
+        _ => return Show::Message("nothing playing".into()),
     };
     if track.artwork_url.is_empty() || model.music.art() == ArtState::Missing {
-        return Show::Message("no cover");
+        return Show::Message("no cover".into());
     }
     Show::Picture
 }
@@ -313,7 +335,7 @@ impl DockWidget for Cover {
                 Backdrop::Panel => Place::Side,
             };
             let dim = model.theme.text(Role::Dim);
-            for (i, line) in message(text, place).iter().enumerate() {
+            for (i, line) in message(&text, place).iter().enumerate() {
                 if i as u16 >= area.height {
                     break;
                 }
@@ -488,7 +510,7 @@ mod tests {
         let tall = cover_forms(&Show::Picture, Place::Overlay, CoverSize::Medium, 2.4);
         assert_eq!(tall[0].size.height, 10);
         let msg = cover_forms(
-            &Show::Message("no cover"),
+            &Show::Message("no cover".into()),
             Place::Side,
             CoverSize::Fill,
             2.0,
@@ -496,7 +518,7 @@ mod tests {
         assert_eq!(msg.len(), 1);
         assert_eq!((msg[0].size.width, msg[0].size.height), (10, 1));
         // Longer ones wrap to fit the panel's narrowest.
-        let long = Show::Message("covers need 256 colours");
+        let long = Show::Message("covers need 256 colours".into());
         let side = cover_forms(&long, Place::Side, CoverSize::Fill, 2.0);
         assert!(
             side[0].size.width <= 20 && side[0].size.height == 2,

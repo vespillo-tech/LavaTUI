@@ -13,38 +13,38 @@ use crate::theme::{ColorDepth, Ink, Role};
 pub const HINTS: &[(&str, &str, u8)] = &[
     ("s", "style", 4),
     ("c", "clock", 3),
-    ("p", "palette", 2),
-    ("m", "minimal", 0),
-    ("␣", "pomo", 1),
+    ("p", "colours", 2),
+    ("m", "lamp only", 0),
+    ("Space", "timer", 1),
     ("?", "help", 5),
 ];
 
-/// Hints shown while the player keys are on (`A`).
+/// Hints shown while the player keys are on (`A`): the way back first.
 pub const PLAYER_HINTS: &[(&str, &str, u8)] = &[
-    ("␣", "play", 5),
+    ("Space", "play", 4),
     ("n p", "skip", 3),
     ("←→", "seek", 2),
     ("↑↓", "volume", 1),
     ("b", "playlists", 0),
-    ("esc", "done", 4),
+    ("Esc", "back", 5),
 ];
 
 /// Hints while the playlist browser or add-to-playlist picker is open
 /// (also the sheet's own hint row, without `↑↓`).
 pub const PLAYLISTS_HINTS: &[(&str, &str, u8)] = &[
     ("↑↓", "move", 0),
-    ("⏎", "open", 3),
+    ("Enter", "open", 3),
     ("p", "play", 2),
-    ("esc", "close", 4),
+    ("Esc", "close", 4),
 ];
 pub const TRACKS_HINTS: &[(&str, &str, u8)] = &[
     ("↑↓", "move", 0),
-    ("⏎", "play", 3),
+    ("Enter", "play", 3),
     ("p", "play all", 2),
-    ("esc", "back", 4),
+    ("Esc", "back", 4),
 ];
 pub const ADD_HINTS: &[(&str, &str, u8)] =
-    &[("↑↓", "move", 0), ("⏎", "add", 3), ("esc", "close", 4)];
+    &[("↑↓", "move", 0), ("Enter", "add", 3), ("Esc", "close", 4)];
 
 /// The library hints for `kind`.
 pub fn library_hints(kind: ListKind) -> &'static [(&'static str, &'static str, u8)] {
@@ -56,8 +56,11 @@ pub fn library_hints(kind: ListKind) -> &'static [(&'static str, &'static str, u
 }
 
 /// Hints shown while a picker is open (also the sheet's own hint row).
-pub const PICKER_HINTS: &[(&str, &str, u8)] =
-    &[("↑↓", "preview", 0), ("⏎", "keep", 1), ("esc", "revert", 2)];
+pub const PICKER_HINTS: &[(&str, &str, u8)] = &[
+    ("↑↓", "preview", 0),
+    ("Enter", "save", 1),
+    ("Esc", "cancel", 2),
+];
 
 /// Width of hints laid out with two spaces between them.
 fn hints_width(hints: &[(&str, &str, u8)]) -> usize {

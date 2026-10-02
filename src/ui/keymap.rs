@@ -39,6 +39,8 @@ pub enum Action {
     PlayerKeys,
     /// `O`: the next cover detail (`art.detail`).
     CoverDetail,
+    /// `w`: show the welcome card again.
+    Welcome,
     /// One of the player keys (only while they're on).
     Player(PlayerKey),
     ToggleHour24,
@@ -143,10 +145,10 @@ impl Section {
     pub fn title(self) -> &'static str {
         match self {
             Section::Lamp => "lamp",
-            Section::Clock => "clock & pomodoro",
+            Section::Clock => "clock & timer",
             Section::Widgets => "widgets",
             Section::App => "app",
-            Section::Music => "music · after A",
+            Section::Music => "music controls · Shift+A",
         }
     }
 }
@@ -155,7 +157,8 @@ impl Section {
 #[derive(Debug, Clone, Copy)]
 pub struct Row {
     pub section: Section,
-    /// Keys as shown in help (`[ ]`, `r r`, `␣`).
+    /// Keys as shown in help (`[ ]`, `r r`, `Space`, `Shift+S`); empty
+    /// for a note under the row above.
     pub keys: &'static str,
     pub label: &'static str,
     pub binds: &'static [(Key, Action)],
@@ -182,9 +185,14 @@ use Section::{App, Clock, Lamp, Music, Widgets};
 
 pub static KEYMAP: &[Row] = &[
     row(Lamp, "s", "next style", &[(K('s'), A::NextStyle)]),
-    row(Lamp, "S", "style picker", &[(K('S'), A::StylePicker)]),
-    row(Lamp, "p", "next palette", &[(K('p'), A::NextPalette)]),
-    row(Lamp, "P", "palette picker", &[(K('P'), A::PalettePicker)]),
+    row(Lamp, "Shift+S", "choose style", &[(K('S'), A::StylePicker)]),
+    row(Lamp, "p", "next colours", &[(K('p'), A::NextPalette)]),
+    row(
+        Lamp,
+        "Shift+P",
+        "choose colours",
+        &[(K('P'), A::PalettePicker)],
+    ),
     row(
         Lamp,
         "[ ]",
@@ -208,86 +216,106 @@ pub static KEYMAP: &[Row] = &[
         "reset heat & speed",
         &[(K('0'), A::ResetHeatSpeed)],
     ),
-    row(Lamp, "R", "reseed wax", &[(K('R'), A::Reseed)]),
-    row(Clock, "c", "next face", &[(K('c'), A::NextFace)]),
-    row(Clock, "C", "face picker", &[(K('C'), A::FacePicker)]),
-    row(Clock, "T", "12h / 24h", &[(K('T'), A::ToggleHour24)]),
+    row(Lamp, "Shift+R", "new wax pattern", &[(K('R'), A::Reseed)]),
+    row(Clock, "c", "next clock face", &[(K('c'), A::NextFace)]),
+    row(Clock, "Shift+C", "choose clock", &[(K('C'), A::FacePicker)]),
+    row(Clock, "Shift+T", "12h / 24h", &[(K('T'), A::ToggleHour24)]),
     row(
         Clock,
-        "␣",
-        "start / pause",
+        "Space",
+        "timer start / pause",
         &[(Key::Space, A::PomodoroToggle)],
     ),
-    row(Clock, "n", "skip phase", &[(K('n'), A::PomodoroSkip)]),
-    row(
-        Clock,
-        "r r",
-        "reset pomodoro",
-        &[(K('r'), A::PomodoroReset)],
-    ),
+    row(Clock, "n", "skip timer phase", &[(K('n'), A::PomodoroSkip)]),
+    row(Clock, "r r", "reset timer", &[(K('r'), A::PomodoroReset)]),
     // One row per dock widget (`Action::Place` names it), plus the anchor.
     row(
         Widgets,
         "t",
-        "clock side/lava/off",
+        "clock: side/lamp/off",
         &[(K('t'), A::Place("clock"))],
     ),
     row(
         Widgets,
         "f",
-        "pomodoro side/lava/off",
+        "timer: side/lamp/off",
         &[(K('f'), A::Place("pomodoro"))],
     ),
     row(
         Widgets,
         "a",
-        "music side/lava/off",
+        "music: side/lamp/off",
         &[(K('a'), A::Place("music"))],
     ),
-    row(Widgets, "A", "music keys", &[(K('A'), A::PlayerKeys)]),
+    row(
+        Widgets,
+        "Shift+A",
+        "music controls",
+        &[(K('A'), A::PlayerKeys)],
+    ),
     row(
         Widgets,
         "y",
-        "lyrics · lrclib.net",
+        "lyrics: side/lamp/off",
         &[(K('y'), A::Place("lyrics"))],
     ),
+    // Not a key: what turning the lyrics on sends, said where it's read.
+    row(Widgets, "", "song, artist, album", &[]),
+    row(Widgets, "", "and length go to", &[]),
+    row(Widgets, "", "lrclib.net", &[]),
     row(
         Widgets,
-        "o O",
-        "cover · detail",
-        &[(K('o'), A::Place("cover")), (K('O'), A::CoverDetail)],
+        "o",
+        "cover: side/lamp/off",
+        &[(K('o'), A::Place("cover"))],
     ),
     row(
         Widgets,
-        "l L",
-        "move, pick lava widget",
-        &[(K('l'), A::NextAnchor), (K('L'), A::NextLavaWidget)],
+        "Shift+O",
+        "cover quality",
+        &[(K('O'), A::CoverDetail)],
+    ),
+    row(
+        Widgets,
+        "l",
+        "move selected item",
+        &[(K('l'), A::NextAnchor)],
+    ),
+    row(
+        Widgets,
+        "Shift+L",
+        "select item to move",
+        &[(K('L'), A::NextLavaWidget)],
     ),
     // m ? q first: the small full-screen help leads with them (§4.3).
-    row(App, "m", "minimal", &[(K('m'), A::ToggleMinimal)]),
+    row(App, "m", "lamp only", &[(K('m'), A::ToggleMinimal)]),
     row(App, "?", "this help", &[(K('?'), A::Help)]),
     row(
         App,
         "q",
-        "quit · ctrl-c",
+        "quit · Ctrl+C",
         &[(K('q'), A::Quit), (Ctrl('c'), A::Quit)],
     ),
-    row(
-        App,
-        "b d",
-        "status bar · debug hud",
-        &[(K('b'), A::ToggleStatusBar), (K('d'), A::DebugHud)],
-    ),
-    row(App, "ctrl-l", "redraw", &[(Ctrl('l'), A::Redraw)]),
+    row(App, "b", "status bar", &[(K('b'), A::ToggleStatusBar)]),
+    row(App, "d", "performance info", &[(K('d'), A::DebugHud)]),
+    row(App, "w", "welcome tips", &[(K('w'), A::Welcome)]),
+    row(App, "Ctrl+L", "redraw", &[(Ctrl('l'), A::Redraw)]),
     // Not a key: with mouse capture on, the terminal's own selection.
     row(App, "⇧ drag", "select text", &[]),
     // The player keys, after `A` (their own mode: they may reuse keys).
+    // How to leave them leads, since they take the keyboard (`q` too).
+    row(Music, "Esc q", "back to lamp controls", &[]),
     row(
         Music,
-        "␣ n p",
-        "play · next · previous",
+        "Space",
+        "play / pause",
+        &[(Key::Space, A::Player(P::PlayPause))],
+    ),
+    row(
+        Music,
+        "n p",
+        "next · previous",
         &[
-            (Key::Space, A::Player(P::PlayPause)),
             (K('n'), A::Player(P::Next)),
             (K('p'), A::Player(P::Previous)),
         ],
@@ -320,23 +348,24 @@ pub static KEYMAP: &[Row] = &[
         ],
     ),
     // The Spotify library (Web API, `docs/spotify.md`).
+    row(Music, "s", "like", &[(K('s'), A::Player(P::Like))]),
     row(
         Music,
-        "s a",
-        "like · add to playlist",
-        &[
-            (K('s'), A::Player(P::Like)),
-            (K('a'), A::Player(P::AddToPlaylist)),
-        ],
+        "a",
+        "add to playlist",
+        &[(K('a'), A::Player(P::AddToPlaylist))],
     ),
     row(
         Music,
-        "b i",
-        "playlists · log in/out",
-        &[
-            (K('b'), A::Player(P::Playlists)),
-            (K('i'), A::Player(P::Account)),
-        ],
+        "b",
+        "playlists",
+        &[(K('b'), A::Player(P::Playlists))],
+    ),
+    row(
+        Music,
+        "i",
+        "log in / out",
+        &[(K('i'), A::Player(P::Account))],
     ),
 ];
 
@@ -403,8 +432,9 @@ fn key_action(event: &KeyEvent, mode: InputMode) -> Option<Action> {
     let code = event.code;
     match mode {
         InputMode::Normal => {
+            // Closes the welcome card; nothing else.
             if code == KeyCode::Esc {
-                return None;
+                return Some(Action::Close);
             }
             binding(Section::is_global, key?)
         }
@@ -551,7 +581,7 @@ mod tests {
     #[test]
     fn esc_never_quits() {
         let esc = press(KeyCode::Esc, KeyModifiers::NONE);
-        assert_eq!(action_for(&esc, InputMode::Normal), None);
+        assert_eq!(action_for(&esc, InputMode::Normal), Some(Action::Close));
         assert_eq!(action_for(&esc, InputMode::Help), Some(Action::Close));
         assert_eq!(action_for(&esc, PICKER), Some(Action::Close));
     }

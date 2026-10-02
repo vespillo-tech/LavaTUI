@@ -4,13 +4,15 @@
 //! `Theme`.
 //!
 //! Draw order, back to front: background → lamp → widgets on the lava →
-//! panel / chip → status bar → toast → HUD → overlay.
+//! panel / chip → status bar → toast → HUD → cards / guide line → overlay
+//! → face preview.
 //!
 //! Chrome never shares a cell with other chrome (§8.2): anything an open
-//! overlay would cover (or touch, for the panel, the chip and the widgets
-//! on the lava) is left out whole rather than clipped, and a toast
-//! outranks the corner HUD.
+//! overlay or a card would cover (or touch, for the panel, the chip and
+//! the widgets on the lava) is left out whole rather than clipped, and a
+//! toast outranks the corner HUD and the guide line.
 
+pub mod cards;
 pub(crate) mod chrome;
 mod dock;
 pub mod help;
@@ -69,8 +71,9 @@ pub fn draw(frame: &mut Frame, model: &Model, lamp: &mut LampState) {
     }
 
     let buf = frame.buffer_mut();
-    let covered = overlay_footprint(area, layout, model);
-    let free = |r: Rect, gap: u16| covered.is_none_or(|c| !picker::grow(c, gap).intersects(r));
+    let mut covered: Vec<Rect> = overlay_footprint(area, layout, model).into_iter().collect();
+    covered.extend(cards::footprints(area, layout, model));
+    let free = |r: Rect, gap: u16| covered.iter().all(|&c| !picker::grow(c, gap).intersects(r));
     for s in layout.on_lava.iter().filter(|s| free(halo(s.rect), 1)) {
         dock::draw_on_lava(buf, s, model, lamp_theme);
     }
@@ -96,13 +99,17 @@ pub fn draw(frame: &mut Frame, model: &Model, lamp: &mut LampState) {
         && let Some(r) = chrome::hud_corner_rect(area, model)
         && free(r, 0)
         && toast.as_ref().is_none_or(|((t, _), _)| !t.intersects(r))
+        && (toast.is_some() || cards::guide(layout, model).is_none_or(|(g, _)| !g.intersects(r)))
     {
         chrome::draw_hud_corner(buf, r, model);
     }
     match model.overlay {
-        Overlay::None => {}
+        Overlay::None => cards::draw(buf, area, layout, model, toast.is_some()),
         Overlay::Help { scroll } => help::draw(buf, area, scroll, model),
-        Overlay::Picker(p) => picker::draw(buf, area, layout, &p, model),
+        Overlay::Picker(p) => {
+            picker::draw(buf, area, layout, &p, model);
+            cards::draw(buf, area, layout, model, true);
+        }
         Overlay::Library(v) => library::draw(buf, area, layout, &v, model),
     }
 }

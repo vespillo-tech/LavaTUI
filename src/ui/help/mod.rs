@@ -34,14 +34,14 @@ pub fn draw(buf: &mut Buffer, area: Rect, scroll: u16, model: &Model) {
             Clear.render(area, buf);
             buf.set_style(area, ink.bg);
             buf.set_string(area.x + 1, area.y, "keys", ink.accent);
-            let close = "esc close";
+            let close = "Esc close";
             let mut end = area.right() - 1;
             if area.width as usize > 6 + close.len() {
                 end -= close.len() as u16;
                 buf.set_string(end, area.y, close, ink.dim);
                 end -= 2;
             }
-            // Cut-off keys say so: `keys  ↓ j/k more   esc close`.
+            // Cut-off keys say so: `keys  ↓ j/k more   Esc close`.
             let x = area.x + 7;
             let room = usize::from(end.saturating_sub(x));
             if let Some(hint) = scroll_hint(scroll, max_scroll(area), room) {
@@ -56,7 +56,7 @@ pub fn draw(buf: &mut Buffer, area: Rect, scroll: u16, model: &Model) {
                 .border_type(BorderType::Rounded)
                 .border_style(Style::new().fg(model.theme.role(Role::Metal)))
                 .title(ratatui::text::Line::styled(" keys ", ink.accent))
-                .title_bottom(ratatui::text::Line::styled(" esc close ", ink.dim).right_aligned())
+                .title_bottom(ratatui::text::Line::styled(" Esc close ", ink.dim).right_aligned())
                 .title_bottom(
                     scroll_hint(scroll, max_scroll(area), usize::from(sheet.width / 2))
                         .map(|hint| ratatui::text::Line::styled(format!(" {hint} "), ink.dim))

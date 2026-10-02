@@ -68,7 +68,9 @@ fn show(model: &Model) -> Show {
         return message("…");
     };
     match (&snap.status, &snap.track) {
-        (Status::Unavailable(reason), _) => return message(&reason.message(snap.player_name())),
+        (Status::Unavailable(reason), _) => {
+            return message(&reason.message_for(snap.player_name(), "lyrics"));
+        }
         (Status::Connecting, _) => return message("…"),
         (Status::Stopped, _) | (_, None) => return message("nothing playing"),
         _ => {}

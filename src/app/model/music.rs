@@ -247,19 +247,11 @@ impl Model {
         let detail = art.detail;
         self.changed(now);
         self.sync_music();
-        let drawn = match self.pictures() {
-            Drawn::Pixels => "pixels",
-            Drawn::Text(cover_mode) => match cover_mode {
-                dock::picture::TextMode::Sextant => "sextant",
-                dock::picture::TextMode::Quadrant => "quadrant",
-                dock::picture::TextMode::HalfBlock => "halfblock",
-            },
-            Drawn::None => "no pictures here",
-        };
-        self.toast(if drawn == detail.name() {
-            format!("cover · {drawn}")
+        let drawn = self.pictures().label();
+        self.toast(if drawn == detail.label() {
+            format!("cover quality · {drawn}")
         } else {
-            format!("cover · {} · {drawn}", detail.name())
+            format!("cover quality · {} · {drawn}", detail.label())
         });
     }
 
@@ -271,8 +263,8 @@ impl Model {
         }
         self.music.keys = true;
         self.toast(match self.library.account() {
-            super::library::Account::LoggedOut => "music keys · i log in · esc when done",
-            _ => "music keys · esc when done",
+            super::library::Account::LoggedOut => "music controls · i log in · Esc back",
+            _ => "music controls · Esc back",
         });
     }
 

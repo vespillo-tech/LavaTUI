@@ -17,7 +17,9 @@
 //! track has one. It's drawn the cover widget's way (pixels or text cells);
 //! until it has loaded a quiet placeholder holds its place, so nothing
 //! jumps when it arrives. With no player to show, the widget is one calm
-//! sentence instead (`Spotify isn't running`) and has no chip.
+//! sentence instead (`Open Spotify to show music`), and its chip the short
+//! of it (`♪ open Spotify`, else `♪ see Shift+A`: the music controls show
+//! the whole sentence when the widget has no room for it).
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Rect};
@@ -26,7 +28,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::{Anchor, ChipText, DockWidget, Look, Place, WidgetForm, align_x};
 use crate::app::{Account, Model};
-use crate::media::{Snapshot, Status};
+use crate::media::{Snapshot, Status, Unavailable};
 use crate::theme::Role;
 use crate::ui::keymap::PlayerKey;
 
@@ -209,10 +211,13 @@ impl DockWidget for Music {
         Anchor::TopLeft
     }
 
-    /// Playing 2 (above the clock), paused 1, otherwise 0.
+    /// Playing 2 (above the clock), paused 1, otherwise 0; a player
+    /// problem the user can fix 2, so its chip outlasts the clock's.
     fn rank(&self, model: &Model) -> u8 {
         match model.music.snapshot.as_ref().map(|s| &s.status) {
             Some(Status::Playing) => 2,
+            Some(Status::Unavailable(Unavailable::Unsupported)) => 0,
+            Some(Status::Unavailable(_)) => 2,
             Some(Status::Paused) => 1,
             _ => 0,
         }
@@ -222,6 +227,9 @@ impl DockWidget for Music {
     /// without a track.
     fn chip(&self, model: &Model) -> Option<ChipText> {
         let snap = model.music.snapshot.as_ref()?;
+        if let Status::Unavailable(reason) = &snap.status {
+            return problem_chip(reason, snap.player_name());
+        }
         snap.track.as_ref()?;
         if !matches!(snap.status, Status::Playing | Status::Paused) {
             return None;
@@ -231,6 +239,21 @@ impl DockWidget for Music {
             ink: Role::Text,
         })
     }
+}
+
+/// The chip for a player problem: the next step when it's short, else
+/// where to read it (the music controls' note).
+fn problem_chip(reason: &Unavailable, player: &str) -> Option<ChipText> {
+    let text = match reason {
+        Unavailable::Unsupported => return None,
+        Unavailable::NotRunning if player.contains(' ') => "♪ open your player".into(),
+        Unavailable::NotRunning => format!("♪ open {player}"),
+        _ => "♪ see Shift+A".into(),
+    };
+    Some(ChipText {
+        text: fit(&text, CHIP_MAX),
+        ink: Role::Text,
+    })
 }
 
 /// Where a form's pieces go in its rect: what [`Music::draw`] draws and
