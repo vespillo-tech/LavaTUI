@@ -159,6 +159,9 @@ pub struct Model {
     /// Ghostty's config tell (read once at start, for `display.cells =
     /// "auto"`).
     pub detected_cells: Cells,
+    /// The window's opacity when Ghostty's config makes cell backgrounds
+    /// see-through (read with `detected_cells`).
+    pub ghostty_opacity: Option<f32>,
     /// Draw only glyphs every terminal font has (read once at start;
     /// [`Model::glyphs`]).
     pub safe_glyphs: bool,
@@ -233,6 +236,7 @@ impl Model {
         let mut world = World::new(seed, 1.0);
         world.set_heat(settings.lamp.heat);
         let (caps, unconfirmed) = Caps::detect();
+        let (detected_cells, ghostty_opacity) = crate::cells::detect();
         let mut model = Model {
             style: StyleId::by_name(&settings.lamp.style).unwrap_or_default(),
             theme: Theme::new(
@@ -263,7 +267,8 @@ impl Model {
             music: Music::default(),
             caps,
             probe: unconfirmed.map(|p| Probe::new(p, now)),
-            detected_cells: crate::cells::detect(),
+            detected_cells,
+            ghostty_opacity,
             safe_glyphs: crate::cells::safe_glyphs(),
             kitty: Kitty::default(),
             inline: Inline::default(),
@@ -708,6 +713,9 @@ pub fn speed_toast(speed: SimSpeed) -> String {
     format!("speed ×{}", speed.factor())
 }
 
+/// The opacity assumed for see-through cell backgrounds nothing measured.
+pub const ASSUMED_OPACITY: f32 = 0.75;
+
 impl Model {
     /// The symbols widgets and chrome draw with ([`crate::glyphs`]).
     pub fn glyphs(&self) -> &'static crate::glyphs::Glyphs {
@@ -732,6 +740,16 @@ impl Model {
     /// `render::cell::half_block`).
     pub fn translucent_cells(&self) -> bool {
         self.cells() == Cells::Translucent
+    }
+
+    /// With see-through cell backgrounds, how opaque they are: Ghostty's
+    /// `background-opacity`, or [`ASSUMED_OPACITY`] when
+    /// `display.cells = "translucent"` says so but nothing tells how much.
+    /// What a background shows as is worked out over a dark desktop
+    /// (`Theme::shown_luminance`), for floating text's contrast.
+    pub fn cell_opacity(&self) -> Option<f32> {
+        self.translucent_cells()
+            .then(|| self.ghostty_opacity.unwrap_or(ASSUMED_OPACITY))
     }
 }
 

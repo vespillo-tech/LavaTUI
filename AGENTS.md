@@ -250,7 +250,9 @@ numbers); `docs/design.md` is the layout/visual contract.
                 (Ghostty with `background-opacity` < 1 +
                 `background-opacity-cells`; reads its config files and
                 `config-file` includes once at start;
-                `Model::translucent_cells` → `LampOptions.translucent`),
+                `Model::translucent_cells` → `LampOptions.translucent`;
+                `Model::cell_opacity`: its `background-opacity`, which
+                floating text's contrast measures backgrounds through),
                 `Background` when its block glyphs stop short of the cell's
                 top or side (macOS Terminal: `TERM_PROGRAM=Apple_Terminal`;
                 Ghostex / zmx, `cells::hosted`;
@@ -458,7 +460,9 @@ numbers); `docs/design.md` is the layout/visual contract.
                 overlay. `mod.rs` draws back to front; `dock.rs` (panel, widgets on the
                 lava, floating by default — `dock.backing = "none"`:
                 glyphs only, each cell keeping the lamp's colours, ink
-                per word by contrast with hysteresis — or on the soft
+                per glyph by contrast with what's displayed behind it,
+                per-glyph hysteresis; `contrast_trace` (ignored test) is
+                the seeded repro — or on the soft
                 backing, `"soft"`: veiled 82 % to liquid, truecolor
                 only — and the chip), `chrome.rs` (status
                 bar + hint fitting, HUD, toasts), `help/` (`sheet.rs`: the

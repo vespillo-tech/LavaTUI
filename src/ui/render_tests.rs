@@ -45,7 +45,7 @@ const SIZES: &[(u16, u16)] = &[
     (120, 36),
 ];
 
-fn local() -> LocalTime {
+pub(super) fn local() -> LocalTime {
     LocalTime {
         time: ClockTime::new(14, 32, 7).unwrap(),
         date: "thu 1 oct".into(),
@@ -313,7 +313,7 @@ const LRC: &str = "[00:05.00]Wax rises slowly through the amber light\\n\
 
 /// The lyrics widget on a fake player `secs` into the song, its lines
 /// already fetched (from a mock LRCLIB), placed by `presses` of `y`.
-fn lyrics(m: &mut Model, t: Instant, presses: usize, secs: u64) {
+pub(super) fn lyrics(m: &mut Model, t: Instant, presses: usize, secs: u64) {
     use crate::lyrics::LyricsService;
     use crate::lyrics::client::Lrclib;
     use crate::lyrics::client::tests::{Mock, ok};

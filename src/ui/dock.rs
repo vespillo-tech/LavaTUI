@@ -2,7 +2,7 @@
 //! the lava (floating, or on a soft backing), and the one-line chip.
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::{Position, Rect};
@@ -60,29 +60,41 @@ pub fn draw_on_lava(buf: &mut Buffer, stack: &Stack, model: &Model, lamp: &Theme
             &scratch,
             model.theme.role(Role::Dim),
             lamp,
-            model.translucent_cells(),
+            model.cell_opacity(),
         ),
         Backing::Soft => soft(buf, &scratch, lamp),
     }
 }
 
-/// Below this contrast ratio (WCAG) a floating word leaves its own ink
-/// for the palette's light or dark one; or below how well its ink reads
-/// on the plain liquid, if that's less (paper's `dim`, 2.85 : 1), give or
-/// take [`SLACK`], so a palette's quiet ink stays quiet on its own liquid.
-const LEGIBLE: f32 = 3.0;
-const SLACK: f32 = 0.95;
-/// How much a word's ink from the last frame is favoured: another ink has
-/// to read this much better before the word flips, so a word flips once
-/// as wax drifts under it, never back and forth frame to frame.
-const STICKY: f32 = 1.25;
-/// A letter of a text word whose ink would read below this over what's
-/// behind it (the word straddles pale wax and dark liquid) takes the
-/// better of the light and dark inks on its own, with the same
-/// hysteresis. Big block digits never split: they read at any contrast.
-const FLOOR: f32 = 1.8;
+/// Floating text reads at least this well (WCAG contrast) against what's
+/// displayed behind each glyph: its own ink while that clears the bar,
+/// else the better of the palette's light and dark inks. AA for text.
+const READABLE: f32 = 4.5;
+/// The bar for block glyphs (the big clock digits): WCAG's large text;
+/// and the least any glyph's own ink may read.
+const LARGE: f32 = 3.0;
+/// A role ink that reads less than [`READABLE`] on the plain liquid (dim
+/// lines: lava's `dim` 3.6 : 1) keeps itself while it reads at least this
+/// share of that, never below [`LARGE`], so a quiet line stays quiet on
+/// its own liquid and leaves for light / dark as soon as wax makes it
+/// worse. (Paper's `dim`, 2.85 : 1 on its liquid, reads dark instead.)
+const SLACK: f32 = 0.9;
+/// A glyph that left its own ink takes it back once that reads this much
+/// over the bar: the bar's hysteresis, above it, so the own ink never
+/// reads below the bar. Under 1 / [`SLACK`], so a quiet ink still gets
+/// back on its liquid.
+const RETURN: f32 = 1.08;
+/// How much a glyph's ink from the last frame is favoured (its contrast
+/// counts this much more): it changes once as wax drifts under it, never
+/// back and forth frame to frame. Light and dark cross at ≈ 3.8 : 1 on
+/// lava, so the ink kept never reads below ≈ 3.5 : 1.
+const STICKY: f32 = 1.15;
 
-/// A floating word's ink: its own (the widget's role colours), or the
+/// A glyph follows the ink of the one before it in its word (where light
+/// and dark read about as well) only while that reads at least this.
+const FOLLOW: f32 = 3.3;
+
+/// A floating glyph's ink: its own (the widget's role colours), or the
 /// palette's light or dark one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Ink {
@@ -91,14 +103,23 @@ enum Ink {
     Dark,
 }
 
-/// The inks floating text had last frame: the one memory drawing keeps,
-/// for [`STICKY`]. Rebuilt every frame, so it holds only what's on screen.
-#[derive(Default)]
-struct Inks {
-    /// Each word's, by its first cell.
-    words: HashMap<(u16, u16), Ink>,
-    /// The letters that left their word's ink ([`FLOOR`]), by cell.
-    letters: HashMap<(u16, u16), Ink>,
+/// What floating glyphs had last frame, by cell: the one memory drawing
+/// keeps, for [`STICKY`] and [`Memory::next`]. Each stack replaces its
+/// own area's every frame, so it holds only what's on screen.
+type Inks = HashMap<(u16, u16), Memory>;
+
+/// One glyph's memory.
+#[derive(Debug, Clone, Copy)]
+struct Memory {
+    /// The glyph (another glyph there, say a new lyric line, starts
+    /// afresh).
+    glyph: char,
+    /// Its ink.
+    ink: Ink,
+    /// The ink it wanted instead, if any: a change waits one frame, so a
+    /// line of the backdrop sweeping under a glyph (synthwave's grid)
+    /// doesn't make it blink.
+    next: Option<Ink>,
 }
 
 thread_local! {
@@ -120,6 +141,74 @@ enum Put {
     Gap,
 }
 
+/// A floating glyph's ink this frame, before it's painted.
+#[derive(Debug, Clone, Copy)]
+struct Decided {
+    ink: Ink,
+    /// What it would have taken without the one frame's wait.
+    want: Ink,
+    reads: Option<[f32; 3]>,
+    glyph: char,
+}
+
+/// One floating glyph's case for each ink.
+struct Glyph {
+    /// Contrast of own, light and dark against what's displayed behind
+    /// it; `None` when that can't be told (no colour, the terminal's
+    /// defaults): the glyph keeps its own ink.
+    reads: Option<[f32; 3]>,
+    /// The bar each ink must clear.
+    bars: [f32; 3],
+    /// Its ink last frame.
+    was: Option<Ink>,
+}
+
+impl Glyph {
+    /// How well `ink` reads, favoured if it's the glyph's last.
+    fn score(&self, ink: Ink) -> f32 {
+        let Some(reads) = self.reads else {
+            return 0.0;
+        };
+        let sticky = if self.was == Some(ink) { STICKY } else { 1.0 };
+        reads[ink as usize] * sticky
+    }
+
+    /// Whether `ink` clears its bar here: an ink it had last frame keeps
+    /// it down to the bar, another needs [`RETURN`] more, so a glyph
+    /// never reads below its bar in an ink it was left in.
+    fn clears(&self, ink: Ink) -> bool {
+        let lift = if self.was == Some(ink) { 1.0 } else { RETURN };
+        self.reads
+            .is_some_and(|r| r[ink as usize] >= self.bars[ink as usize] * lift)
+    }
+
+    /// The glyph's ink: its own while that clears the bar, else the
+    /// better of light and dark (≳ 3.5 : 1, see [`STICKY`]). Where those
+    /// two read about as well (within [`STICKY`], both ≥ [`FOLLOW`]) it
+    /// follows `left`, the glyph before it in the word, so a word over
+    /// wax in between never comes out speckled.
+    fn ink(&self, left: Option<Ink>) -> Ink {
+        if self.reads.is_none() || self.clears(Ink::Own) {
+            return Ink::Own;
+        }
+        let best = if self.score(Ink::Dark) > self.score(Ink::Light) {
+            Ink::Dark
+        } else {
+            Ink::Light
+        };
+        match left {
+            Some(l @ (Ink::Light | Ink::Dark))
+                if l != best
+                    && self.reads.is_some_and(|r| r[l as usize] >= FOLLOW)
+                    && self.score(l) * STICKY >= self.score(best) =>
+            {
+                l
+            }
+            _ => best,
+        }
+    }
+}
+
 /// No backing: the widgets' glyphs float on the lamp. Every cell keeps the
 /// lamp's colours; only the cells a glyph takes change (spaces leave the
 /// lamp showing, but for the gaps between words: [`Put::Gap`]). Block
@@ -127,15 +216,21 @@ enum Put {
 /// lamps, so wax runs right up to each stroke. Text is bold (dim lines
 /// aside).
 ///
-/// Adaptive contrast, per *word*: glyphs joined along a line, and block
-/// glyphs up and down too, so a clock digit is one word and never two-tone.
-/// A word keeps its own ink while that reads ≥ [`LEGIBLE`] against
-/// everything behind it, else takes whichever of the palette's light and
-/// dark inks reads better against its worst cell: dark over bright wax,
-/// light over the liquid. With [`STICKY`] hysteresis.
-/// `dim` is the ink of secondary lines, drawn without bold. `translucent`:
-/// the terminal shows cell backgrounds see-through ([`paint`]).
-fn float(buf: &mut Buffer, scratch: &Buffer, dim: Color, lamp: &Theme, translucent: bool) {
+/// Adaptive contrast, per *glyph*, against what the terminal displays
+/// right behind it ([`behind`]; `opacity`: see-through cell backgrounds,
+/// [`Theme::shown_luminance`]). A glyph keeps its own ink while that
+/// reads ≥ [`READABLE`] ([`LARGE`] for block glyphs; a quiet ink: see
+/// [`SLACK`]), else takes the better of the palette's light and dark
+/// inks, with [`STICKY`] hysteresis kept per glyph. Nothing else decides
+/// it, so a glyph changes only when what's behind it does: never a whole
+/// word or line at once. Words stay one ink where that costs nothing: a
+/// glyph that reads about as well in light as in dark follows the one
+/// before it ([`Glyph::ink`]), and a big clock digit takes one ink
+/// wherever that reads ≥ [`LARGE`]. A change waits a frame ([`Memory`])
+/// unless the ink it has reads below [`LARGE`].
+/// `dim` is the ink of secondary lines, drawn without bold.
+fn float(buf: &mut Buffer, scratch: &Buffer, dim: Color, lamp: &Theme, opacity: Option<f32>) {
+    let translucent = opacity.is_some();
     let area = scratch.area.intersection(buf.area);
     let (w, h) = (usize::from(area.width), usize::from(area.height));
     let at = |i: usize| Position::new(area.x + (i % w) as u16, area.y + (i / w) as u16);
@@ -160,121 +255,51 @@ fn float(buf: &mut Buffer, scratch: &Buffer, dim: Color, lamp: &Theme, transluce
         }
     }
 
-    // Words: union-find over the cells.
-    let mut parent: Vec<usize> = (0..puts.len()).collect();
-    fn root(parent: &mut [usize], mut i: usize) -> usize {
-        while parent[i] != i {
-            parent[i] = parent[parent[i]];
-            i = parent[i];
-        }
-        i
-    }
-    for i in 0..puts.len() {
-        if puts[i] == Put::Nothing {
-            continue;
-        }
-        let left = (i % w != 0 && puts[i - 1] != Put::Nothing).then(|| i - 1);
-        let block = |p| matches!(p, Put::Glyph { block: true });
-        let up = (i >= w && block(puts[i]) && block(puts[i - w])).then(|| i - w);
-        for j in left.into_iter().chain(up) {
-            let (a, b) = (root(&mut parent, i), root(&mut parent, j));
-            parent[a.max(b)] = a.min(b);
-        }
-    }
-    // In cell order, so drawing never depends on hashing.
-    let mut words: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-    for (i, put) in puts.iter().enumerate() {
-        if *put != Put::Nothing {
-            words.entry(root(&mut parent, i)).or_default().push(i);
-        }
-    }
-
     let (light, dark) = lamp.floating_inks();
-    let last = INKS.with_borrow_mut(std::mem::take);
+    // Each stack on the lava is drawn on its own: take only this one's
+    // memory (and drop what's off the screen now).
+    let last = INKS.with_borrow_mut(|m| {
+        let mut mine = Inks::default();
+        m.retain(|&(x, y), ink| {
+            let p = Position::new(x, y);
+            if area.contains(p) {
+                mine.insert((x, y), *ink);
+            }
+            buf.area.contains(p) && !area.contains(p)
+        });
+        mine
+    });
     let mut inks = Inks::default();
-    let pick = |ink| match ink {
-        Ink::Light => light,
-        Ink::Dark => dark,
-        Ink::Own => unreachable!("only light or dark is picked"),
-    };
-    // Luminances, each worked out once: what's behind every glyph, and
-    // every ink. `None` where a colour can't be told (16 colours' defaults,
-    // no colour): such words keep their own ink.
-    let back: Vec<Option<f32>> = (0..puts.len())
-        .map(|i| match puts[i] {
-            Put::Glyph { .. } => lamp.luminance(seen_under(&buf[at(i)], lamp)),
-            _ => None,
-        })
-        .collect();
-    // Widgets use a few role inks: remember the last one.
-    let mut own = (TERMINAL_DEFAULT, None);
+    // Widgets use a few role inks: remember the last one, with how well it
+    // reads on the plain liquid.
+    let liquid_l = lamp.shown_luminance(lamp.role(Role::Liquid), opacity);
+    let mut own = (TERMINAL_DEFAULT, None, f32::MAX);
     let mut own_lum = |c: Color| {
         if own.0 != c {
-            own = (c, lamp.luminance(c));
+            let l = lamp.luminance(c);
+            let calm = match (l, liquid_l) {
+                (Some(o), Some(q)) => theme::contrast(o, q),
+                _ => f32::MAX,
+            };
+            own = (c, l, calm);
         }
-        own.1
+        (own.1, own.2)
     };
     let (light_l, dark_l) = (lamp.luminance(light), lamp.luminance(dark));
-    let liquid_l = lamp.luminance(lamp.role(Role::Liquid));
-    let lum = |ink| match ink {
-        Ink::Light => light_l,
-        Ink::Dark => dark_l,
-        Ink::Own => None,
-    };
-    for (first, cells) in words {
-        let key = (at(first).x, at(first).y);
-        let glyphs: Vec<usize> = cells
-            .iter()
-            .copied()
-            .filter(|&i| puts[i] != Put::Gap)
-            .collect();
-        // The worst contrast an ink (by cell) has over the word.
-        let worst = |ink: &mut dyn FnMut(usize) -> Option<f32>| {
-            glyphs
-                .iter()
-                .map(|&i| Some(theme::contrast(ink(i)?, back[i]?)))
-                .try_fold(f32::MAX, |m, c| Some(m.min(c?)))
-        };
-        let sticky = |which: Ink| {
-            if last.words.get(&key) == Some(&which) {
-                STICKY
-            } else {
-                1.0
+    // Each glyph's ink, painted once the digits are settled.
+    let mut decided: Vec<Option<Decided>> = vec![None; puts.len()];
+    // The ink of the glyph before, while in the same word.
+    let mut left = None;
+    for (i, &put) in puts.iter().enumerate() {
+        let pos = at(i);
+        let to = &mut buf[pos];
+        match put {
+            Put::Nothing => {
+                left = None;
+                continue;
             }
-        };
-        let scores = (
-            worst(&mut |i| own_lum(scratch[at(i)].fg)).map(|s| s * sticky(Ink::Own)),
-            worst(&mut |_| light_l).map(|s| s * sticky(Ink::Light)),
-            worst(&mut |_| dark_l).map(|s| s * sticky(Ink::Dark)),
-        );
-        // The word's own ink, as it reads on the plain liquid.
-        let mut calm = f32::MAX;
-        for &i in &glyphs {
-            if let (Some(o), Some(l)) = (own_lum(scratch[at(i)].fg), liquid_l) {
-                calm = calm.min(theme::contrast(o, l));
-            }
-        }
-        let legible = if calm < LEGIBLE {
-            calm * SLACK
-        } else {
-            LEGIBLE
-        };
-        let ink = match scores {
-            (Some(own), Some(l), Some(d)) if own < legible => {
-                if d > l {
-                    Ink::Dark
-                } else {
-                    Ink::Light
-                }
-            }
-            _ => Ink::Own,
-        };
-        inks.words.insert(key, ink);
-        let text = cells.iter().all(|&i| puts[i] != Put::Glyph { block: true });
-        for i in cells {
-            let pos = at(i);
-            let to = &mut buf[pos];
-            if puts[i] == Put::Gap {
+            Put::Gap => {
+                left = None;
                 match halves(to.symbol(), to.fg, to.bg) {
                     None => {
                         to.set_char(' ');
@@ -290,48 +315,138 @@ fn float(buf: &mut Buffer, scratch: &Buffer, dim: Color, lamp: &Theme, transluce
                 }
                 continue;
             }
-            let from = &scratch[pos];
-            let (mut fg, fg_l) = match ink {
-                Ink::Own => (from.fg, own_lum(from.fg)),
-                other => (pick(other), lum(other)),
-            };
-            // A letter on its own (text only, never a block digit).
-            if text && let (Some(f), Some(b)) = (fg_l, back[i]) {
-                let read = |l: Option<f32>| l.map_or(0.0, |l| theme::contrast(l, b));
-                let key = (pos.x, pos.y);
-                let reads = theme::contrast(f, b);
-                // (The memory is only asked when it could matter.)
-                let was = (reads < FLOOR * STICKY)
-                    .then(|| last.letters.get(&key).copied())
-                    .flatten();
-                let floor = if was.is_some() { FLOOR * STICKY } else { FLOOR };
-                if reads < floor {
-                    let best = if read(dark_l) > read(light_l) {
-                        Ink::Dark
-                    } else {
-                        Ink::Light
-                    };
-                    let best = match was {
-                        Some(w) if read(lum(w)) * STICKY >= read(lum(best)) => w,
-                        _ => best,
-                    };
-                    if read(lum(best)) > read(fg_l) {
-                        fg = pick(best);
-                        inks.letters.insert(key, best);
+            Put::Glyph { block } => {
+                let from = &scratch[pos];
+                let (own_l, calm) = own_lum(from.fg);
+                let reads = match (own_l, light_l, dark_l, behind(to, block, lamp, opacity)) {
+                    (Some(o), Some(l), Some(d), Some(b)) => {
+                        Some([o, l, d].map(|x| theme::contrast(x, b)))
                     }
-                }
+                    _ => None,
+                };
+                let bar = if block { LARGE } else { READABLE };
+                let ch = from.symbol().chars().next().unwrap_or(' ');
+                let key = (pos.x, pos.y);
+                let memory = last.get(&key).filter(|m| m.glyph == ch).copied();
+                let glyph = Glyph {
+                    reads,
+                    bars: [bar.min(calm * SLACK).max(LARGE), bar, bar],
+                    was: memory.map(|m| m.ink),
+                };
+                let want = glyph.ink(if i % w == 0 { None } else { left });
+                // A change shows once it's wanted two frames running, or
+                // at once if the ink it has reads below the least.
+                let ink = match (memory, reads) {
+                    (Some(m), Some(r))
+                        if want != m.ink && m.next != Some(want) && r[m.ink as usize] >= LARGE =>
+                    {
+                        m.ink
+                    }
+                    _ => want,
+                };
+                left = Some(ink);
+                decided[i] = Some(Decided {
+                    ink,
+                    want,
+                    reads,
+                    glyph: ch,
+                });
             }
-            let bold = from.fg != dim || from.modifier.contains(Modifier::BOLD);
-            paint(to, from.symbol(), fg, bold, lamp, translucent);
         }
     }
-    INKS.with_borrow_mut(|m| *m = inks);
+    // A big digit (block glyphs joined up, down and across) takes the ink
+    // most of its cells chose wherever that still reads ≥ LARGE there: one
+    // ink, unless a stroke straddles pale wax and dark liquid.
+    let mut seen = vec![false; puts.len()];
+    for start in 0..puts.len() {
+        if seen[start] || puts[start] != (Put::Glyph { block: true }) {
+            continue;
+        }
+        let mut digit = vec![start];
+        seen[start] = true;
+        let mut k = 0;
+        while let Some(&i) = digit.get(k) {
+            k += 1;
+            let (x, y) = (i % w, i / w);
+            let near = [
+                (x > 0).then(|| i - 1),
+                (x + 1 < w).then(|| i + 1),
+                (y > 0).then(|| i - w),
+                (y + 1 < h).then(|| i + w),
+            ];
+            for j in near.into_iter().flatten() {
+                if !seen[j] && puts[j] == (Put::Glyph { block: true }) {
+                    seen[j] = true;
+                    digit.push(j);
+                }
+            }
+        }
+        let count = |ink| {
+            digit
+                .iter()
+                .filter(|&&i| decided[i].is_some_and(|d| d.reads.is_some() && d.ink == ink))
+                .count()
+        };
+        let most = [Ink::Own, Ink::Light, Ink::Dark]
+            .into_iter()
+            .max_by_key(|&ink| (count(ink), ink == Ink::Own))
+            .unwrap_or(Ink::Own);
+        for &i in &digit {
+            if let Some(d) = decided[i].as_mut()
+                && d.reads.is_some_and(|r| r[most as usize] >= LARGE)
+            {
+                d.ink = most;
+            }
+        }
+    }
+    for (i, d) in decided.iter().enumerate() {
+        let Some(d) = d else { continue };
+        let pos = at(i);
+        if d.reads.is_some() {
+            let next = (d.want != d.ink).then_some(d.want);
+            let memory = Memory {
+                glyph: d.glyph,
+                ink: d.ink,
+                next,
+            };
+            inks.insert((pos.x, pos.y), memory);
+        }
+        let from = &scratch[pos];
+        let fg = match d.ink {
+            Ink::Own => from.fg,
+            Ink::Light => light,
+            Ink::Dark => dark,
+        };
+        let bold = from.fg != dim || from.modifier.contains(Modifier::BOLD);
+        paint(&mut buf[pos], from.symbol(), fg, bold, lamp, translucent);
+    }
+    INKS.with_borrow_mut(|m| m.extend(inks));
     // (16 colours: a bright wax colour as a background isn't always
     // that colour.)
     if !translucent && matches!(lamp.depth(), ColorDepth::TrueColor | ColorDepth::Ansi256) {
         solid_around(buf, area, |p| {
             !area.contains(p) || puts[at_index(area, p)] == Put::Nothing
         });
+    }
+}
+
+/// The luminance displayed behind a glyph put in lamp cell `cell`, for
+/// contrast. Text replaces the lamp's glyph and sits on what the cell
+/// showed behind it ([`under`]); a block glyph (a clock stroke) sits among
+/// the lamp's pixels: both halves' mean. With see-through backgrounds
+/// (`opacity`) a background shows darker, the lamp's opaque glyph doesn't.
+fn behind(cell: &Cell, block: bool, lamp: &Theme, opacity: Option<f32>) -> Option<f32> {
+    if !block {
+        return lamp.shown_luminance(under(cell, lamp), opacity);
+    }
+    let (fg, bg) = (
+        lamp.luminance(cell.fg),
+        lamp.shown_luminance(cell.bg, opacity),
+    );
+    match cell.symbol() {
+        "▀" | "▄" => Some((fg? + bg?) / 2.0),
+        "█" => fg,
+        _ => bg,
     }
 }
 
@@ -372,16 +487,6 @@ fn under(cell: &Cell, lamp: &Theme) -> Color {
     match halves(cell.symbol(), cell.fg, cell.bg) {
         Some((t, b)) => lamp.mean(t, b),
         None => cell.bg,
-    }
-}
-
-/// What the eye sees around a glyph put in a lamp cell, for contrast: as
-/// [`under`], but a glyph style's own glyph counts half (its dots and
-/// letters surround the text).
-fn seen_under(cell: &Cell, lamp: &Theme) -> Color {
-    match halves(cell.symbol(), cell.fg, cell.bg) {
-        Some((t, b)) => lamp.mean(t, b),
-        None => lamp.mean(cell.fg, cell.bg),
     }
 }
 
@@ -553,7 +658,13 @@ mod tests {
         }
         let mut scratch = Buffer::empty(area);
         scratch.set_string(0, 0, text, Style::new().fg(ink));
-        float(&mut buf, &scratch, lamp.role(Role::Dim), lamp, translucent);
+        float(
+            &mut buf,
+            &scratch,
+            lamp.role(Role::Dim),
+            lamp,
+            translucent.then_some(0.75),
+        );
         buf
     }
 
@@ -596,31 +707,124 @@ mod tests {
         assert_eq!(buf[(0, 0)].bg, hot, "no backing");
     }
 
+    /// A grey lamp cell `g` (all three channels).
+    fn grey(g: u8) -> Color {
+        Color::Rgb(g, g, g)
+    }
+
     #[test]
-    fn a_word_flips_once_not_back_and_forth() {
+    fn a_glyph_flips_once_not_back_and_forth() {
         let t = theme("lava");
         let text = t.role(Role::Text);
         let (_, dark) = t.floating_inks();
-        let ink_over = |grey: u8| {
-            let g = Color::Rgb(grey, grey, grey);
-            float_row(&t, &[(" ", g, g); 3], "abc", text)[(0, 0)].fg
-        };
-        // Own ink reads ~4.3 : 1 over grey 100, ~2.7 over 133, ~1.9 over 160.
-        assert_eq!(ink_over(100), text);
-        assert_eq!(ink_over(133), text, "inside the band: no flip yet");
-        assert_eq!(ink_over(160), dark);
-        assert_eq!(ink_over(133), dark, "inside the band: no flip back");
-        assert_eq!(ink_over(100), text);
+        let ink_over = |g: u8| float_row(&t, &[(" ", grey(g), grey(g)); 3], "abc", text)[(0, 0)].fg;
+        // Own ink reads 6 : 1 over grey 80, 2.2 over 150 (dark: 6.6);
+        // light and dark cross near 110 (≈ 3.8 : 1 each).
+        assert_eq!(ink_over(80), text);
+        assert_eq!(ink_over(150), dark, "at once: the own ink read below 3 : 1");
+        assert_eq!(ink_over(112), dark, "inside the band: no flip back");
+        assert_eq!(ink_over(112), dark);
+        // Over grey 95 dark still reads 3 : 1 and light 4.8: the change
+        // waits a frame, then shows.
+        assert_eq!(ink_over(95), dark, "one frame's wait");
+        assert_eq!(ink_over(95), text, "then light");
+        assert_eq!(ink_over(112), text, "inside the band: no flip back");
     }
 
     #[test]
     fn a_quiet_ink_stays_quiet_on_its_own_liquid() {
-        // Paper's `dim` reads 2.85 : 1 on its liquid, under LEGIBLE.
-        let t = theme("paper");
+        // Lava's `dim` reads 3.6 : 1 on its liquid, under READABLE.
+        let t = theme("lava");
         let (liquid, dim) = (t.role(Role::Liquid), t.role(Role::Dim));
         let buf = float_row(&t, &[(" ", liquid, liquid); 3], "thu", dim);
         assert_eq!(buf[(0, 0)].fg, dim);
         assert!(!buf[(0, 0)].modifier.contains(Modifier::BOLD));
+        // Over wax it leaves (and stays unbolded: still a quiet line).
+        let wax = t.role(Role::WaxCool);
+        let buf = float_row(&t, &[(" ", wax, wax); 3], "thu", dim);
+        assert_ne!(buf[(0, 0)].fg, dim);
+        assert!(!buf[(0, 0)].modifier.contains(Modifier::BOLD));
+        // Paper's `dim` reads 2.85 : 1 on its liquid: under the least any
+        // glyph may read, so it takes the dark ink.
+        let t = theme("paper");
+        let (liquid, dim) = (t.role(Role::Liquid), t.role(Role::Dim));
+        let buf = float_row(&t, &[(" ", liquid, liquid); 3], "thu", dim);
+        assert_eq!(buf[(0, 0)].fg, t.floating_inks().1);
+    }
+
+    /// lava-1xk.31: with see-through cell backgrounds the wax behind text
+    /// shows darker than it is (the user's Ghostty: 0.75), so mid wax
+    /// takes the light ink there and the dark one on an opaque terminal.
+    #[test]
+    fn see_through_backgrounds_are_measured_as_shown() {
+        let t = theme("lava");
+        let (mid, text) = (t.role(Role::WaxMid), t.role(Role::Text));
+        let (light, dark) = t.floating_inks();
+        let row = [(" ", mid, mid); 3];
+        assert_eq!(float_row_on(&t, &row, "abc", text, false)[(0, 0)].fg, dark);
+        assert_eq!(float_row_on(&t, &row, "xyz", text, true)[(0, 0)].fg, light);
+    }
+
+    /// Every glyph reads at least 3 : 1 against what's behind it, over
+    /// any grey, in any palette with colours, from any ink before.
+    #[test]
+    fn every_glyph_clears_the_least_contrast() {
+        for name in [
+            "lava",
+            "ultraviolet",
+            "abyss",
+            "toxic",
+            "synthwave",
+            "mono",
+            "paper",
+        ] {
+            let t = theme(name);
+            for role in [Role::Text, Role::Dim, Role::Accent] {
+                for translucent in [false, true] {
+                    let ink = t.role(role);
+                    let opacity = translucent.then_some(0.75);
+                    let walk = (0..=255u8).step_by(5).chain((0..=255u8).rev().step_by(7));
+                    for g in walk {
+                        let row = [(" ", grey(g), grey(g)); 2];
+                        let buf = float_row_on(&t, &row, "ab", ink, translucent);
+                        let fg = t.luminance(buf[(0, 0)].fg).unwrap();
+                        let bg = t.shown_luminance(buf[(0, 0)].bg, opacity).unwrap();
+                        let c = theme::contrast(fg, bg);
+                        assert!(
+                            c >= LARGE - 0.01,
+                            "{name} {role:?} {translucent} grey {g}: {c:.2}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Each stack on the lava keeps its own memory: drawing another
+    /// stack between two frames doesn't wipe it (it used to: hysteresis
+    /// then only held for the last stack drawn).
+    #[test]
+    fn stacks_keep_their_own_memory() {
+        let t = theme("lava");
+        let text = t.role(Role::Text);
+        let (_, dark) = t.floating_inks();
+        let draw = |x: u16, g: u8| {
+            let area = Rect::new(0, 0, 20, 1);
+            let mut buf = Buffer::empty(area);
+            for p in area.positions() {
+                buf[p].set_symbol(" ").set_fg(grey(g)).set_bg(grey(g));
+            }
+            let mut scratch = Buffer::empty(Rect::new(x, 0, 3, 1));
+            scratch.set_string(x, 0, "abc", Style::new().fg(text));
+            float(&mut buf, &scratch, t.role(Role::Dim), &t, None);
+            buf[(x, 0)].fg
+        };
+        assert_eq!(draw(0, 150), dark);
+        assert_eq!(draw(10, 150), dark);
+        // Both in the band now (afresh, light would win there): both
+        // keep dark.
+        assert_eq!(draw(0, 108), dark);
+        assert_eq!(draw(10, 108), dark);
     }
 
     #[test]

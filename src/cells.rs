@@ -37,20 +37,21 @@ pub enum Cells {
     Background,
 }
 
-/// From the environment and Ghostty's config files; never in tests.
-pub fn detect() -> Cells {
+/// From the environment and Ghostty's config files; never in tests. With
+/// [`Cells::Translucent`], the window's opacity too.
+pub fn detect() -> (Cells, Option<f32>) {
     if cfg!(test) {
-        return Cells::Opaque;
+        return (Cells::Opaque, None);
     }
     let var = |k: &str| std::env::var(k).ok();
     let names = std::env::vars_os().map(|(k, _)| k.to_string_lossy().into_owned());
     if short_blocks(var) || hosted(names) {
-        return Cells::Background;
+        return (Cells::Background, None);
     }
     let home = directories::BaseDirs::new().map(|d| d.home_dir().to_path_buf());
-    match translucent(var, home, |p| std::fs::read_to_string(p).ok()) {
-        true => Cells::Translucent,
-        false => Cells::Opaque,
+    match opacity(var, home, |p| std::fs::read_to_string(p).ok()) {
+        Some(o) => (Cells::Translucent, Some(o)),
+        None => (Cells::Opaque, None),
     }
 }
 
@@ -94,16 +95,26 @@ pub fn glyphs_safe(choice: Option<&str>, names: impl Iterator<Item = String>) ->
 /// Whether we're in Ghostty (`var` reads one variable) and its config
 /// (`read` reads one file) has translucent cell backgrounds. `home` is
 /// the user's home directory.
-pub fn translucent(
+#[cfg(test)]
+fn translucent(
     var: impl Fn(&str) -> Option<String>,
     home: Option<PathBuf>,
     read: impl Fn(&Path) -> Option<String>,
 ) -> bool {
+    opacity(var, home, read).is_some()
+}
+
+/// As [`translucent`], with the window's `background-opacity` (0..1).
+pub fn opacity(
+    var: impl Fn(&str) -> Option<String>,
+    home: Option<PathBuf>,
+    read: impl Fn(&Path) -> Option<String>,
+) -> Option<f32> {
     let ghostty = var("TERM_PROGRAM").is_some_and(|p| p.eq_ignore_ascii_case("ghostty"))
         || var("TERM").as_deref() == Some("xterm-ghostty")
         || var("GHOSTTY_RESOURCES_DIR").is_some();
     if !ghostty {
-        return false;
+        return None;
     }
     let mut config = Ghostty::default();
     // A stack: the next file to load last.
@@ -125,7 +136,7 @@ pub fn translucent(
             queue.push(dir.join(file));
         }
     }
-    config.opacity < 1.0 && config.cells
+    (config.opacity < 1.0 && config.cells).then_some(config.opacity.max(0.0))
 }
 
 /// Ghostty's default config files, in the order it loads them (later
