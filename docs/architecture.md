@@ -165,20 +165,72 @@ tools/linux/run.sh                           # build, lint, test and drive it on
 
 ## Releases
 
-Pushing a `vX.Y.Z` tag runs `.github/workflows/release.yml`: it builds
-the four targets and drafts a GitHub Release. macOS builds are only
-ad-hoc signed unless these repository secrets are set; then the binary is
-signed with a Developer ID (hardened runtime, identifier
-`io.github.vespillo-tech.lavatui`) and notarized before packaging:
+Releases are built by [dist](https://opensource.axo.dev/cargo-dist/)
+(cargo-dist). Its settings are `dist-workspace.toml` and `[profile.dist]`
+in `Cargo.toml` (the release profile as is: fat LTO). It writes
+`.github/workflows/release.yml`; don't edit that file: change the
+settings or `.github/build-setup.yml` (our extra build steps), then run
+`dist generate`. `.github/actionlint.yaml` mutes the shellcheck notes in
+dist's own steps.
+
+Pushing a `vX.Y.Z` tag runs the workflow. dist refuses a tag that
+doesn't match the version in `Cargo.toml`. It builds five targets, each
+on its own runner (`dist plan` lists them):
+
+| Target | Runner |
+|---|---|
+| `aarch64-apple-darwin` | macos-14 |
+| `x86_64-apple-darwin` | macos-15-intel |
+| `x86_64-unknown-linux-gnu` | ubuntu-22.04 (glibc 2.35, so older distros run it too) |
+| `aarch64-unknown-linux-gnu` | ubuntu-22.04-arm |
+| `x86_64-pc-windows-msvc` | windows-2022 |
+
+and makes, on the GitHub Release (published, not a draft; the notes are
+the version's section of `CHANGELOG.md`):
+
+- `lavatui-<target>.tar.xz` (Windows: `.zip`) with the binary, README,
+  CHANGELOG and both licences, each with a `.sha256`, plus `sha256.sum`
+  and `source.tar.gz`;
+- `lavatui-installer.sh` (macOS/Linux) and `lavatui-installer.ps1`
+  (Windows): they pick the right archive and install to `$CARGO_HOME/bin`
+  (`~/.cargo/bin`), adding it to `PATH`. The README links them through
+  `releases/latest/download/`;
+- `lavatui.rb`, a Homebrew formula, which the `publish-homebrew-formula`
+  job commits to
+  [vespillo-tech/homebrew-tap](https://github.com/vespillo-tech/homebrew-tap)
+  (`brew install vespillo-tech/tap/lavatui`). The tap repository must
+  exist (an empty repo with a README is enough; the job writes
+  `Formula/lavatui.rb`).
+
+Pull requests only run `dist plan` (`pr-run-mode = "plan"`).
+To try it locally: `dist plan`, `dist build --artifacts=local` (archive
+for this machine in `target/distrib/`), `dist build --artifacts=global`
+(installers and formula).
+
+Repository secrets:
 
 | Secret | What |
 |---|---|
-| `MACOS_CERTIFICATE` | the *Developer ID Application* certificate and key, a `.p12` file as base64 (`base64 -i cert.p12`) |
+| `HOMEBREW_TAP_TOKEN` | a fine-grained personal access token with **Contents: read and write** on `vespillo-tech/homebrew-tap` only. Without it the formula job fails (the release itself is already up by then). |
+| `MACOS_CERTIFICATE` | optional, see below: the *Developer ID Application* certificate and key, a `.p12` file as base64 (`base64 -i cert.p12`) |
 | `MACOS_CERTIFICATE_PASSWORD` | the `.p12` file's password |
 | `MACOS_SIGNING_IDENTITY` | e.g. `Developer ID Application: Your Name (TEAMID)` |
 | `APPLE_ID` | the Apple Developer account's email, for `notarytool` |
 | `APPLE_TEAM_ID` | the 10-character team ID |
 | `APPLE_APP_PASSWORD` | an app-specific password for that Apple ID |
+
+macOS builds are only ad-hoc signed unless the Apple secrets are set;
+then `.github/build-setup.yml` signs the binary with the Developer ID
+(hardened runtime, timestamp, identifier
+`io.github.vespillo-tech.lavatui`) and notarizes it before `dist build`
+packs it. dist's own `macos-sign` isn't used: it doesn't notarize, add a
+timestamp or set the identifier, and it fails when its secrets are
+empty. The step builds with dist's exact cargo command and signs cargo's
+copy in `target/<target>/dist/deps/` (cargo copies that file over
+`target/<target>/dist/lavatui` on every build, so signing the outer one
+wouldn't stick); `dist build` then has nothing to rebuild and packs the
+signed binary. The step checks that, and fails if cargo ever stops
+working this way.
 
 Why it matters: the Keychain ties *Always Allow* to the program's code
 signature. An ad-hoc signed binary is a new program after every update,

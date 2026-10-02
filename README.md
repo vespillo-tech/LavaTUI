@@ -74,18 +74,47 @@ The songs, cover and lyrics in these pictures are made up for the demo.
 
 ## Install
 
-### Download it (easiest)
+### With Homebrew (Mac and Linux)
+
+If you use [Homebrew](https://brew.sh):
+
+```sh
+brew install vespillo-tech/tap/lavatui
+```
+
+To update later, run `brew upgrade lavatui`.
+
+### With one command
+
+On a Mac or Linux, paste this into a terminal:
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/vespillo-tech/LavaTUI/releases/latest/download/lavatui-installer.sh | sh
+```
+
+On Windows, paste this into PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/vespillo-tech/LavaTUI/releases/latest/download/lavatui-installer.ps1 | iex"
+```
+
+It downloads the right program for your computer and puts it in
+`~/.cargo/bin` (on Windows, `%USERPROFILE%\.cargo\bin`). Then open a new
+terminal and type `lavatui`. To update, run the same command again.
+
+### Download it yourself
 
 1. Go to the [Releases page](https://github.com/vespillo-tech/LavaTUI/releases)
    and open the newest release.
 2. Download the file for your computer:
 
-   | Computer | File name ends in |
+   | Computer | File |
    |---|---|
-   | Mac with Apple chip (M1 or newer) | `aarch64-apple-darwin.tar.gz` |
-   | Mac with Intel chip | `x86_64-apple-darwin.tar.gz` |
-   | Linux (64-bit PC) | `x86_64-unknown-linux-gnu.tar.gz` |
-   | Windows (64-bit) | `x86_64-pc-windows-msvc.zip` |
+   | Mac with Apple chip (M1 or newer) | `lavatui-aarch64-apple-darwin.tar.xz` |
+   | Mac with Intel chip | `lavatui-x86_64-apple-darwin.tar.xz` |
+   | Linux (64-bit PC) | `lavatui-x86_64-unknown-linux-gnu.tar.xz` |
+   | Linux (64-bit ARM, like a Raspberry Pi 4 or 5) | `lavatui-aarch64-unknown-linux-gnu.tar.xz` |
+   | Windows (64-bit) | `lavatui-x86_64-pc-windows-msvc.zip` |
 
 3. Unpack it. Inside is the program, `lavatui` (or `lavatui.exe` on
    Windows).
@@ -96,8 +125,9 @@ To run it from anywhere, move the program to a folder on your `PATH`,
 like `/usr/local/bin` or `~/.local/bin`.
 
 On a Mac, the first try may say the program "can't be opened" or "is
-damaged". That's because it was downloaded from the web and isn't signed
-by Apple. To allow it, run this once in the same folder:
+damaged". That's because your browser marked it as downloaded from the
+web. (Homebrew and the one-command install don't have this problem.) To
+allow it, run this once in the same folder:
 
 ```sh
 xattr -d com.apple.quarantine ./lavatui
@@ -129,6 +159,7 @@ need most. Press any key to put it away. Press `w` to bring it back.
 
 - `s` changes the look, and `p` changes the colours.
 - `Space` starts a 25-minute focus timer.
+- Click the lamp to warm the wax where you click.
 - `?` shows every key.
 - `,` opens the settings.
 - `q` quits.
@@ -163,6 +194,14 @@ A capital letter means hold Shift: `S` is Shift+S.
 | `z` | pause the wax |
 | `0` | reset heat and speed |
 | `R` | a new wax pattern |
+
+**Warm the wax with your mouse.** Click anywhere on the lamp to heat
+the wax right there. Blobs near the spot warm up over about a second
+and float up. Click the pool of wax at the bottom and a new blob grows
+from that spot. Hold the button and drag to warm a whole path. This only
+heats one spot for a moment; `[` and `]` change the heat of the whole
+lamp. Your terminal has to pass mouse clicks on to programs; most do
+(see [Terminals](#terminals)).
 
 **Clock and timer**
 
@@ -343,6 +382,18 @@ notes:
   LavaTUI draws the wax so it doesn't show stripes. It reads your
   Ghostty settings to know when.
 - **Ghostex** also gets the stripe fix on its own.
+- **The mouse** (clicking the wax and the music buttons) works in almost
+  every terminal: Ghostty, kitty, WezTerm, iTerm2, Terminal on a Mac,
+  Alacritty, GNOME Terminal, Konsole, the VS Code terminal, Ghostex and
+  Windows Terminal. It doesn't work in these:
+  - **tmux**, unless you turn its mouse on: add `set -g mouse on` to
+    `~/.tmux.conf`.
+  - **GNU screen**: clicks may not get through.
+  - **Linux without a desktop**, on the plain text screen: no mouse at
+    all.
+
+  Everything the mouse does also has a key, so you lose nothing: `]`
+  heats the whole lamp, and `A` turns on the music keys.
 
 ## Questions and fixes
 
@@ -360,6 +411,12 @@ Hold `Shift` while you drag (`Option` in Terminal and iTerm2 on a Mac).
 Or tell LavaTUI to ignore the mouse: press `,` to open LavaTUI's
 settings, go to the *controls* page and switch off *mouse*. This only
 affects LavaTUI. Your computer's mouse keeps working as normal.
+
+**Clicking the lamp does nothing.**
+Check that the mouse is on: press `,` to open the settings, go to the
+*controls* page and switch on *mouse*. In tmux, add `set -g mouse on`
+to `~/.tmux.conf`. Some terminals don't pass clicks on at all (see
+[Terminals](#terminals)); there, use the keys instead.
 
 **The music card says Spotify isn't open.**
 Just open your music app and start a song, and the card will pick it up

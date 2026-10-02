@@ -1,0 +1,84 @@
+# Extra steps dist puts into release.yml's build job, just before
+# `dist build` (`github-build-setup` in dist-workspace.toml). Edit this
+# file, not release.yml, then run `dist generate`.
+#
+# Optional macOS signing + notarizing (docs/architecture.md, Releases):
+# it does nothing unless the Apple secrets are set. dist's own `macos-sign`
+# doesn't notarize, timestamp or set an identifier, and fails when its
+# secrets are missing, so we sign here instead: build with dist's exact
+# command, then sign cargo's copy in `deps/` (cargo copies that file to
+# `target/<target>/dist/lavatui` on every build, even with nothing to
+# rebuild). `dist build` then finds the build up to date and packs the
+# signed binary.
+- name: Sign and notarize (macOS, when the Apple secrets are set)
+  if: runner.os == 'macOS'
+  shell: bash
+  env:
+    TARGETS: ${{ join(matrix.targets, ' ') }}
+    MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+    MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+    MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+    APPLE_ID: ${{ secrets.APPLE_ID }}
+    APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+  run: |
+    set -euo pipefail
+    if [ -z "$MACOS_CERTIFICATE" ] || [ -z "$APPLE_ID" ]; then
+      echo "No Apple secrets: the binary stays ad-hoc signed."
+      exit 0
+    fi
+    keychain="$RUNNER_TEMP/signing.keychain-db"
+    trap 'security delete-keychain "$keychain" || true' EXIT
+    keychain_password=$(openssl rand -hex 24)
+    echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+    security create-keychain -p "$keychain_password" "$keychain"
+    security set-keychain-settings -lut 3600 "$keychain"
+    security unlock-keychain -p "$keychain_password" "$keychain"
+    security import "$RUNNER_TEMP/cert.p12" -k "$keychain" \
+      -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+    rm "$RUNNER_TEMP/cert.p12"
+    security set-key-partition-list -S apple-tool:,apple: -s \
+      -k "$keychain_password" "$keychain" > /dev/null
+    # The existing search list, one keychain a word.
+    # shellcheck disable=SC2046
+    security list-keychains -d user -s "$keychain" \
+      $(security list-keychains -d user | tr -d '"')
+
+    for target in $TARGETS; do
+      # The same command `dist build` runs, so it finds nothing to rebuild.
+      RUSTFLAGS="" cargo build --profile dist --target "$target" --workspace
+      bins=()
+      for f in target/"$target"/dist/deps/lavatui-*; do
+        case "$f" in *.d) ;; *) bins+=("$f") ;; esac
+      done
+      if [ "${#bins[@]}" != 1 ]; then
+        echo "::error::expected one lavatui binary in deps/, found: ${bins[*]}"
+        exit 1
+      fi
+      bin="${bins[0]}"
+      codesign --force --timestamp --options runtime \
+        --identifier io.github.vespillo-tech.lavatui \
+        --keychain "$keychain" --sign "$MACOS_SIGNING_IDENTITY" "$bin"
+      codesign --verify --strict --verbose=2 "$bin"
+
+      # A bare binary can't be stapled; Gatekeeper finds the ticket online.
+      ditto -c -k --keepParent "$bin" "$RUNNER_TEMP/notarize.zip"
+      result=$(xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" --wait \
+        --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+        --password "$APPLE_APP_PASSWORD" --output-format json)
+      rm "$RUNNER_TEMP/notarize.zip"
+      echo "$result"
+      status=$(echo "$result" | python3 -c 'import json, sys; print(json.load(sys.stdin)["status"])')
+      if [ "$status" != "Accepted" ]; then
+        echo "::error::notarization: $status (xcrun notarytool log <id> says why)"
+        exit 1
+      fi
+
+      # Check that cargo keeps the signed copy (what dist will pack).
+      RUSTFLAGS="" cargo build --profile dist --target "$target" --workspace
+      info=$(codesign -dv "target/$target/dist/lavatui" 2>&1)
+      case "$info" in
+        *"Identifier=io.github.vespillo-tech.lavatui"$'\n'*) ;;
+        *) echo "::error::cargo replaced the signed binary: $info"; exit 1 ;;
+      esac
+    done

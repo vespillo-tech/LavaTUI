@@ -184,6 +184,12 @@ makes the README GIF; keep it under 5 MB (the tape says how).
 runs the MPRIS live tests against `tools/linux/fake_mpris.py` (also as Spotify)
 and drives lavatui in a pty with the music widget (`tools/linux/pty_check.py`;
 screens in `target/linux-check/`).
+Releases are built by dist (cargo-dist): `dist-workspace.toml` +
+`[profile.dist]`; `.github/workflows/release.yml` is generated, never
+edited (extra build steps, e.g. optional macOS signing, live in
+`.github/build-setup.yml`; then `dist generate`). Check with `dist plan`,
+`dist build --artifacts=local` and `actionlint`; details and secrets in
+`docs/architecture.md` (Releases).
 `README.md` is the public, plain-language guide (aim for a Flesch-Kincaid
 grade of 9 or lower; every key it lists must exist in `KEYMAP`);
 technical detail goes in `docs/architecture.md` (modules, platforms, perf
