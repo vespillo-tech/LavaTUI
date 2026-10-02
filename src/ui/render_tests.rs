@@ -1009,10 +1009,37 @@ fn no_mouse_no_buttons() {
     m.settings.input.mouse = false;
     spotify(&mut m, t0, true);
     let buf = draw(&m, 80, 24);
-    for glyph in ["◂◂", "◂", "≡", "+"] {
+    for glyph in ["◂◂", "◂", "≡"] {
         assert!(find_in_music(&m, &buf, glyph).is_none(), "{glyph}");
     }
-    assert!(find_in_music(&m, &buf, "♥").is_some());
+    let (heart_x, y) = find_in_music(&m, &buf, "♥").expect("a liked heart");
+    // lava-1xk.32: the row says how to reach the player keys instead of
+    // sitting empty (it read as buttons the terminal failed to draw), and
+    // never runs into the heart.
+    let cells: Vec<&str> = (0..80).map(|x| buf[(x, y)].symbol()).collect();
+    let line = cells.concat();
+    assert!(line.contains("Shift+A music keys"), "{line:?}");
+    assert_eq!(line.matches('+').count(), 1, "no add button: {line:?}");
+    let last = (0..heart_x).rev().find(|&x| cells[usize::from(x)] != " ");
+    assert!(last.is_some_and(|x| x + 3 <= heart_x), "{line:?}");
+    // With the player keys on (`A`) the toast row's guide says the rest.
+    m.update(Action::PlayerKeys, t0);
+    let buf = draw(&m, 80, 24);
+    let line: String = (0..80).map(|x| buf[(x, y)].symbol()).collect();
+    assert!(!line.contains("Shift+A"), "{line:?}");
+}
+
+/// The status line's play glyph reads as a button, so a press on it plays
+/// or pauses (lava-1xk.32: that's where people clicked).
+#[test]
+fn the_status_glyph_is_play_pause() {
+    let (mut m, t0) = model(80, 24, 7);
+    spotify(&mut m, t0, true);
+    let buf = draw(&m, 80, 24);
+    let (x, y) = find_in_music(&m, &buf, "▶").expect("the status glyph");
+    m.update(Action::Press { col: x, row: y }, t0);
+    let snap = m.music.snapshot.as_ref().unwrap();
+    assert_eq!(snap.status, Status::Paused);
 }
 
 /// The music widget's form and rect, and where its inline cover is.
