@@ -93,6 +93,14 @@ pub trait MediaSource: Send {
             self.send(command);
         }
     }
+    /// Play `track` inside `context` (its playlist or album), so the
+    /// player carries on through the rest of it. Players that can't fall
+    /// back to the track alone.
+    fn play_in_context(&self, track: &str, context: &str) {
+        if let Some(command) = Command::play_in_context(track, context) {
+            self.send(command);
+        }
+    }
 }
 
 /// The media source for this platform: Spotify (AppleScript) on macOS,
@@ -163,6 +171,12 @@ pub enum Command {
     SetVolume(u8),
     /// A validated `spotify:` URI; build it with [`Command::play_uri`].
     PlayUri(String),
+    /// A track inside its playlist or album (both validated URIs); build
+    /// it with [`Command::play_in_context`].
+    PlayInContext {
+        track: String,
+        context: String,
+    },
 }
 
 impl Command {
@@ -180,6 +194,25 @@ impl Command {
         let safe = |c: char| c.is_ascii_alphanumeric() || ":/_-.%+?=&~#@!$*,;".contains(c);
         (scheme_ok && !rest.is_empty() && rest.chars().all(safe))
             .then(|| Self::PlayUri(uri.to_owned()))
+    }
+
+    /// `PlayInContext` when both are well-formed URIs (as
+    /// [`Command::play_uri`]), else `None`.
+    pub fn play_in_context(track: &str, context: &str) -> Option<Self> {
+        let (Self::PlayUri(track), Self::PlayUri(context)) =
+            (Self::play_uri(track)?, Self::play_uri(context)?)
+        else {
+            return None;
+        };
+        Some(Self::PlayInContext { track, context })
+    }
+
+    /// The URI this plays (the track, for one in a context).
+    pub fn uri(&self) -> Option<&str> {
+        match self {
+            Self::PlayUri(uri) | Self::PlayInContext { track: uri, .. } => Some(uri),
+            _ => None,
+        }
     }
 }
 
@@ -363,7 +396,7 @@ impl Snapshot {
             Command::SetShuffle(on) => self.shuffle = *on,
             Command::SetRepeat(on) => self.repeat = *on,
             Command::SetVolume(volume) => self.volume = (*volume).min(100),
-            Command::PlayUri(_) => {
+            Command::PlayUri(_) | Command::PlayInContext { .. } => {
                 self.status = Status::Playing;
                 self.rebase(Duration::ZERO, now);
             }
@@ -479,7 +512,18 @@ mod tests {
             "spotify:track:a b",
         ] {
             assert_eq!(Command::play_uri(bad), None, "{bad:?}");
+            assert_eq!(Command::play_in_context(bad, "spotify:playlist:p"), None);
+            assert_eq!(Command::play_in_context("spotify:track:t", bad), None);
         }
+        let both = Command::play_in_context(" spotify:track:t", "spotify:playlist:p ");
+        assert_eq!(
+            both,
+            Some(Command::PlayInContext {
+                track: "spotify:track:t".into(),
+                context: "spotify:playlist:p".into(),
+            })
+        );
+        assert_eq!(both.unwrap().uri(), Some("spotify:track:t"));
     }
 
     #[test]

@@ -279,6 +279,37 @@ mod tests {
     /// Opacity-safe: a smooth gradient is whole `█` cells (no colour in a
     /// see-through background), a hard edge still splits, and drawn for
     /// translucent backgrounds nothing does.
+    /// Each mode samples the cover at its own grid, so the finer one shows
+    /// detail the coarser can't: on a 32-col cover (the 128 px art is
+    /// plenty: 64 × 48 samples in fine), a pattern of thin rings comes
+    /// out as more distinct cells the finer the mode.
+    #[test]
+    fn finer_modes_show_more_detail() {
+        let t = theme(ColorDepth::TrueColor);
+        let art = Art::from_fn(|x, y| {
+            let (dx, dy) = (x as i32 - 64, y as i32 - 64);
+            let ring = ((dx * dx + dy * dy) as f64).sqrt() as i32 / 3 % 2 == 0;
+            if ring {
+                Rgb(240, 200, 60)
+            } else {
+                Rgb(30, 20, 80)
+            }
+        });
+        let distinct = |mode| {
+            let cells = cells(&art, 32, 16, (mode, false), &t);
+            let mut glyphs: Vec<char> = cells.iter().map(|c| c.0).collect();
+            glyphs.sort_unstable();
+            glyphs.dedup();
+            glyphs.len()
+        };
+        let (coarse, medium, fine) = (
+            distinct(TextMode::HalfBlock),
+            distinct(TextMode::Quadrant),
+            distinct(TextMode::Sextant),
+        );
+        assert!(coarse < medium && medium < fine, "{coarse} {medium} {fine}");
+    }
+
     #[test]
     fn alike_colours_and_translucent_cells_are_whole_blocks() {
         let t = theme(ColorDepth::TrueColor);

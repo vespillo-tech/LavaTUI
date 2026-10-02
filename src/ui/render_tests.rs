@@ -152,6 +152,14 @@ fn scenarios() -> Vec<(&'static str, Setup)> {
         ("style picker", |m, t| m.update(Action::StylePicker, t)),
         ("face picker", |m, t| m.update(Action::FacePicker, t)),
         ("palette picker", |m, t| m.update(Action::PalettePicker, t)),
+        ("welcome (first start)", |m, _| m.welcome = true),
+        ("face picker, clock off: a preview", |m, t| {
+            m.update(Action::Place("clock"), t);
+            m.update(Action::Place("clock"), t);
+            m.update(Action::FacePicker, t);
+            m.update(Action::Down, t);
+            m.toast = None;
+        }),
         ("toast + hud", |m, t| {
             m.update(Action::DebugHud, t);
             m.toast("focus · 25:00");
@@ -195,6 +203,18 @@ fn scenarios() -> Vec<(&'static str, Setup)> {
             m.update(Action::PlayerKeys, t);
             m.toast = None;
         }),
+        ("lamp only, music controls after the toast", |m, t| {
+            music(m, t, Status::Playing, 1);
+            m.update(Action::ToggleMinimal, t);
+            m.update(Action::PlayerKeys, t);
+            m.toast = None;
+        }),
+        ("lamp only, music controls, not allowed", |m, t| {
+            music(m, t, Status::Unavailable(Unavailable::PermissionDenied), 1);
+            m.update(Action::ToggleMinimal, t);
+            m.update(Action::PlayerKeys, t);
+            m.toast = None;
+        }),
         ("music on the lava, paused", |m, t| {
             m.update(Action::Place("pomodoro"), t);
             music(m, t, Status::Paused, 2);
@@ -227,6 +247,17 @@ fn scenarios() -> Vec<(&'static str, Setup)> {
             m.update(Action::PlayerKeys, t);
             m.update(Action::Player(PlayerKey::Playlists), t);
             m.update(Action::Keep, t);
+            m.update(Action::Down, t);
+            m.toast = None;
+        }),
+        ("library: filtering", |m, t| {
+            spotify(m, t, true);
+            m.update(Action::PlayerKeys, t);
+            m.update(Action::Player(PlayerKey::Playlists), t);
+            m.update(Action::Find, t);
+            for c in "LA".chars() {
+                m.update(Action::Type(c), t);
+            }
             m.update(Action::Down, t);
             m.toast = None;
         }),
@@ -520,17 +551,82 @@ fn help_shows_every_binding() {
             seen.push_str(&text(&draw(&m, cols, rows)));
         }
         for r in KEYMAP {
-            // Roomy sizes show labels whole; narrow ones at least their
-            // first word.
-            let label = if cols >= 80 {
-                r.label
+            // The sheet shows rows whole; the narrow help one action a
+            // line, each label whole.
+            let lines = if cols >= 80 {
+                vec![(r.keys, r.label)]
             } else {
-                r.label.split(' ').next().unwrap()
+                r.split()
+            };
+            for (keys, label) in lines {
+                assert!(
+                    seen.contains(keys) && seen.contains(label),
+                    "{cols}x{rows}: help lacks {keys} {label:?}\n{seen}"
+                );
+            }
+        }
+        assert!(!seen.contains(super::help::sheet::WIDEN), "{cols}x{rows}");
+    }
+}
+
+/// lava-1xk.7: the narrow help never cuts a label short (a cut combined
+/// row could name one action for two keys): each shows whole or not at
+/// all, and when some don't, the last line says to widen the window.
+#[test]
+fn narrow_help_shows_whole_labels_or_says_to_widen() {
+    for (cols, rows) in [(20, 8), (24, 10), (30, 10), (40, 14)] {
+        let (mut m, t0) = model(cols, rows, 7);
+        m.update(Action::Help, t0);
+        let max = super::help::sheet::max_scroll(m.layout.area);
+        let mut seen = String::new();
+        for scroll in 0..=max {
+            m.overlay = Overlay::Help { scroll };
+            seen.push_str(&text(&draw(&m, cols, rows)));
+        }
+        let mut missing = false;
+        for (keys, label) in KEYMAP.iter().flat_map(|r| r.split()) {
+            let line = seen.lines().find(|l| {
+                l.trim_start().starts_with(keys)
+                    && l[l.find(keys).unwrap() + keys.len()..]
+                        .trim_start()
+                        .starts_with(label.split(' ').next().unwrap())
+            });
+            match line {
+                Some(l) => assert!(l.contains(label), "{cols}x{rows}: {keys} cut: {l:?}"),
+                None => missing = true,
+            }
+        }
+        assert_eq!(
+            seen.contains(super::help::sheet::WIDEN),
+            missing,
+            "{cols}x{rows}\n{seen}"
+        );
+    }
+}
+
+/// lava-1xk.13: help names the mouse's selection modifier the terminal
+/// uses: shift, or option in macOS Terminal and iTerm2.
+#[test]
+fn help_names_the_terminals_selection_modifier() {
+    for (cols, rows) in [(80, 24), (40, 14)] {
+        for option in [false, true] {
+            let (mut m, t0) = model(cols, rows, 7);
+            m.option_drag = option;
+            m.update(Action::Help, t0);
+            let max = super::help::sheet::max_scroll(m.layout.area);
+            let mut seen = String::new();
+            for scroll in 0..=max {
+                m.overlay = Overlay::Help { scroll };
+                seen.push_str(&text(&draw(&m, cols, rows)));
+            }
+            let (yes, no) = if option {
+                ("⌥ drag", "⇧ drag")
+            } else {
+                ("⇧ drag", "⌥ drag")
             };
             assert!(
-                seen.contains(&format!("{}  {label}", r.keys)) || seen.contains(label),
-                "{cols}x{rows}: help lacks {:?}\n{seen}",
-                r.label
+                seen.contains(yes) && !seen.contains(no),
+                "{cols}x{rows} {option}"
             );
         }
     }

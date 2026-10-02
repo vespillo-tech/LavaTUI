@@ -17,6 +17,7 @@ use ratatui::widgets::{Block, BorderType, Clear, Widget};
 use crate::app::Model;
 use crate::theme::{ColorDepth, Role, Theme};
 use crate::ui::chrome::fit_words;
+use crate::ui::keymap::SELECT_DRAG;
 pub use sheet::footprint;
 use sheet::{Line, Mode, body, column_spans, max_scroll, mode};
 
@@ -66,7 +67,7 @@ pub fn draw(buf: &mut Buffer, area: Rect, scroll: u16, model: &Model) {
         }
     }
     if let Some((cols, inner)) = body(area) {
-        draw_body(buf, &cols, inner, scroll, &ink);
+        draw_body(buf, &cols, inner, scroll, &ink, model.option_drag);
     }
 }
 
@@ -107,7 +108,14 @@ fn draw_line(buf: &mut Buffer, area: Rect, ink: &Inks) {
 }
 
 /// The key columns in `inner`, scrolled down `scroll` lines.
-fn draw_body(buf: &mut Buffer, cols: &[Vec<Line>], inner: Rect, scroll: u16, ink: &Inks) {
+fn draw_body(
+    buf: &mut Buffer,
+    cols: &[Vec<Line>],
+    inner: Rect,
+    scroll: u16,
+    ink: &Inks,
+    option_drag: bool,
+) {
     for (lines, (x, col_w)) in cols.iter().zip(column_spans(cols, inner)) {
         let shown = lines
             .iter()
@@ -126,9 +134,17 @@ fn draw_body(buf: &mut Buffer, cols: &[Vec<Line>], inner: Rect, scroll: u16, ink
                     let lx = x + key_w as u16 + 2;
                     let room = usize::from((x + col_w).saturating_sub(lx));
                     if let Some(label) = fit_words(label, room) {
+                        // Where the terminal selects with option held.
+                        let keys = match keys {
+                            SELECT_DRAG if option_drag => "⌥ drag",
+                            keys => keys,
+                        };
                         buf.set_string(x, y, keys, ink.accent);
                         buf.set_string(lx, y, label, ink.text);
                     }
+                }
+                Line::Note(note) => {
+                    buf.set_stringn(x, y, note, usize::from(col_w), ink.dim);
                 }
                 Line::Blank => {}
             }

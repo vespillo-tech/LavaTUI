@@ -76,7 +76,7 @@ fn show(model: &Model) -> Show {
         _ => {}
     }
     match &model.lyrics.found {
-        None | Some(Fetch::Looking) => message("looking for lyrics…"),
+        None | Some(Fetch::Looking) => message("asking lrclib.net for lyrics…"),
         Some(Fetch::NotFound) => message("no lyrics for this track"),
         Some(Fetch::Offline) => message("lyrics offline"),
         Some(Fetch::Lyrics(Words::Instrumental)) => message("instrumental"),

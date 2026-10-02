@@ -107,11 +107,9 @@ enum Want {
     },
     Player,
     Mode,
-    /// Playing in a context; `fallback` is played by the desktop app if
-    /// Spotify refuses (no Premium).
-    Play {
-        fallback: Option<String>,
-    },
+    /// Playing in a context; the desktop app plays it instead if Spotify
+    /// refuses (no Premium).
+    Play(Playing),
 }
 
 pub struct Library {
@@ -129,8 +127,33 @@ pub struct Library {
     liked_asked: Option<String>,
     pub player: WebPlayer,
     logout_armed: Option<Instant>,
-    /// A refused context play: the desktop app should play this instead.
-    fallback: Option<String>,
+    /// A refused context play: the desktop app should play it instead.
+    fallback: Option<Playing>,
+    /// What the open list is filtered by (lava-75z.17).
+    pub find: Find,
+}
+
+/// Type-to-filter in the library overlay: `/`, then what's typed keeps
+/// the rows whose name (and, for tracks, artists) has every word in it.
+#[derive(Debug, Default)]
+pub struct Find {
+    /// What's typed.
+    pub text: String,
+    /// The playlists' filter, kept while one playlist's tracks are open.
+    back: String,
+    /// The items matching `text` (indices into the unfiltered list) and
+    /// which list they're for; `None` while nothing is typed.
+    hits: Option<(ListKind, Vec<usize>)>,
+    /// The lists changed since `hits` was worked out.
+    stale: bool,
+}
+
+/// What to play: a playlist, from its top or from one of its tracks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Playing {
+    context: String,
+    track: Option<String>,
+    name: String,
 }
 
 impl Library {
@@ -162,6 +185,7 @@ impl Library {
             player: WebPlayer::default(),
             logout_armed: None,
             fallback: None,
+            find: Find::default(),
         }
     }
 
@@ -302,6 +326,7 @@ impl Library {
     }
 
     fn event(&mut self, event: Event, now: Instant) -> Option<String> {
+        self.find.stale = true;
         match event {
             Event::LoggedIn { saved } => {
                 self.forget();
@@ -426,15 +451,15 @@ impl Library {
                 }
                 return Some(e.to_string());
             }
-            (Want::Play { .. }, Ok(_)) => self.player.asked_at = Some(now - PLAYER_EVERY),
-            (Want::Play { fallback }, Err(e)) => {
+            (Want::Play(_), Ok(_)) => self.player.asked_at = Some(now - PLAYER_EVERY),
+            (Want::Play(playing), Err(e)) => {
                 if matches!(&e, Error::Forbidden(why) if refuses_account(why)) {
                     self.player.allowed = Some(false);
                 }
-                if fallback.is_none() || !matches!(e, Error::Forbidden(_)) {
+                if !matches!(e, Error::Forbidden(_)) {
                     return Some(e.to_string());
                 }
-                self.fallback = fallback;
+                self.fallback = Some(playing);
             }
         }
         None
@@ -474,11 +499,24 @@ pub struct ListView {
     pub cursor: usize,
     /// First row shown; follows the cursor.
     pub top: usize,
-    /// The playlists' cursor to go back to from a playlist's tracks.
+    /// The playlist (its index in all of them) to go back to from its
+    /// tracks.
     pub back: usize,
+    /// The filter row is open: keys type into it (lava-75z.17).
+    pub typing: bool,
 }
 
 impl ListView {
+    fn new(kind: ListKind) -> Self {
+        Self {
+            kind,
+            cursor: 0,
+            top: 0,
+            back: 0,
+            typing: false,
+        }
+    }
+
     pub fn title(&self) -> &'static str {
         match self.kind {
             ListKind::Playlists | ListKind::Tracks => "playlists",
@@ -513,9 +551,15 @@ impl Model {
         if let Some(last) = toasts.into_iter().last() {
             self.toast(last);
         }
-        if let Some(uri) = self.library.fallback.take() {
-            let now = self.now;
-            self.play_here(&uri, "it here", now);
+        if let Some(playing) = self.library.fallback.take() {
+            self.play_here(&playing);
+        }
+        if let Overlay::Library(view) = self.overlay
+            && std::mem::take(&mut self.library.find.stale)
+        {
+            self.refind(view.kind);
+            self.overlay = Overlay::Library(self.follow_list(view));
+            self.load_more(&view);
         }
         self.patch_modes();
     }
@@ -654,12 +698,8 @@ impl Model {
         }
         self.refresh_playlists();
         self.last_click = None;
-        self.overlay = Overlay::Library(self.follow_list(ListView {
-            kind,
-            cursor: 0,
-            top: 0,
-            back: 0,
-        }));
+        self.library.find = Find::default();
+        self.overlay = Overlay::Library(self.follow_list(ListView::new(kind)));
     }
 
     /// Ask for my playlists again (shown as they were until it answers).
@@ -671,8 +711,32 @@ impl Model {
         }
     }
 
-    /// How many rows `kind` has right now.
+    /// How many rows `kind` shows right now (those matching the filter).
     pub fn list_len(&self, kind: ListKind) -> usize {
+        match self.hits(kind) {
+            Some(hits) => hits.len(),
+            None => self.list_total(kind),
+        }
+    }
+
+    /// The filter's matches in `kind`, while one is typed.
+    fn hits(&self, kind: ListKind) -> Option<&[usize]> {
+        match &self.library.find.hits {
+            Some((k, hits)) if *k == kind => Some(hits),
+            _ => None,
+        }
+    }
+
+    /// Which item of all of `kind` row `i` shows.
+    fn item_index(&self, kind: ListKind, i: usize) -> Option<usize> {
+        match self.hits(kind) {
+            Some(hits) => hits.get(i).copied(),
+            None => (i < self.list_total(kind)).then_some(i),
+        }
+    }
+
+    /// How many items `kind` has, filter or not.
+    pub fn list_total(&self, kind: ListKind) -> usize {
         let lib = &self.library;
         if !lib.logged_in() {
             return 0;
@@ -684,8 +748,13 @@ impl Model {
         }
     }
 
-    /// Row `i` of `kind`.
+    /// Row `i` of `kind` (as filtered).
     pub fn list_row(&self, kind: ListKind, i: usize) -> Option<ListRow> {
+        self.item_row(kind, self.item_index(kind, i)?)
+    }
+
+    /// Item `i` of all of `kind`.
+    fn item_row(&self, kind: ListKind, i: usize) -> Option<ListRow> {
         let lib = &self.library;
         let playlist_row = |p: &Playlist, quiet: bool| ListRow {
             name: p.name.clone(),
@@ -721,6 +790,14 @@ impl Model {
             Account::LoggedOut => return "not logged in · Enter to log in".into(),
             Account::LoggingIn => return "finish logging in in your browser…".into(),
             Account::LoggedIn => {}
+        }
+        if self.hits(kind).is_some() && self.list_total(kind) > 0 {
+            let more = kind == ListKind::Tracks && lib.open.as_ref().is_some_and(|o| o.has_more);
+            return if more {
+                "looking…".into()
+            } else {
+                format!("nothing matches “{}”", lib.find.text.trim())
+            };
         }
         let (listing_loading, error, loaded) = match kind {
             ListKind::Tracks => match &lib.open {
@@ -773,13 +850,29 @@ impl Model {
             Action::Up | Action::Down | Action::Page(_) | Action::Edge(_) => {}
             Action::Keep => return self.choose(view),
             Action::PlayAll => self.play_all(view),
+            Action::Find => view.typing = true,
+            Action::Type(c) if view.typing => {
+                self.library.find.text.push(c);
+                view = self.refound(view, None);
+            }
+            Action::Erase if view.typing => {
+                if self.library.find.text.pop().is_none() {
+                    view.typing = false;
+                }
+                view = self.refound(view, None);
+            }
+            // The row under the cursor stays under it, all rows back.
+            Action::ClearFind => {
+                let at = self.item_index(view.kind, view.cursor);
+                self.library.find.text.clear();
+                view.typing = false;
+                view = self.refound(view, at);
+            }
             Action::Back if view.kind == ListKind::Tracks => {
-                view = ListView {
-                    kind: ListKind::Playlists,
-                    cursor: view.back,
-                    top: 0,
-                    back: 0,
-                };
+                self.library.find.text = std::mem::take(&mut self.library.find.back);
+                let mut back = ListView::new(ListKind::Playlists);
+                back.typing = !self.library.find.text.is_empty();
+                view = self.refound(back, Some(view.back));
             }
             Action::Back | Action::Close => {
                 self.overlay = Overlay::None;
@@ -815,6 +908,48 @@ impl Model {
         true
     }
 
+    /// Work out the filter's matches in `kind` again.
+    fn refind(&mut self, kind: ListKind) {
+        let query: Vec<String> = self
+            .library
+            .find
+            .text
+            .split_whitespace()
+            .map(str::to_lowercase)
+            .collect();
+        let hits = (!query.is_empty()).then(|| {
+            (0..self.list_total(kind))
+                .filter(|&i| {
+                    self.item_row(kind, i).is_some_and(|row| {
+                        let hay = match kind {
+                            ListKind::Tracks => format!("{} {}", row.name, row.detail),
+                            // A playlist's detail is its count.
+                            ListKind::Playlists | ListKind::AddTo => row.name,
+                        }
+                        .to_lowercase();
+                        query.iter().all(|word| hay.contains(word.as_str()))
+                    })
+                })
+                .collect()
+        });
+        self.library.find.hits = hits.map(|h| (kind, h));
+        self.library.find.stale = false;
+    }
+
+    /// `view` after the filter changed: on item `at` (of all of them) if
+    /// it's still shown, else the first row.
+    fn refound(&mut self, mut view: ListView, at: Option<usize>) -> ListView {
+        self.refind(view.kind);
+        view.cursor = at
+            .and_then(|at| match self.hits(view.kind) {
+                Some(hits) => hits.iter().position(|&i| i == at),
+                None => Some(at),
+            })
+            .unwrap_or(0);
+        view.top = 0;
+        view
+    }
+
     /// `⏎` on the cursor's row.
     fn choose(&mut self, view: ListView) -> bool {
         let now = self.now;
@@ -825,9 +960,13 @@ impl Model {
             self.overlay = Overlay::Library(view);
             return true;
         }
+        let Some(at) = self.item_index(view.kind, view.cursor) else {
+            self.overlay = Overlay::Library(view);
+            return true;
+        };
         match view.kind {
             ListKind::Playlists => {
-                let Some(p) = self.library.playlists.items.get(view.cursor).cloned() else {
+                let Some(p) = self.library.playlists.items.get(at).cloned() else {
                     return true;
                 };
                 let readable = self.library.me.as_ref().is_some_and(|me| p.editable_by(me));
@@ -853,18 +992,19 @@ impl Model {
                 };
                 self.library
                     .request(request, Want::Tracks { playlist_id: id });
+                let find = &mut self.library.find;
+                find.back = std::mem::take(&mut find.text);
+                self.refind(ListKind::Tracks);
                 self.overlay = Overlay::Library(ListView {
-                    kind: ListKind::Tracks,
-                    cursor: 0,
-                    top: 0,
-                    back: view.cursor,
+                    back: at,
+                    ..ListView::new(ListKind::Tracks)
                 });
             }
             ListKind::Tracks => {
                 let Some(open) = &self.library.open else {
                     return true;
                 };
-                if let Some(t) = open.tracks.items.get(view.cursor) {
+                if let Some(t) = open.tracks.items.get(at) {
                     let (context, uri, name) =
                         (open.playlist.uri.clone(), t.uri.clone(), t.name.clone());
                     self.play_context(&context, Some(&uri), &name);
@@ -872,7 +1012,7 @@ impl Model {
                 self.overlay = Overlay::Library(view);
             }
             ListKind::AddTo => {
-                let Some(&at) = self.library.editable().get(view.cursor) else {
+                let Some(&at) = self.library.editable().get(at) else {
                     return true;
                 };
                 let Some(uri) = self.playing_uri() else {
@@ -895,9 +1035,10 @@ impl Model {
     /// `p` in the browser: play the cursor's playlist (or the open one)
     /// from the top.
     fn play_all(&mut self, view: ListView) {
+        let at = self.item_index(view.kind, view.cursor);
         let lib = &self.library;
         let playlist = match view.kind {
-            ListKind::Playlists => lib.playlists.items.get(view.cursor),
+            ListKind::Playlists => at.and_then(|at| lib.playlists.items.get(at)),
             ListKind::Tracks => lib.open.as_ref().map(|o| &o.playlist),
             ListKind::AddTo => None,
         };
@@ -907,28 +1048,37 @@ impl Model {
         }
     }
 
-    /// Play `context` (a playlist) from `track` in it. With the Web API's
-    /// player that's exact; without (no Premium), the desktop app plays the
-    /// track alone, or the playlist from its start.
+    /// Play `context` (a playlist) from `track` in it: through the Web
+    /// API's player when it's there (Premium), else the desktop app
+    /// (lava-75z.18: on macOS it plays the track in its playlist too; the
+    /// other players play the track alone).
     fn play_context(&mut self, context: &str, track: Option<&str>, name: &str) {
-        let now = self.now;
+        let playing = Playing {
+            context: context.to_owned(),
+            track: track.map(str::to_owned),
+            name: name.to_owned(),
+        };
         if self.library.modes().is_some() {
             let request = Request::Play {
-                context_uri: context.to_owned(),
-                offset_uri: track.map(str::to_owned),
+                context_uri: playing.context.clone(),
+                offset_uri: playing.track.clone(),
             };
-            let fallback = Some(track.unwrap_or(context).to_owned());
-            self.library.request(request, Want::Play { fallback });
+            self.library.request(request, Want::Play(playing));
             self.toast(format!("playing {name}"));
             return;
         }
-        self.play_here(track.unwrap_or(context), name, now);
+        self.play_here(&playing);
     }
 
-    /// The desktop app plays `uri`.
-    fn play_here(&mut self, uri: &str, name: &str, now: Instant) {
-        match self.music.play_uri(uri, now) {
-            Ok(()) => self.toast(format!("playing {name}")),
+    /// The desktop app plays it.
+    fn play_here(&mut self, playing: &Playing) {
+        let now = self.now;
+        let played = match &playing.track {
+            Some(track) => self.music.play_in_context(track, &playing.context, now),
+            None => self.music.play_uri(&playing.context, now),
+        };
+        match played {
+            Ok(()) => self.toast(format!("playing {}", playing.name)),
             Err(why) => self.toast(why),
         }
     }
@@ -960,16 +1110,20 @@ impl Model {
         view
     }
 
-    /// Ask for the open playlist's next page when the cursor nears the end.
+    /// Ask for the open playlist's next page when the cursor nears the end
+    /// of what's shown, or while a filter is typed (it looks through all).
     fn load_more(&mut self, view: &ListView) {
         if view.kind != ListKind::Tracks {
             return;
         }
+        let shown = self.list_len(ListKind::Tracks);
+        let finding = self.hits(ListKind::Tracks).is_some();
         let Some(open) = &mut self.library.open else {
             return;
         };
         let loaded = open.tracks.items.len();
-        if open.has_more && !open.tracks.loading && view.cursor + PREFETCH >= loaded {
+        let near_end = finding || view.cursor + PREFETCH >= shown;
+        if open.has_more && !open.tracks.loading && near_end {
             open.tracks.loading = true;
             let playlist_id = open.playlist.id.clone();
             let request = Request::PlaylistTracks {

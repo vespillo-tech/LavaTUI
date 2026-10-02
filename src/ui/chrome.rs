@@ -35,20 +35,34 @@ pub const PLAYLISTS_HINTS: &[(&str, &str, u8)] = &[
     ("↑↓", "move", 0),
     ("Enter", "open", 3),
     ("p", "play", 2),
+    ("/", "find", 1),
     ("Esc", "close", 4),
 ];
 pub const TRACKS_HINTS: &[(&str, &str, u8)] = &[
     ("↑↓", "move", 0),
     ("Enter", "play", 3),
     ("p", "play all", 2),
+    ("/", "find", 1),
     ("Esc", "back", 4),
 ];
-pub const ADD_HINTS: &[(&str, &str, u8)] =
-    &[("↑↓", "move", 0), ("Enter", "add", 3), ("Esc", "close", 4)];
+pub const ADD_HINTS: &[(&str, &str, u8)] = &[
+    ("↑↓", "move", 0),
+    ("Enter", "add", 3),
+    ("/", "find", 1),
+    ("Esc", "close", 4),
+];
+/// While typing into the library's filter (`/`): letters type, so only
+/// the keys that don't.
+pub const FIND_HINTS: &[(&str, &str, u8)] = &[
+    ("↑↓", "move", 0),
+    ("Enter", "choose", 3),
+    ("Esc", "clear", 4),
+];
 
-/// The library hints for `kind`.
-pub fn library_hints(kind: ListKind) -> &'static [(&'static str, &'static str, u8)] {
+/// The library hints for `kind`, or the filter's while `typing`.
+pub fn library_hints(kind: ListKind, typing: bool) -> &'static [(&'static str, &'static str, u8)] {
     match kind {
+        _ if typing => FIND_HINTS,
         ListKind::Playlists => PLAYLISTS_HINTS,
         ListKind::Tracks => TRACKS_HINTS,
         ListKind::AddTo => ADD_HINTS,
@@ -125,7 +139,7 @@ pub fn draw_status(buf: &mut Buffer, r: Rect, model: &Model) {
     let all = if matches!(model.overlay, Overlay::Picker(_)) {
         PICKER_HINTS
     } else if let Overlay::Library(view) = model.overlay {
-        library_hints(view.kind)
+        library_hints(view.kind, view.typing)
     } else if model.music.keys {
         PLAYER_HINTS
     } else {

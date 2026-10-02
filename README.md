@@ -76,9 +76,11 @@ in minimal mode:
   with a small cover beside it, title, artist, album, a progress bar,
   play state and volume, beside the lamp or on the lava. It shrinks from
   that card down to `▶ title – artist`, and says calmly
-  when Spotify isn't running or needs permission. `A` turns on the player
-  keys: `space` play/pause, `n`/`p` next/previous, `←`/`→` seek, `↑`/`↓`
-  volume, `esc` when done. It never blocks a frame: the player is polled on
+  what to do when Spotify isn't open or needs permission (with no room
+  for the widget, a small `♪ open Spotify` / `♪ see Shift+A` note in the
+  corner instead). `Shift+A` turns on the music controls: `space`
+  play/pause, `n`/`p` next/previous, `←`/`→` seek, `↑`/`↓` volume, `esc`
+  back (a quiet `music controls · Esc back` line says they're on). It never blocks a frame: the player is polled on
   its own thread, only while the widget is shown, and covers are fetched
   and cached (`$XDG_CACHE_HOME/lavatui/art`) in the background. On Linux
   and Windows it shows any player (Spotify first); see
@@ -95,9 +97,12 @@ in minimal mode:
   default), small / medium / large / as big as fits (`art.size`). In
   **kitty and Ghostty it's the real picture** (the kitty graphics
   protocol, sent once per track and size, then just cells that never
-  flicker); elsewhere it's drawn in text cells: sextants (2 × 3 pixels a
-  cell), quadrants (2 × 2) or half blocks (1 × 2). `O` cycles the detail
-  (`auto` picks the best your terminal has). Clicking it plays / pauses.
+  flicker), and in iTerm2, WezTerm, foot, mlterm and Konsole too (their
+  own picture formats: iTerm2 images or sixel); elsewhere it's drawn in
+  text cells: fine (2 × 3 pixels a cell, where the terminal draws those
+  glyphs), medium (2 × 2) or coarse (1 × 2). `Shift+O` cycles the cover
+  quality (auto → photo → fine → medium → coarse; auto picks the best your
+  terminal has, and the message says what it actually uses). Clicking it plays / pauses.
   With the cover widget on, the music card leaves its own small cover
   out (`art.inline = false` drops that one for good).
 - **Mouse**: the music widget has quiet buttons (`◂◂ ‖ ▸▸`, `♡ + ≡`) and a
@@ -155,7 +160,8 @@ see-through but its glyph opaque, so a half-block cell split across two
 colours shows its lower or upper half darker. The lamp is drawn for this:
 halves that look alike become one colour, and the liquid is always the
 (see-through) background. In such a Ghostty (`display.cells = "auto"`
-reads its config at start) wax cells are never split at all, so wax and
+reads its config at start; apps that embed Ghostty's terminal, like
+Ghostex, don't count: they don't read that config) wax cells are never split at all, so wax and
 pool show no half-row streaks; it costs a little colour detail inside the
 wax, which is why opaque terminals don't get it. Set
 `display.cells = "translucent"` for another terminal that blends this
@@ -190,56 +196,71 @@ unknown `--style` or `--palette` name exits with the list of valid ones.
 | Key | Action |
 |---|---|
 | **Lamp** | |
-| `s` / `S` | next style / style picker |
-| `p` / `P` | next palette / palette picker |
+| `s` / `Shift+S` | next style / choose a style |
+| `p` / `Shift+P` | next colours / choose colours |
 | `[` / `]` | heat − / + (5 steps) |
 | `-` / `+` (`=`) | sim speed ×0.25 … ×4 |
 | `z` | freeze / unfreeze the lamp |
 | `0` | reset heat and speed |
-| `R` | reseed the wax |
-| **Clock & pomodoro** | |
-| `c` / `C` | next clock face / face picker |
-| `T` | 12h / 24h |
-| `space` | pomodoro start / pause / resume |
+| `Shift+R` | a new wax pattern |
+| **Clock & timer** | |
+| `c` / `Shift+C` | next clock face / choose a clock face (with a preview) |
+| `Shift+T` | 12h / 24h |
+| `space` | focus timer start / pause / resume |
 | `n` | skip to the next phase |
-| `r` `r` | reset the pomodoro (press twice within 2 s) |
+| `r` `r` | reset the timer (press twice within 2 s) |
 | **Widgets** | |
-| `t` | clock: side panel → on the lava → off |
-| `f` | pomodoro: side panel → on the lava → off |
-| `a` | music (now playing): side panel → on the lava → off |
-| `A` | player keys on (see below) |
-| `y` | lyrics: side panel → on the lava → off (looks tracks up on lrclib.net) |
-| `o` | album cover: side panel → on the lava → off |
-| `O` | cover detail: auto → pixels → sextant → quadrant → halfblock |
-| `l` | move a widget on the lava (the last put there): centre, top, the corners, bottom |
-| `L` | pick which widget on the lava `l` moves |
+| `t` | clock: beside the lamp → on the lamp → off |
+| `f` | timer: beside the lamp → on the lamp → off |
+| `a` | music (now playing): beside the lamp → on the lamp → off |
+| `Shift+A` | music controls on (see below) |
+| `y` | lyrics: beside the lamp → on the lamp → off (sends the song's title, artist, album and length to lrclib.net) |
+| `o` | album cover: beside the lamp → on the lamp → off |
+| `Shift+O` | cover quality: auto → photo → fine → medium → coarse |
+| `l` | move the selected item on the lamp: centre, top, the corners, bottom |
+| `Shift+L` | select which item on the lamp `l` moves |
 | **App** | |
-| `m` | minimal mode on/off |
+| `m` | lamp only on/off |
 | `b` | status bar on/off |
-| `d` | debug HUD (fps, frame time, samples) |
+| `d` | performance info (fps, frame time, samples) |
 | `ctrl-l` | force a full redraw |
 | `?` | help |
+| `w` | show the welcome tips again |
 | `q` / `ctrl-c` | quit |
 
-`esc` never quits: it only closes overlays. When help or a picker is
-open, `q` closes it instead of quitting.
+Capital letters mean hold Shift. `esc` never quits: it closes overlays
+and the welcome card. When help or a picker is open, `q` closes it
+instead of quitting.
 
-- **Player keys** (after `A`, until `esc`, `q` or `A`): `space` play /
+On the first start a small welcome card shows the main keys; the first
+key you press puts it away (and does what it always does). In a very
+small window it waits, showing just `? help · q quit`, until there's room.
+
+- **Music controls** (after `Shift+A`, until `esc`, `q` or `Shift+A`): `space` play /
   pause, `n` / `p` next / previous, `←` / `→` (`h` / `l`) seek 10 s,
   `↑` / `↓` (`k` / `j`, `+` / `-`) volume, `x` / `r` shuffle / repeat
   where the player supports them (Spotify's AppleScript doesn't; logged
   in with Premium they go through the Web API), `s` like / unlike, `a` add
   to playlist, `b` playlists, `i` log in to Spotify (again, twice: log
   out). They take the keyboard like an overlay, so they can reuse `space`,
-  `n` and `p`; the status bar shows them while they're on.
+  `n` and `p`; the status bar shows them while they're on, and a quiet
+  `music controls · Esc back` line at the top of the lamp says so at any
+  size. If the player has a problem the music widget has no room to
+  show, the controls show it in a small card.
 - **In the playlist browser:** `j`/`k` move, `enter` (or `l`) opens a
-  playlist you own or share (others: plays it) or plays a track in it,
-  `p` plays the whole playlist, `g`/`G` and page up/down jump, `esc` (or
-  `h`) goes back, `q` closes. The add-to-playlist picker lists only
-  playlists you can add to; `enter` adds.
+  playlist you own or share (others: plays it) or plays a track in it
+  (then the rest of the playlist follows, Premium or not), `p` plays the
+  whole playlist, `g`/`G` and page up/down jump, `esc` (or `h`) goes
+  back, `q` closes. The add-to-playlist picker lists only playlists you
+  can add to; `enter` adds.
+- **Finding a playlist or song:** press `/` in the browser and type part
+  of its name (for songs, the artist works too). The list shrinks to what
+  matches as you type; `enter` picks, the arrow keys move, `backspace`
+  deletes, and `esc` clears it.
 - **In help:** `j`/`k` or `↑`/`↓` scroll. `?`, `esc` or `q` close it.
 - **In pickers:** `j`/`k` or `↑`/`↓` move (with live preview), `1`–`9`
-  jump, `enter` or `space` keep, and `esc` or `q` revert. Pressing the
+  jump, `enter` or `space` save, and `esc` or `q` cancel (small pickers
+  say `Enter save · Esc cancel` themselves). Pressing the
   opening key again keeps the choice and closes the picker. In the tiny
   inline picker, `h`/`l` and `←`/`→` move too.
 - **Mouse** (on by default, `input.mouse = false` turns it off): click the
@@ -269,7 +290,7 @@ playing differs:
 | Play/pause, next/previous, seek | ✓ | ✓ | ✓ |
 | Volume | ✓ | ✓ if the player has it | – (SMTC has no volume: no readout, the keys say so) |
 | Shuffle / repeat | – (no-ops in Spotify 1.2) | ✓ if the player honours them | ✓ if the app honours them |
-| Cover art | ✓ | ✓ (`https` art URLs, so Spotify) | – (SMTC gives a stream, not a URL) |
+| Cover art | ✓ | ✓ (`https` art URLs, so Spotify) | ✓ (the session's thumbnail; untested on real Windows) |
 | Launches the player? | never | never | never |
 | Permission | macOS asks once (Automation) | none | none |
 
@@ -317,8 +338,9 @@ cycles = 4               # focus phases before a long break
 bell = true
 
 [ui]
-mode = "full"            # full | minimal
+mode = "full"            # full | minimal (lamp only)
 status_bar = true
+welcome = true           # the welcome card at start; off once dismissed (w shows it)
 
 [minimal]
 clock = "corner"         # corner | off
@@ -338,7 +360,7 @@ anchor = { clock = "center", pomodoro = "center", music = "top-left", lyrics = "
 backing = "none"         # none (text floats on the lamp) | soft (a veiled pool behind)
 
 [art]
-detail = "auto"          # auto | pixels | sextant | quadrant | halfblock
+detail = "auto"          # auto | pixels (photo) | sextant (fine) | quadrant (medium) | halfblock (coarse)
 size = "medium"          # small (16 cols) | medium (24) | large (34) | fill (up to 64)
 inline = true            # the music card's own small cover (while the cover widget is off)
 
@@ -443,7 +465,14 @@ unchanged, since the cover's cells never change between frames (its text
 cells are worked out once per track and size). In pixels mode the
 picture (a ≤ 400 px PNG, ~370 KB as base64) is sent once per track and
 size, at most 96 KB a frame (a few frames), inside the frame's
-synchronized update; `tools/kitty_check.py` shows exactly what goes out.
+synchronized update; `tools/kitty_check.py` shows exactly what goes out
+(`tools/inline_check.py` does the same for iTerm2 images and sixel, which
+are sent whole, once, when the cover appears, moves or changes size). If
+your terminal can show pictures but isn't recognised, set
+`LAVATUI_GRAPHICS` to `kitty`, `iterm` or `sixel` (or `none`). Otherwise
+lavatui asks the terminal once at start whether it really can, and draws
+the cover in text until it says yes (inside tmux, screen, zellij or
+Ghostex it doesn't try).
 
 Here is the render time per frame at 200×60 in truecolor: the field
 sampling plus the style draw (`bench_lamp`: a full-area lamp, two sim

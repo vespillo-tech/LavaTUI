@@ -12,19 +12,31 @@
 ~~~~~~~~~~~~
 ── style picker ──
  ‹ solid › ~
-~~~~~~~~~~~~
+Enter · Esc~
 ~~~~~~~~~~~~
 ~~~~~~~~~~~~
 ~~~~~~~~~~~~
 ── face picker ──
  ‹ blocks ›
-~~~~~~~~~~~~
+Enter · Esc~
 ~~~~~~~~~~~~
 ~~~~~~~~~~~~
 ~~~~~~~~~~~~
 ── palette picker ──
 ~ ‹ lava › ~
+Enter · Esc~
 ~~~~~~~~~~~~
+~~~~~~~~~~~~
+~~~~~~~~~~~~
+── welcome (first start) ──
+~~ ? help ~~
+~~~~~~~~~~~~
+~~~~~~~~~~~~
+~~~~~~~~~~~~
+~~~~~~~~~~~~
+── face picker, clock off: a preview ──
+‹ segment ›~
+Enter · Esc~
 ~~~~~~~~~~~~
 ~~~~~~~~~~~~
 ~~~~~~~~~~~~
@@ -71,7 +83,19 @@
 ~~~~~~~~~~~~
 ~~~~~~~~~~~~
 ── music beside, player keys ──
+~ Esc back ~
 ~~~~~~~~~~~~
+~~~~~~~~~~~~
+~~~~~~~~~~~~
+~~~~~~~~~~~~
+── lamp only, music controls after the toast ──
+~ Esc back ~
+~~~~~~~~~~~~
+~~~~~~~~~~~~
+~~~~~~~~~~~~
+~~~~~~~~~~~~
+── lamp only, music controls, not allowed ──
+~ Esc back ~
 ~~~~~~~~~~~~
 ~~~~~~~~~~~~
 ~~~~~~~~~~~~
@@ -114,6 +138,12 @@ lavatui test
 ~~~~~~~~~~~~
 ── library: a playlist's tracks ──
 Slow Rise 1~
+~~~~~~~~~~~~
+~~~~~~~~~~~~
+~~~~~~~~~~~~
+~~~~~~~~~~~~
+── library: filtering ──
+/LA▏ lavatu…
 ~~~~~~~~~~~~
 ~~~~~~~~~~~~
 ~~~~~~~~~~~~

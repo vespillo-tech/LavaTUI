@@ -115,6 +115,10 @@ impl Model {
             | Action::Edge(_)
             | Action::Back
             | Action::PlayAll
+            | Action::Find
+            | Action::Type(_)
+            | Action::Erase
+            | Action::ClearFind
             | Action::Click { .. } => {}
             Action::ToggleMinimal => self.toggle_minimal(now),
             Action::ToggleStatusBar if !self.minimal() => {

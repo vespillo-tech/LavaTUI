@@ -12,6 +12,10 @@ a monospace font. Clock times are whatever the local time is.
     /tmp/v/bin/python docs/screenshots/capture.py music      # needs Spotify playing
     /tmp/v/bin/python docs/screenshots/capture.py lyrics     # Spotify + lrclib.net
     /tmp/v/bin/python docs/screenshots/capture.py cover      # Spotify; text-cell covers
+    /tmp/v/bin/python docs/screenshots/capture.py guide      # welcome card, music controls
+
+Scratch configs say `[ui] welcome = false` (the card would cover every
+shot) unless the shot is of the welcome card.
 
 `music` (the now-playing widget, beside the lamp and on the lava) and
 `lyrics` (the lyrics widget at three sizes, on the lava over several
@@ -70,9 +74,17 @@ def colour(c, default):
         return default
 
 
+def with_welcome(toml, welcome):
+    """`toml` with `[ui] welcome` set: off unless the shot is of the card."""
+    flag = f"welcome={'true' if welcome else 'false'}"
+    if "[ui];" in toml:
+        return toml.replace("[ui];", f"[ui];{flag};", 1)
+    return f"{toml};[ui];{flag}"
+
+
 def run(args):
     cfg = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False)
-    cfg.write(args.toml.replace(";", "\n"))
+    cfg.write(with_welcome(args.toml, args.welcome).replace(";", "\n"))
     cfg.close()
     argv = [BIN, "--config", cfg.name, "--frames", str(args.frames)] + args.app
     keys = []
@@ -250,9 +262,10 @@ def montage(out, ncols, items):
 
 
 class Shot:
-    def __init__(self, cols, rows, toml, keys="", args="--seed 2", frames=300):
+    def __init__(self, cols, rows, toml, keys="", args="--seed 2", frames=300, welcome=False):
         self.cols, self.rows, self.toml, self.keys = cols, rows, toml, keys
         self.app, self.frames, self.env = args.split(), frames, []
+        self.welcome = welcome
 
 
 STYLES = "solid outline ascii braille halftone synthwave matrix topo chrome".split()
@@ -314,6 +327,19 @@ COVER |= {
     "cover-16-80x24": Shot(80, 24, '[lamp];style="ascii";[dock];cover="side"', args="--seed 2 --color 16", frames=420),
     "cover-tiny-30x10": Shot(30, 10, '[lamp];style="solid";[dock];cover="overlay"', frames=420),
 }
+# First-run guidance (lava-1xk.9, .6): the welcome card, and the music
+# controls' line after its toast has gone (reads the live player, so never
+# committed). `capture.py guide`.
+GUIDE = {
+    f"welcome-{c}x{r}": Shot(c, r, '[lamp];style="solid"', frames=120, welcome=True)
+    for (c, r) in [(80, 24), (30, 10), (20, 8)]
+}
+GUIDE |= {
+    f"music-controls-{c}x{r}": Shot(
+        c, r, '[lamp];style="solid";[ui];mode="minimal";[dock];music="side"', "1:A", frames=330
+    )
+    for (c, r) in [(80, 24), (30, 10)]
+}
 TILES = {f"style-{s}": Shot(34, 30, TILE + f'style="{s}"') for s in STYLES}
 TILES |= {f"palette-{p}": Shot(34, 30, TILE + f'style="solid";[theme];palette="{p}"') for p in PALETTES}
 
@@ -330,6 +356,8 @@ def main(names):
         jobs |= LIBRARY
     if "cover" in want:
         jobs |= COVER
+    if "guide" in want:
+        jobs |= GUIDE
     if "styles" in want:
         jobs |= {n: s for n, s in TILES.items() if n.startswith("style-")}
     if "palettes" in want:
@@ -338,7 +366,7 @@ def main(names):
     def one(item):
         name, shot = item
         out = os.path.join(HERE if name in SHOTS else tmp, name + ".png")
-        if name in LIVE or name in LYRICS or name in LIBRARY or name in COVER:
+        if name in LIVE or name in LYRICS or name in LIBRARY or name in COVER or name in GUIDE:
             live = os.environ.get("LAVATUI_SHOT_OUT", tempfile.gettempdir())
             out = os.path.join(live, name + ".png")
         render(run(shot), out)

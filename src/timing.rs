@@ -88,6 +88,21 @@ impl FramePacer {
     }
 }
 
+/// When a frame for input handled at `now` may draw: at once, unless the
+/// last frame started under one period (at `fps`) ago, then one period
+/// after it. So a stream of input faster than the frame rate can't draw
+/// faster than it, and still shows within one frame. Never after
+/// `deadline`, the frame that was due anyway.
+pub fn input_frame_at(
+    last_frame: Option<Instant>,
+    fps: u32,
+    now: Instant,
+    deadline: Instant,
+) -> Instant {
+    let soonest = last_frame.map_or(now, |at| at + Duration::from_secs(1) / fps.max(1));
+    soonest.max(now).min(deadline)
+}
+
 /// Exponentially smoothed frames-per-second.
 #[derive(Debug, Default)]
 pub struct FpsMeter {
@@ -328,6 +343,26 @@ mod tests {
         assert_eq!(pacer.deadline(), t0 + MS * 60);
         pacer.frame_done(t0 + MS * 123);
         assert_eq!(pacer.deadline(), t0 + MS * 140);
+    }
+
+    #[test]
+    fn input_frames_wait_out_the_period_but_never_the_deadline() {
+        let t0 = Instant::now();
+        let far = t0 + Duration::from_secs(60);
+        // Nothing drawn yet, or the last frame a period ago: at once.
+        assert_eq!(input_frame_at(None, 50, t0, far), t0);
+        assert_eq!(
+            input_frame_at(Some(t0), 50, t0 + MS * 25, far),
+            t0 + MS * 25
+        );
+        // Within the period: one period after the last frame.
+        assert_eq!(input_frame_at(Some(t0), 50, t0 + MS * 5, far), t0 + MS * 20);
+        // A deadline sooner than that wins; one already past draws now.
+        assert_eq!(
+            input_frame_at(Some(t0), 50, t0 + MS * 5, t0 + MS * 10),
+            t0 + MS * 10
+        );
+        assert!(input_frame_at(Some(t0), 50, t0 + MS * 5, t0) <= t0 + MS * 5);
     }
 
     #[test]

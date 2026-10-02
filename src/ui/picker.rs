@@ -376,7 +376,7 @@ pub fn draw(buf: &mut Buffer, area: Rect, layout: &Layout, picker: &Picker, mode
             buf.set_string(x, y, key, dim);
             x += key.chars().count() as u16 + 1;
             buf.set_string(x, y, label, dim);
-            x += label.chars().count() as u16 + 3;
+            x += label.chars().count() as u16 + 2;
         }
     }
 }

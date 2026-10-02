@@ -1,0 +1,6 @@
+# Keep LF line endings everywhere (Windows checkouts too): the render and
+# layout snapshot tests compare text files byte for byte.
+* text=auto eol=lf
+
+*.png binary
+*.gif binary

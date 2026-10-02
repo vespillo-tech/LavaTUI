@@ -170,7 +170,13 @@ fn the_browser_opens_owned_playlists_and_plays_the_rest() {
     let account = demo();
     let (mut m, t0, source) = rig("browse", &account);
     key(&mut m, t0, P::Playlists);
-    assert_eq!(m.input_mode(), InputMode::Library { inline: false });
+    assert_eq!(
+        m.input_mode(),
+        InputMode::Library {
+            inline: false,
+            typing: false
+        }
+    );
     assert_eq!(m.list_len(ListKind::Playlists), 4);
 
     // Discover Weekly isn't readable: ⏎ plays it, the browser stays.
@@ -198,11 +204,15 @@ fn the_browser_opens_owned_playlists_and_plays_the_rest() {
     m.update(Action::Edge(true), t0);
     assert_eq!(m.list_len(ListKind::Tracks), 60, "the next page loads");
 
-    // ⏎ plays the track (no Web API player here: the track alone).
+    // ⏎ plays the track in its playlist (no Web API player here: the
+    // desktop app does it).
     m.update(Action::Keep, t0);
     assert_eq!(
         source.sent().last(),
-        Some(&Command::PlayUri("spotify:track:t49".into()))
+        Some(&Command::PlayInContext {
+            track: "spotify:track:t49".into(),
+            context: "spotify:playlist:mix".into(),
+        })
     );
     // `p` plays the playlist from the top.
     m.update(Action::PlayAll, t0);
@@ -275,6 +285,7 @@ fn premium(shuffle: bool) -> PlayerState {
         is_playing: true,
         device: Some("Mac".into()),
         item_uri: Some(PLAYING.into()),
+        context_uri: None,
         shuffle_blocked: false,
         repeat_blocked: false,
     }
@@ -356,6 +367,28 @@ fn a_context_that_blocks_toggles_hides_them_but_keeps_the_login() {
 }
 
 #[test]
+fn a_refused_web_play_falls_back_to_the_desktop_app_in_context() {
+    let account = demo();
+    account.state().player = Ok(Some(premium(false)));
+    let (mut m, t0, source) = rig("web-play-refused", &account);
+    tick(&mut m, t0);
+    key(&mut m, t0, P::Playlists);
+    m.update(Action::Keep, t0);
+    m.update(Action::Down, t0);
+    account.state().fail = Some(Error::Forbidden("Premium required".into()));
+    m.update(Action::Keep, t0);
+    tick(&mut m, t0);
+    assert_eq!(
+        source.sent().last(),
+        Some(&Command::PlayInContext {
+            track: "spotify:track:t1".into(),
+            context: "spotify:playlist:mix".into(),
+        })
+    );
+    assert_eq!(m.library.player.allowed, Some(false));
+}
+
+#[test]
 fn without_premium_or_a_device_the_modes_stay_hidden() {
     let account = demo();
     let (mut m, t0, source) = rig("web-modes-none", &account);
@@ -386,4 +419,159 @@ fn a_frozen_lamp_wakes_soon_while_spotify_is_answering() {
     m.toast = None;
     let wake = m.idle_until().unwrap();
     assert!(wake <= t0 + Duration::from_millis(200), "{:?}", wake - t0);
+}
+
+fn view(m: &Model) -> ListView {
+    let Overlay::Library(view) = m.overlay else {
+        panic!("{:?}", m.overlay)
+    };
+    view
+}
+
+fn type_in(m: &mut Model, t: Instant, text: &str) {
+    for c in text.chars() {
+        m.update(Action::Type(c), t);
+    }
+}
+
+fn names(m: &Model, kind: ListKind) -> Vec<String> {
+    (0..m.list_len(kind))
+        .map(|i| m.list_row(kind, i).unwrap().name)
+        .collect()
+}
+
+#[test]
+fn slash_filters_the_playlists_and_back_keeps_the_filter() {
+    let account = demo();
+    let (mut m, t0, _) = rig("find-playlists", &account);
+    key(&mut m, t0, P::Playlists);
+    // Letters are keys until `/`.
+    m.update(Action::Type('j'), t0);
+    assert_eq!(m.list_len(ListKind::Playlists), 4);
+    m.update(Action::Find, t0);
+    assert!(view(&m).typing);
+    assert_eq!(
+        m.input_mode(),
+        InputMode::Library {
+            inline: false,
+            typing: true
+        }
+    );
+    // Case and word order don't matter; every word must be there.
+    type_in(&mut m, t0, "MIX lamp");
+    assert_eq!(names(&m, ListKind::Playlists), ["Lamplight Mix"]);
+    m.update(Action::Erase, t0);
+    m.update(Action::Erase, t0);
+    m.update(Action::Erase, t0);
+    m.update(Action::Erase, t0);
+    m.update(Action::Erase, t0);
+    assert_eq!(m.library.find.text, "MIX");
+    m.update(Action::ClearFind, t0);
+    type_in(&mut m, t0, "/");
+    assert!(!view(&m).typing, "esc closed the filter");
+    m.update(Action::Find, t0);
+    type_in(&mut m, t0, "jam");
+    assert_eq!(names(&m, ListKind::Playlists), ["Shared Jams"]);
+
+    // ⏎ opens the match (not the first playlist); its tracks start
+    // unfiltered.
+    m.update(Action::Keep, t0);
+    assert_eq!(view(&m).kind, ListKind::Tracks);
+    assert!(!view(&m).typing);
+    assert_eq!(m.list_title(&view(&m)), "Shared Jams");
+    assert_eq!(names(&m, ListKind::Tracks), ["Convection"]);
+    // esc: back to the filtered playlists, on the one we came from.
+    m.update(Action::Back, t0);
+    let back = view(&m);
+    assert_eq!(back.kind, ListKind::Playlists);
+    assert!(back.typing);
+    assert_eq!(m.library.find.text, "jam");
+    assert_eq!(
+        m.list_row(ListKind::Playlists, back.cursor).unwrap().name,
+        "Shared Jams"
+    );
+
+    // Nothing matches: it says so. Backspace on nothing closes the filter.
+    type_in(&mut m, t0, "zz");
+    assert_eq!(m.list_len(ListKind::Playlists), 0);
+    assert_eq!(
+        m.list_message(ListKind::Playlists),
+        "nothing matches “jamzz”"
+    );
+    for _ in 0..6 {
+        m.update(Action::Erase, t0);
+    }
+    assert!(!view(&m).typing);
+    assert_eq!(m.list_len(ListKind::Playlists), 4);
+    // Opening the browser again starts with no filter.
+    m.update(Action::Find, t0);
+    type_in(&mut m, t0, "jam");
+    m.update(Action::Close, t0);
+    key(&mut m, t0, P::Playlists);
+    assert_eq!(m.list_len(ListKind::Playlists), 4);
+    assert!(!view(&m).typing);
+}
+
+#[test]
+fn a_filter_looks_through_every_page_and_esc_stays_on_the_row() {
+    let account = demo();
+    let (mut m, t0, source) = rig("find-tracks", &account);
+    key(&mut m, t0, P::Playlists);
+    m.update(Action::Keep, t0);
+    assert_eq!(m.list_total(ListKind::Tracks), 50, "one page so far");
+    m.update(Action::Find, t0);
+    type_in(&mut m, t0, "rise 5");
+    tick(&mut m, t0);
+    assert_eq!(
+        m.list_total(ListKind::Tracks),
+        60,
+        "the rest loaded to look in"
+    );
+    let hits = names(&m, ListKind::Tracks);
+    assert_eq!(hits.len(), 15, "{hits:?}"); // 5, 15, 25, 35, 45, 50..=59
+    // Artists match too.
+    m.update(Action::ClearFind, t0);
+    m.update(Action::Find, t0);
+    type_in(&mut m, t0, "wane 57");
+    assert_eq!(names(&m, ListKind::Tracks), ["Slow Rise 57"]);
+    // ⏎ plays the match, in its playlist.
+    m.update(Action::Keep, t0);
+    assert_eq!(
+        source.sent().last(),
+        Some(&Command::PlayInContext {
+            track: "spotify:track:t57".into(),
+            context: "spotify:playlist:mix".into(),
+        })
+    );
+    // esc clears the filter and leaves the cursor on that track.
+    m.update(Action::ClearFind, t0);
+    let v = view(&m);
+    assert_eq!(m.list_len(ListKind::Tracks), 60);
+    assert_eq!(
+        m.list_row(ListKind::Tracks, v.cursor).unwrap().name,
+        "Slow Rise 57"
+    );
+}
+
+#[test]
+fn clicks_pick_filtered_rows() {
+    let account = demo();
+    let (mut m, t0, source) = rig("find-click", &account);
+    key(&mut m, t0, P::Playlists);
+    m.update(Action::Find, t0);
+    type_in(&mut m, t0, "discover");
+    let Some(crate::ui::picker::Placement::Sheet { list, .. }) = m.list_placement(&view(&m)) else {
+        panic!("a sheet at 100x30")
+    };
+    let click = Action::Click {
+        col: list.x + 4,
+        row: list.y,
+    };
+    m.update(click, t0);
+    m.update(click, t0);
+    assert_eq!(
+        source.sent().last(),
+        Some(&Command::PlayUri("spotify:playlist:dw".into())),
+        "a double click plays the one match"
+    );
 }

@@ -351,9 +351,11 @@ numbers); `docs/design.md` is the layout/visual contract.
                 launches Spotify, can't shuffle/repeat), Linux `mpris.rs`
                 (any MPRIS player via zbus, Spotify first), Windows
                 `smtc.rs` (system media controls, Spotify first; no
-                volume/art/URIs); `capabilities()` says what each can do,
+                volume/URIs; covers from the thumbnail stream via
+                `art::stash`); `capabilities()` says what each can do,
                 `FakeSource` for tests, `art.rs`: `ArtLoader` (cover fetch
-                https-only on its thread, disk cache in
+                https-only on its thread, or `lavatui-thumb:` bytes a
+                backend stashed; disk cache in
                 `$XDG_CACHE_HOME/lavatui/art`, decoded to 128 px `Art`
                 (+ `hires`: a ≤ 400 px PNG as base64 for kitty, when
                 `set_hires`),
@@ -378,8 +380,17 @@ numbers); `docs/design.md` is the layout/visual contract.
                 `dock::music::hit` shares `parts`/`card_controls` with draw;
                 `Action::Press` → `Model::music_hit` → a `PlayerKey` (a
                 click on the cover widget is play / pause).
-- `graphics.rs` — kitty graphics protocol with Unicode placeholders
-                (pure bytes): `detect(env)` (kitty / Ghostty, not tmux),
+- `graphics.rs` — pictures in pixels. `detect(env) -> Option<Protocol>`
+                (`Kitty` / `Iterm` / `Sixel`, env only, none in tmux /
+                screen / zellij / zmx (Ghostex); `LAVATUI_GRAPHICS`
+                overrides, `forced`). `graphics/probe.rs`: `Probe`, the
+                start-up check of what env promised (kitty `a=q`, else
+                XTVERSION, then an OSC 10 fence; never waited on): `query`
+                written once by `app::run`, `reply` fed the strings
+                `ReplyFilter::take` collects, `expired` after 1.5 s;
+                `Caps::detect` returns the unconfirmed protocol apart and
+                `Model::settle_probe` sets `caps.pixels` (or toasts). Kitty graphics protocol
+                with Unicode placeholders (pure bytes):
                 `Kitty` (`want(Option<(Key, png)>)` once a frame after the
                 layout, `write` after the frame's cells: chunks ≤ `BUDGET`
                 a frame, two alternating ids, old one deleted the frame
@@ -387,6 +398,16 @@ numbers); `docs/design.md` is the layout/visual contract.
                 the fg colour), `is_placeholder` (compositors and help's
                 fade leave them alone), `cleanup()` (on every way out).
                 `tools/kitty_check.py` checks the bytes in a pty.
+                `graphics/inline.rs`: iTerm2 / sixel pictures placed at
+                the cursor (`Inline`: `want` after the layout, the cover
+                draws `SENTINEL` cells where `shows(key, rect)`, `settle`
+                after `ui::draw` turns them into blanks (placing frame) or
+                `CellDiffOption::Skip`, and marks a moved / hidden /
+                covered picture's old cells `AlwaysUpdate`; `write` after
+                the cells; `invalidate` on ctrl-l; never on the last row;
+                sixel encoded on a worker at `Model::cell_px`).
+                `graphics/sixel.rs`: pure encoder (median cut to 256).
+                `tools/inline_check.py` checks those bytes in a pty.
 - `lyrics/`   — synced lyrics (pure, no terminal): `lrc.rs` (forgiving
                 LRC parser: multi-stamp lines, `[offset:]`, gaps, word tags
                 stripped), `sync.rs` (`Syncer`: extrapolated `Playback` →
