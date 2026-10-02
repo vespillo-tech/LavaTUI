@@ -159,6 +159,7 @@ need most. Press any key to put it away. Press `w` to bring it back.
 
 - `s` changes the look, and `p` changes the colours.
 - `Space` starts a 25-minute focus timer.
+- Click the lamp to warm the wax where you click.
 - `?` shows every key.
 - `,` opens the settings.
 - `q` quits.
@@ -193,6 +194,13 @@ A capital letter means hold Shift: `S` is Shift+S.
 | `z` | pause the wax |
 | `0` | reset heat and speed |
 | `R` | a new wax pattern |
+
+**Warm the wax with your mouse.** Click anywhere on the lamp to heat
+the wax right there. Blobs near the spot warm up over about a second
+and float up. Click the pool of wax at the bottom and a new blob grows
+from that spot. Hold the button and drag to warm a whole path. This only
+heats one spot for a moment; `[` and `]` change the heat of the whole
+lamp.
 
 **Clock and timer**
 
