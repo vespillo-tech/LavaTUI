@@ -402,8 +402,9 @@ fn heart(model: &Model) -> Option<(String, Role)> {
 
 /// The card's controls row: `◂◂  ‖  ▸▸` left, `♡  +  ≡` (or `log in`)
 /// right, all quiet. Without the mouse only the heart shows, and only when
-/// the track is liked. Right-hand controls drop from the end, then the
-/// left ones go, rather than crowd.
+/// the track is liked (the row says how to reach the player keys instead:
+/// [`keys_hint`]). Right-hand controls drop from the end, then the left
+/// ones go, rather than crowd.
 fn card_controls(model: &Model, snap: &Snapshot, r: Rect) -> Vec<Control> {
     let mouse = model.settings.input.mouse;
     let g = glyphs(model);
@@ -482,8 +483,36 @@ fn card_controls(model: &Model, snap: &Snapshot, r: Rect) -> Vec<Control> {
         });
         x += w + sep;
     }
+    // The status line's `▶` / `‖` reads as a button, so it is one too
+    // (drawn by `status`, hence no text here).
+    if mouse {
+        out.push(Control {
+            rect: Rect::new(r.x, r.y + 5, width(glyph(snap, g)).min(r.width), 1),
+            button: Button::PlayPause,
+            text: String::new(),
+            ink: Role::Text,
+        });
+    }
     out
 }
+
+/// What the controls row says instead of the buttons when the mouse is
+/// off and the player keys aren't on (lava-1xk.32: an empty row read as
+/// broken buttons): how to reach them. `None` when the heart leaves it no
+/// room.
+fn keys_hint(model: &Model, r: Rect, controls: &[Control]) -> Option<&'static str> {
+    if model.settings.input.mouse || model.music.keys {
+        return None;
+    }
+    let right = controls.iter().map(|c| c.rect.x).min().unwrap_or(r.right());
+    [KEYS_HINT, KEYS_HINT_SHORT]
+        .into_iter()
+        .find(|hint| r.x + width(hint) + 3 <= right)
+}
+
+/// [`keys_hint`]'s words (the short one fits beside the heart).
+const KEYS_HINT: &str = "Shift+A music keys";
+const KEYS_HINT_SHORT: &str = "Shift+A keys";
 
 /// The compact form's controls: the play glyph and the heart (at the end
 /// of the title row).
@@ -602,12 +631,16 @@ impl Pen<'_, '_> {
         self.buf_line(r, 0, &track.name, text, align);
         self.buf_line(r, 1, &track.artist, dim, align);
         self.buf_line(r, 2, &track.album, dim, align);
-        for c in card_controls(self.model, self.snap, r) {
+        let controls = card_controls(self.model, self.snap, r);
+        for c in &controls {
             let mut style = theme.text(c.ink);
             if self.lava {
                 style = style.add_modifier(Modifier::BOLD);
             }
             self.buf.set_string(c.rect.x, c.rect.y, &c.text, style);
+        }
+        if let Some(hint) = keys_hint(self.model, r, &controls) {
+            self.buf.set_string(r.x, r.y + 3, hint, dim);
         }
         self.bar(Rect::new(r.x, r.y + 4, r.width, 1));
         self.status(Rect::new(r.x, r.y + 5, r.width, 1));
