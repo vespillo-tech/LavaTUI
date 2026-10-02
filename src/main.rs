@@ -5,6 +5,7 @@ mod cells;
 mod cli;
 mod clock;
 mod config;
+mod demo;
 mod dock;
 mod glyphs;
 mod graphics;

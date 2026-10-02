@@ -9,7 +9,7 @@ a monospace font. Clock times are whatever the local time is.
     python3 -m venv /tmp/v && /tmp/v/bin/pip install pyte pillow
     /tmp/v/bin/python docs/screenshots/capture.py            # all
     /tmp/v/bin/python docs/screenshots/capture.py hero help  # some
-    /tmp/v/bin/python docs/screenshots/capture.py music      # needs Spotify playing
+    /tmp/v/bin/python docs/screenshots/capture.py live       # needs Spotify playing
     /tmp/v/bin/python docs/screenshots/capture.py lyrics     # Spotify + lrclib.net
     /tmp/v/bin/python docs/screenshots/capture.py cover      # Spotify; text-cell covers
     /tmp/v/bin/python docs/screenshots/capture.py settings-pages  # every settings page
@@ -18,7 +18,12 @@ a monospace font. Clock times are whatever the local time is.
 Scratch configs say `[ui] welcome = false` (the card would cover every
 shot) unless the shot is of the welcome card.
 
-`music` (the now-playing widget, beside the lamp and on the lava) and
+`music`, `music-lava` and `spotify-setup` run with the hidden `--demo`
+flag: a made-up player with invented songs, an abstract cover drawn by
+the app and invented lyrics, so they are safe to commit.
+
+The live sets below read the real player instead:
+`live` (the now-playing widget, beside the lamp and on the lava) and
 `lyrics` (the lyrics widget at three sizes, on the lava over several
 styles and in the side panel; it looks the playing track up on
 lrclib.net) and `cover` (the cover widget in each text-cell detail, beside
@@ -283,11 +288,27 @@ SHOTS = {
     "overlay-mix": Shot(100, 30, '[lamp];style="braille";[theme];palette="abyss";[dock];clock="overlay"', "0.5: ", "--seed 5"),
     "color16": Shot(80, 24, '[lamp];style="ascii"', args="--seed 2 --color 16"),
     "settings": Shot(100, 30, '[lamp];style="solid"', "1:\\x2c,1.5:\\r,2:j", frames=240),
+    # The music widgets, with `--demo`'s made-up songs, cover and lyrics
+    # (never a real player: no real cover or song in a committed image).
+    "music": Shot(
+        120, 36, '[lamp];style="solid";[dock];music="side";cover="overlay";lyrics="overlay";pomodoro="off"',
+        args="--seed 2 --demo", frames=480,
+    ),
+    "music-lava": Shot(
+        120, 36,
+        '[lamp];style="braille";[theme];palette="abyss";[dock];music="overlay";lyrics="overlay";clock="overlay";pomodoro="off"',
+        args="--seed 5 --demo", frames=480,
+    ),
+    "spotify-setup": Shot(
+        100, 30, '[lamp];style="solid"', "1:\\x2c,1.2:j,1.4:j,1.6:j,2:\\r,2.5:\\r",
+        args="--seed 2 --demo", frames=300,
+    ),
+    "welcome": Shot(80, 24, '[lamp];style="solid"', args="--seed 3", frames=120, welcome=True),
 }
 # Live: whatever Spotify plays (never in "all", never committed).
 LIVE = {
-    "music-side": Shot(120, 36, '[lamp];style="solid";[dock];music="side"', frames=420),
-    "music-lava": Shot(120, 36, '[lamp];style="braille";[theme];palette="abyss";[dock];music="overlay"', frames=420),
+    "live-music-side": Shot(120, 36, '[lamp];style="solid";[dock];music="side"', frames=420),
+    "live-music-lava": Shot(120, 36, '[lamp];style="braille";[theme];palette="abyss";[dock];music="overlay"', frames=420),
 }
 # Live, logged in to the Web API (needs LAVATUI_SPOTIFY_CLIENT_ID and a
 # LAVATUI_SPOTIFY_TOKEN_FILE from a login, e.g. live_library's): the
@@ -365,7 +386,7 @@ def main(names):
     tmp = tempfile.mkdtemp()
     want = names or list(SHOTS) + ["styles", "palettes"]
     jobs = {n: s for n, s in SHOTS.items() if n in want}
-    if "music" in want:
+    if "live" in want:
         jobs |= LIVE
     if "lyrics" in want:
         jobs |= LYRICS

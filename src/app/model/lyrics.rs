@@ -65,8 +65,7 @@ impl Default for LyricsState {
 }
 
 impl LyricsState {
-    /// Use `start` for the lookup service (tests: a mock LRCLIB).
-    #[cfg(test)]
+    /// Use `start` for the lookup service (tests and `--demo`: a mock LRCLIB).
     pub fn start_with(&mut self, start: impl Fn() -> Option<LyricsService> + 'static) {
         self.start = Box::new(start);
         self.forget();
