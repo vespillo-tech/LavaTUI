@@ -134,7 +134,9 @@ Network failures are `Error::Offline`, 403 is `Forbidden` and 404 is
 
 All of it lives in the player keys (`A`, with the music widget placed):
 `i` log in (browser; `i` again cancels; logged in, `i` twice logs out),
-`b` the playlist browser, `a` add the playing track to a playlist, `s`
+`b` the playlist browser (`/` filters it by name; `⏎` on a track plays
+it in its playlist, through the desktop app when the Web API's player
+isn't available), `a` add the playing track to a playlist, `s`
 like / unlike (the `♥` in the widget), and `x` / `r` shuffle / repeat
 through the Web API when Spotify allows them. With the mouse on, the
 widget's `log in`, `♡`, `+` and `≡` do the same. See docs/design.md §4.4

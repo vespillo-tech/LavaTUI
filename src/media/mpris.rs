@@ -231,6 +231,8 @@ pub fn plan(command: &Command, last: Option<&Snapshot>, now: Instant) -> Call {
             Call::SetFloat("Volume", f64::from((*volume).min(100)) / 100.0)
         }
         Command::PlayUri(uri) => Call::OpenUri(uri.clone()),
+        // MPRIS has no contexts: the track alone.
+        Command::PlayInContext { track, .. } => Call::OpenUri(track.clone()),
     }
 }
 
@@ -677,6 +679,11 @@ mod tests {
         assert_eq!(
             plan(&Command::PlayUri("spotify:album:x".into()), None, now),
             Call::OpenUri("spotify:album:x".into())
+        );
+        let in_context = Command::play_in_context("spotify:track:t", "spotify:album:x").unwrap();
+        assert_eq!(
+            plan(&in_context, None, now),
+            Call::OpenUri("spotify:track:t".into())
         );
     }
 
