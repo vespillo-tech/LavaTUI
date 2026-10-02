@@ -90,7 +90,7 @@ impl Live {
         let file = token_file(&client_id);
         eprintln!("tokens: {}", file.display());
         let id = client_id.clone();
-        let web = SpotifyWeb::spawn(client_id, move || {
+        let web = SpotifyWeb::spawn(client_id, false, move || {
             Client::new(super::http::Ureq::new(), id, Box::new(FileStore(file)))
         });
         Self { web }

@@ -130,6 +130,25 @@ pub struct Spotify {
     /// (`docs/spotify.md`). Empty: off, unless `LAVATUI_SPOTIFY_CLIENT_ID`
     /// is set. Playback control needs none of this.
     pub client_id: String,
+    /// Where the login is kept between runs.
+    pub store: LoginStore,
+    /// A login is saved (kept up to date by the app). Not a secret: it lets
+    /// the app say "connected" without reading the saved login, which on
+    /// macOS can make the Keychain ask for permission (lava-1xk.38).
+    pub logged_in: bool,
+}
+
+/// `spotify.store`: where the Spotify login is kept.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum LoginStore {
+    /// The OS credential store (macOS Keychain, Windows Credential Manager,
+    /// Secret Service on Linux), else the private file.
+    #[default]
+    System,
+    /// A file only you can read (0600) in the app's data folder: never
+    /// prompts, but any program running as you can read it.
+    File,
 }
 
 /// `display.color` / `--color`.
@@ -598,6 +617,18 @@ mod tests {
         assert_eq!(parsed.ignored, ["spotify.client_id"]);
         let text = toml::to_string(&Settings::default()).unwrap();
         assert!(text.contains("[spotify]\nclient_id = \"\""), "{text}");
+    }
+
+    #[test]
+    fn spotify_login_store_and_flag_load() {
+        let parsed = Settings::parse("[spotify]\nstore = \"file\"\nlogged_in = true\n").unwrap();
+        assert_eq!(parsed.settings.spotify.store, LoginStore::File);
+        assert!(parsed.settings.spotify.logged_in);
+        assert!(parsed.ignored.is_empty() && parsed.unknown.is_empty());
+        let parsed = Settings::parse("[spotify]\nstore = \"vault\"\n").unwrap();
+        assert_eq!(parsed.ignored, ["spotify.store"]);
+        assert_eq!(parsed.settings.spotify.store, LoginStore::System);
+        assert!(!Settings::default().spotify.logged_in);
     }
 
     #[test]

@@ -423,7 +423,14 @@ the layout/visual contract.
                 (`Overlay::Library(ListView)`: playlists → tracks, add-to;
                 drawn by `ui/library.rs` on `picker::place` geometry), and
                 shuffle/repeat through the Web API player when allowed
-                (`patch_modes` → `Music::web_modes`). The music widget's
+                (`patch_modes` → `Music::web_modes`). The saved login is
+                never read at start on macOS (a Keychain read can prompt,
+                lava-1xk.38): `Web::locked` / `unlock` on the first library
+                key or the Spotify setup, after `KEYCHAIN_HEADS_UP`; the key
+                replays once `Event::Unlocked` lands; `spotify.logged_in`
+                (non-secret flag) shows "connected" meanwhile;
+                `spotify.store = system|file` (`Web::set_store` moves it).
+                The music widget's
                 controls row / progress bar are mouse targets:
                 `dock::music::hit` shares `parts`/`card_controls` with draw;
                 `Action::Press` → `Model::music_hit` → a `PlayerKey` (a

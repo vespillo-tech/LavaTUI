@@ -324,6 +324,43 @@ fn spotify_eligibility_and_refusal_fit_whole() {
 }
 
 #[test]
+fn the_spotify_setup_reads_the_saved_login_and_can_move_it() {
+    let (mut m, t0) = model_at(temp_config("spotify-store"));
+    let fake = crate::spotify_web::fake::demo().locked();
+    let web = fake.clone();
+    m.library
+        .connect_with(move || Some(Box::new(web.clone()) as Box<dyn Web>));
+    m.settings.spotify.client_id = ID.into();
+    // The music page says how it stands without reading it.
+    m.library.saved = true;
+    m.settings.spotify.logged_in = true;
+    open(&mut m, t0, 3);
+    assert_eq!(fake.state().unlocks, 0);
+    // The setup reads it, saying first that macOS may ask.
+    m.update(Action::Keep, t0);
+    assert_eq!(fake.state().unlocks, 1);
+    assert_eq!(
+        m.toast.as_ref().map(|t| t.text.as_str()),
+        Some(super::library::KEYCHAIN_HEADS_UP)
+    );
+    m.update(Action::Resize, t0);
+    assert!(m.library.logged_in());
+
+    to(&mut m, t0, Item::LoginStore);
+    assert_eq!(row(&m, Item::LoginStore).value, "password store");
+    m.update(Action::Keep, t0);
+    assert_eq!(m.settings.spotify.store, crate::config::LoginStore::File);
+    assert_eq!(row(&m, Item::LoginStore).value, "private file");
+    assert_eq!(fake.state().moves, [crate::config::LoginStore::File]);
+    m.update(Action::Resize, t0);
+    assert_eq!(
+        m.toast.as_ref().map(|t| t.text.as_str()),
+        Some("Spotify login now kept in a private file")
+    );
+    assert!(m.settings.spotify.logged_in);
+}
+
+#[test]
 fn saved_lyrics_and_covers_show_their_size_and_clear_on_a_second_enter() {
     use crate::lyrics::cache::tests::TempDir;
     let tmp = TempDir::new("settings-saved");

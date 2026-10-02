@@ -86,6 +86,11 @@ inline = true            # the music card's own small cover (while the cover wid
 [spotify]
 client_id = ""           # for the Spotify library, see spotify.md
                          # ("" = off; LAVATUI_SPOTIFY_CLIENT_ID works too)
+store = "system"         # where the login is kept: system (Keychain, Credential
+                         # Manager, Secret Service) | file (0600, in the data folder)
+logged_in = false        # kept up to date by the app: a login is saved
+                         # (not a secret; lets it say "connected" without
+                         # reading the login, so macOS doesn't ask at start)
 ```
 
 ### Styles

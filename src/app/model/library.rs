@@ -8,15 +8,22 @@
 //! the music widget is placed and a Client ID is configured
 //! (`spotify.client_id` or `LAVATUI_SPOTIFY_CLIENT_ID`); tests plug in a
 //! `FakeWeb`.
+//!
+//! The saved login is read only when a library feature is first used (or
+//! the Spotify setup opens): on macOS that read can make the Keychain ask
+//! for permission, so it never happens just for starting the app
+//! (lava-1xk.38). Until then `spotify.logged_in` (not a secret) says
+//! whether there is one; the key that needed it runs again once it's read.
 
 use std::time::{Duration, Instant};
 
 use super::{Model, Overlay};
 use crate::media::Capabilities;
 use crate::spotify_web::{
-    Error, Event, PlayerState, Playlist, Repeat, Reply, Request, RequestId, Track, User, Web,
+    Error, Event, LoginStore, PlayerState, Playlist, Repeat, Reply, Request, RequestId, Track,
+    User, Web,
 };
-use crate::ui::keymap::Action;
+use crate::ui::keymap::{Action, PlayerKey};
 use crate::ui::picker::{self, Hit, Placement};
 
 /// How often the player state is read again while nothing changes.
@@ -30,22 +37,29 @@ const EVENTS_PER_FRAME: usize = 32;
 const PREFETCH: usize = 10;
 /// Two clicks on one row this close together choose it.
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
+/// A key waiting for the saved login is dropped after this (the user may
+/// still be looking at macOS's question, or have said no).
+pub(super) const PENDING_FOR: Duration = Duration::from_secs(30);
+/// Said just before the first Keychain read of a session.
+pub const KEYCHAIN_HEADS_UP: &str =
+    "macOS may ask to let LavaTUI use your saved Spotify login · choose Always Allow";
 
 type Connect = Box<dyn Fn() -> Option<Box<dyn Web>>>;
 
-/// Connects to the Web API with `client_id` (none: never).
+/// Connects to the Web API with `client_id` (none: never), keeping the
+/// login in `store`.
 #[cfg(not(test))]
-fn connector(client_id: Option<String>) -> Connect {
+fn connector(client_id: Option<String>, store: LoginStore) -> Connect {
     Box::new(move || {
         client_id
             .clone()
-            .map(|id| Box::new(crate::spotify_web::SpotifyWeb::new(id)) as Box<dyn Web>)
+            .map(|id| Box::new(crate::spotify_web::SpotifyWeb::new(id, store)) as Box<dyn Web>)
     })
 }
 
 /// Tests never reach the real thing: they plug in a fake.
 #[cfg(test)]
-fn connector(_: Option<String>) -> Connect {
+fn connector(_: Option<String>, _: LoginStore) -> Connect {
     Box::new(|| None)
 }
 
@@ -136,6 +150,15 @@ enum Want {
 pub struct Library {
     web: Option<Box<dyn Web>>,
     connect: Connect,
+    client_id: Option<String>,
+    store: LoginStore,
+    /// A login is saved, as far as we know (`spotify.logged_in`): shown as
+    /// logged in until the saved login has been read.
+    pub saved: bool,
+    /// The saved login has been read since connecting (or replaced).
+    unlocked: bool,
+    /// A library key waiting for the saved login to be read.
+    pub(super) pending: Option<(PlayerKey, Instant)>,
     wants: Vec<(RequestId, Want)>,
     /// The consent page, while a login waits for the browser.
     pub login_url: Option<String>,
@@ -184,12 +207,18 @@ struct Playing {
 }
 
 impl Library {
-    /// The library for `client_id` (none: off). Tests never reach the real
-    /// thing (a keyring read could prompt): they plug in a fake.
-    pub fn new(client_id: Option<String>) -> Self {
+    /// The library for `client_id` (none: off), its login kept in
+    /// `store`; `saved`: one is saved. Tests never reach the real thing (a
+    /// keyring read could prompt): they plug in a fake.
+    pub fn new(client_id: Option<String>, store: LoginStore, saved: bool) -> Self {
         Self {
             web: None,
-            connect: connector(client_id),
+            connect: connector(client_id.clone(), store),
+            client_id,
+            store,
+            saved,
+            unlocked: false,
+            pending: None,
             wants: Vec::new(),
             login_url: None,
             login_error: None,
@@ -219,11 +248,45 @@ impl Library {
     pub fn set_client_id(&mut self, client_id: Option<String>) {
         #[cfg(not(test))]
         {
-            self.connect = connector(client_id);
+            self.connect = connector(client_id.clone(), self.store);
         }
-        #[cfg(test)]
-        let _ = client_id;
+        self.client_id = client_id;
         self.disconnect();
+    }
+
+    /// Keep the login in `store` from now on, moving a saved one there
+    /// (`Moved` says when it's done).
+    pub fn set_store(&mut self, store: LoginStore) {
+        if store == self.store {
+            return;
+        }
+        self.store = store;
+        #[cfg(not(test))]
+        {
+            self.connect = connector(self.client_id.clone(), store);
+        }
+        // Nothing connected (no Client ID): nothing to move.
+        if let Some(web) = &mut self.web {
+            web.set_store(store);
+        }
+    }
+
+    /// The saved login hasn't been read yet, and reading it may make the
+    /// system ask the user (the macOS Keychain).
+    pub fn locked(&self) -> bool {
+        self.web.as_ref().is_some_and(|w| w.locked())
+    }
+
+    /// Read the saved login now (`Unlocked` says when it's done). Whether
+    /// it was still locked, i.e. the system may now ask.
+    pub fn unlock(&mut self) -> bool {
+        match &mut self.web {
+            Some(web) if web.locked() => {
+                web.unlock();
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Open the browser on Spotify's consent page (logged out only).
@@ -265,6 +328,8 @@ impl Library {
         self.web = None;
         self.forget();
         self.login_url = None;
+        self.unlocked = false;
+        self.pending = None;
     }
 
     /// Drop everything that belonged to a login.
@@ -281,17 +346,21 @@ impl Library {
         self.logout_armed = None;
     }
 
+    /// Where the login stands, as shown: a saved login not read yet counts
+    /// as logged in.
     pub fn account(&self) -> Account {
         match &self.web {
             None => Account::Unavailable,
             Some(_) if self.login_url.is_some() => Account::LoggingIn,
             Some(web) if web.is_logged_in() => Account::LoggedIn,
+            Some(_) if self.saved && !self.unlocked => Account::LoggedIn,
             Some(_) => Account::LoggedOut,
         }
     }
 
+    /// Logged in, with the login read: requests can go.
     pub fn logged_in(&self) -> bool {
-        self.account() == Account::LoggedIn
+        self.login_url.is_none() && self.web.as_ref().is_some_and(|w| w.is_logged_in())
     }
 
     /// Requests in flight or a login pending: worth looking again soon.
@@ -402,6 +471,8 @@ impl Library {
                 self.forget();
                 self.login_url = None;
                 self.login_error = None;
+                self.saved = saved;
+                self.unlocked = true;
                 Some(if saved {
                     "logged in to Spotify".into()
                 } else {
@@ -413,8 +484,28 @@ impl Library {
                 self.login_error = Some(e.to_string());
                 Some(e.to_string())
             }
+            Event::Unlocked { logged_in } => {
+                self.unlocked = true;
+                self.saved = logged_in;
+                None
+            }
+            Event::Moved { logged_in, saved } => {
+                self.unlocked = true;
+                self.saved = logged_in && saved;
+                match (logged_in, saved) {
+                    (false, _) => None,
+                    (true, true) => Some(format!(
+                        "Spotify login now kept in {}",
+                        store_name(self.store)
+                    )),
+                    (true, false) => {
+                        Some("couldn't save the Spotify login · this session only".into())
+                    }
+                }
+            }
             Event::LoggedOut { expired } => {
                 self.forget();
+                self.saved = false;
                 Some(if expired {
                     "Spotify login expired · A i to log in again".into()
                 } else {
@@ -544,6 +635,15 @@ impl Library {
             }
         }
         None
+    }
+}
+
+/// Where `store` keeps the login, in plain words.
+pub fn store_name(store: LoginStore) -> &'static str {
+    match store {
+        LoginStore::System if cfg!(target_os = "macos") => "the Keychain",
+        LoginStore::System => "the system's password store",
+        LoginStore::File => "a private file",
     }
 }
 
@@ -684,6 +784,14 @@ impl Model {
         if let Some(last) = toasts.into_iter().last() {
             self.toast(last);
         }
+        // The setup says how the login stands: read it.
+        if self.spotify_setup_open() {
+            self.unlock_library(None);
+        }
+        if self.settings.spotify.logged_in != self.library.saved {
+            self.settings.spotify.logged_in = self.library.saved;
+            self.changed(self.now);
+        }
         if let Some(playing) = self.library.fallback.take() {
             self.play_here(&playing);
         }
@@ -695,6 +803,46 @@ impl Model {
             self.load_more(&view);
         }
         self.patch_modes();
+        self.replay_pending();
+    }
+
+    /// Read the saved login, first saying that macOS may ask about it;
+    /// `key` runs again once it's read. Nothing to do once it's been read.
+    pub(super) fn unlock_library(&mut self, key: Option<PlayerKey>) {
+        if !self.library.unlock() {
+            return;
+        }
+        self.library.pending = key.map(|k| (k, self.now));
+        self.toast(KEYCHAIN_HEADS_UP);
+    }
+
+    /// The key that waited for the saved login, once it's read (shuffle and
+    /// repeat also wait for the player's state, which says whether they go
+    /// through the account).
+    fn replay_pending(&mut self) {
+        let Some((key, at)) = self.library.pending else {
+            return;
+        };
+        if self.now - at > PENDING_FOR {
+            self.library.pending = None;
+            return;
+        }
+        let lib = &self.library;
+        let waiting = !lib.unlocked
+            || (matches!(key, PlayerKey::Shuffle | PlayerKey::Repeat)
+                && lib.logged_in()
+                && lib.player.allowed != Some(false)
+                && (lib.player.in_flight || lib.player.asked_at.is_none()));
+        if waiting {
+            return;
+        }
+        self.library.pending = None;
+        if key == PlayerKey::Account && self.library.logged_in() {
+            // It was a saved login, not a new one to start.
+            self.toast("logged in to Spotify");
+            return;
+        }
+        self.player_key(key, self.now);
     }
 
     /// Shuffle / repeat from the Web API, where the desktop app's own
@@ -768,8 +916,10 @@ impl Model {
     }
 
     /// A library key with no Client ID (or music off) says why; one that
-    /// Spotify refused opens the setup, which says how to fix it.
-    fn library_ready(&mut self) -> bool {
+    /// Spotify refused opens the setup, which says how to fix it; one that
+    /// needs the saved login read first reads it, and `key` runs again
+    /// when it's done.
+    fn library_ready(&mut self, key: PlayerKey) -> bool {
         if self.library.refused.is_some() {
             self.open_settings_at(super::settings_screen::Page::Spotify, true);
             return false;
@@ -785,13 +935,21 @@ impl Model {
             }
             return false;
         }
+        if self.library.locked() {
+            self.unlock_library(Some(key));
+            return false;
+        }
+        if self.library.pending.is_some() {
+            // Still reading it (macOS may be asking): the first key runs.
+            return false;
+        }
         true
     }
 
     /// `i`: log in (browser); while waiting, cancel; logged in, twice to
     /// log out.
     pub(super) fn account_key(&mut self, now: Instant) {
-        if !self.library_ready() {
+        if !self.library_ready(PlayerKey::Account) {
             return;
         }
         let account = self.library.account();
@@ -824,7 +982,7 @@ impl Model {
 
     /// `s`: like or unlike the playing track (the heart changes at once).
     pub(super) fn like_key(&mut self) {
-        if !self.library_ready() || !self.logged_in_or_say() {
+        if !self.library_ready(PlayerKey::Like) || !self.logged_in_or_say() {
             return;
         }
         let Some(uri) = self.playing_uri() else {
@@ -862,7 +1020,11 @@ impl Model {
     /// `b` / `a`: the playlist browser or the add-to-playlist picker.
     /// Logged out, it opens anyway and offers the login.
     pub(super) fn open_library(&mut self, kind: ListKind) {
-        if !self.library_ready() {
+        let key = match kind {
+            ListKind::AddTo => PlayerKey::AddToPlaylist,
+            _ => PlayerKey::Playlists,
+        };
+        if !self.library_ready(key) {
             return;
         }
         if kind == ListKind::AddTo && self.library.logged_in() && self.playing_uri().is_none() {
@@ -1129,7 +1291,7 @@ impl Model {
     /// `⏎` on the cursor's row.
     fn choose(&mut self, view: ListView) -> bool {
         let now = self.now;
-        if self.library.account() != Account::LoggedIn {
+        if !self.library.logged_in() {
             if self.library.account() == Account::LoggedOut {
                 self.account_key(now);
             }

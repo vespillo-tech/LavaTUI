@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::library::{KEYCHAIN_HEADS_UP, PENDING_FOR};
 use super::*;
 use crate::media::{Capabilities, Command, FakeSource, Snapshot, Status as Play, Track};
 use crate::spotify_web::fake::{FakeWeb, demo, track as web_track};
@@ -1150,4 +1151,119 @@ fn a_refused_account_is_told_how_to_fix_it_once() {
     m.library.logout();
     settle(&mut m, t0);
     assert!(m.library.refused.is_none());
+}
+
+// ---- the saved login, read only when needed (lava-1xk.38) -----------------
+
+/// [`rig`] with the demo account's login saved but unread (macOS), and
+/// the config saying a login is saved.
+fn locked_rig(name: &str, account: &FakeWeb, saved_flag: bool) -> (Model, Instant, FakeSource) {
+    let (mut m, t0, source) = rig(name, account);
+    m.settings.spotify.logged_in = saved_flag;
+    m.library.saved = saved_flag;
+    for _ in 0..3 {
+        tick(&mut m, t0);
+    }
+    (m, t0, source)
+}
+
+#[test]
+fn starting_never_reads_the_saved_login() {
+    let account = demo().locked();
+    let (m, _, _) = locked_rig("lazy-start", &account, true);
+    {
+        let s = account.state();
+        assert_eq!(s.unlocks, 0, "read at start");
+        assert!(s.requests.is_empty(), "{:?}", s.requests);
+    }
+    // The config's flag says logged in, without the secret.
+    assert_eq!(m.library.account(), Account::LoggedIn);
+    assert!(!m.library.logged_in());
+    assert_eq!(m.liked(), None);
+}
+
+#[test]
+fn the_first_library_key_warns_reads_the_login_then_runs() {
+    let account = demo().locked();
+    let (mut m, t0, _) = locked_rig("lazy-like", &account, true);
+    // macOS's question is still open: the answer is held back.
+    account.state().hold = true;
+    key(&mut m, t0, P::Like);
+    assert_eq!(toast(&m), KEYCHAIN_HEADS_UP);
+    assert_eq!(account.state().unlocks, 1);
+    tick(&mut m, t0);
+    assert!(!account.state().liked.contains(PLAYING), "not yet");
+    // A second key while macOS asks doesn't read it again.
+    key(&mut m, t0, P::Like);
+    assert_eq!(account.state().unlocks, 1);
+    account.release();
+    tick(&mut m, t0);
+    account.release();
+    assert!(account.state().liked.contains(PLAYING), "the like ran");
+    assert_eq!(toast(&m), "♥ liked");
+    assert!(m.settings.spotify.logged_in);
+    // Read once a session: later keys just work.
+    key(&mut m, t0, P::Like);
+    assert_eq!(account.state().unlocks, 1);
+    assert!(!account.state().liked.contains(PLAYING));
+}
+
+#[test]
+fn a_login_from_before_the_flag_is_found_by_i_not_replaced() {
+    let account = demo().locked();
+    let (mut m, t0, _) = locked_rig("lazy-upgrade", &account, false);
+    assert_eq!(m.library.account(), Account::LoggedOut);
+    key(&mut m, t0, P::Account);
+    tick(&mut m, t0);
+    assert_eq!(account.state().unlocks, 1);
+    assert_eq!(toast(&m), "logged in to Spotify");
+    assert!(!account.state().login_pending, "no new browser login");
+    assert_eq!(m.library.account(), Account::LoggedIn);
+    assert!(m.settings.spotify.logged_in, "remembered for next time");
+}
+
+#[test]
+fn a_stale_flag_turns_into_the_login_offer() {
+    let account = demo().locked();
+    account.state().saved = false;
+    let (mut m, t0, _) = locked_rig("lazy-stale", &account, true);
+    key(&mut m, t0, P::Playlists);
+    tick(&mut m, t0);
+    assert!(!m.settings.spotify.logged_in);
+    assert_eq!(m.library.account(), Account::LoggedOut);
+    assert!(matches!(m.overlay, Overlay::Library(_)), "the key ran");
+}
+
+#[test]
+fn shuffle_reads_the_login_then_goes_through_the_account() {
+    let account = demo().locked();
+    account.state().player = Ok(Some(premium(false)));
+    let (mut m, t0, source) = locked_rig("lazy-shuffle", &account, true);
+    source.set_capabilities(Capabilities::NONE);
+    tick(&mut m, t0);
+    key(&mut m, t0, P::Shuffle);
+    assert_eq!(toast(&m), KEYCHAIN_HEADS_UP);
+    for _ in 0..3 {
+        tick(&mut m, t0);
+    }
+    let reqs = account.state().requests.clone();
+    assert!(reqs.contains(&Request::SetShuffle(true)), "{reqs:?}");
+    assert!(source.sent().is_empty());
+}
+
+#[test]
+fn a_key_waiting_for_the_login_gives_up_after_a_while() {
+    let account = demo().locked();
+    let (mut m, t0, _) = locked_rig("lazy-timeout", &account, true);
+    // macOS's question sits unanswered.
+    account.state().hold = true;
+    key(&mut m, t0, P::Like);
+    tick(&mut m, t0 + Duration::from_secs(1));
+    assert!(m.library.pending.is_some());
+    tick(&mut m, t0 + PENDING_FOR + Duration::from_secs(1));
+    assert!(m.library.pending.is_none());
+    // Answered after all: nothing runs by surprise.
+    account.release();
+    tick(&mut m, t0 + PENDING_FOR + Duration::from_secs(2));
+    assert!(!account.state().liked.contains(PLAYING));
 }

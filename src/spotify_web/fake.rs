@@ -7,11 +7,22 @@ use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use super::{
-    Error, Event, Page, PlayerState, Playlist, Reply, Request, RequestId, Track, User, Web,
+    Error, Event, LoginStore, Page, PlayerState, Playlist, Reply, Request, RequestId, Track, User,
+    Web,
 };
 
 pub struct FakeState {
     pub logged_in: bool,
+    /// The saved login is unread (the macOS Keychain): `unlock` reads it.
+    pub locked: bool,
+    /// What an unlock finds: a saved login or none.
+    pub saved: bool,
+    /// Unlocks asked for.
+    pub unlocks: u32,
+    /// An unlock waiting for `release` (macOS still asking).
+    unlock_held: bool,
+    /// The stores `set_store` was asked to move to.
+    pub moves: Vec<LoginStore>,
     /// A login is waiting for the browser (`finish_login` completes it).
     pub login_pending: bool,
     pub me: Option<User>,
@@ -36,6 +47,11 @@ impl Default for FakeState {
     fn default() -> Self {
         Self {
             logged_in: false,
+            locked: false,
+            saved: false,
+            unlocks: 0,
+            unlock_held: false,
+            moves: Vec::new(),
             login_pending: false,
             me: None,
             playlists: Vec::new(),
@@ -77,6 +93,17 @@ impl FakeWeb {
         fake
     }
 
+    /// The same account, its login saved but not read yet (macOS).
+    pub fn locked(self) -> Self {
+        {
+            let mut s = self.state();
+            s.saved = s.logged_in;
+            s.logged_in = false;
+            s.locked = true;
+        }
+        self
+    }
+
     pub fn state(&self) -> MutexGuard<'_, FakeState> {
         self.0.lock().unwrap()
     }
@@ -96,10 +123,15 @@ impl FakeWeb {
         s.events.push_back(Event::LoginFailed(error));
     }
 
-    /// Answer the held requests.
+    /// Answer the held unlock and requests.
     pub fn release(&self) {
         let mut s = self.state();
         s.hold = false;
+        if std::mem::take(&mut s.unlock_held) {
+            s.logged_in = s.saved;
+            let logged_in = s.logged_in;
+            s.events.push_back(Event::Unlocked { logged_in });
+        }
         let held = std::mem::take(&mut s.held);
         for (id, request) in held {
             let result = answer(&mut s, request);
@@ -195,6 +227,38 @@ fn answer(s: &mut FakeState, request: Request) -> Result<Reply, Error> {
 impl Web for FakeWeb {
     fn is_logged_in(&self) -> bool {
         self.state().logged_in
+    }
+
+    fn locked(&self) -> bool {
+        self.state().locked
+    }
+
+    fn unlock(&mut self) {
+        let mut s = self.state();
+        if !std::mem::replace(&mut s.locked, false) {
+            return;
+        }
+        s.unlocks += 1;
+        if s.hold {
+            s.unlock_held = true;
+            return;
+        }
+        s.logged_in = s.saved;
+        let logged_in = s.logged_in;
+        s.events.push_back(Event::Unlocked { logged_in });
+    }
+
+    fn set_store(&mut self, choice: LoginStore) {
+        let mut s = self.state();
+        if std::mem::replace(&mut s.locked, false) {
+            s.logged_in = s.saved;
+        }
+        s.moves.push(choice);
+        let logged_in = s.logged_in;
+        s.events.push_back(Event::Moved {
+            logged_in,
+            saved: true,
+        });
     }
 
     fn login(&mut self) -> Result<String, Error> {

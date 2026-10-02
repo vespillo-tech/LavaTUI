@@ -163,6 +163,28 @@ cargo run --release -- --config /tmp/x.toml  # try settings without touching you
 tools/linux/run.sh                           # build, lint, test and drive it on Linux in Docker
 ```
 
+## Releases
+
+Pushing a `vX.Y.Z` tag runs `.github/workflows/release.yml`: it builds
+the four targets and drafts a GitHub Release. macOS builds are only
+ad-hoc signed unless these repository secrets are set; then the binary is
+signed with a Developer ID (hardened runtime, identifier
+`io.github.vespillo-tech.lavatui`) and notarized before packaging:
+
+| Secret | What |
+|---|---|
+| `MACOS_CERTIFICATE` | the *Developer ID Application* certificate and key, a `.p12` file as base64 (`base64 -i cert.p12`) |
+| `MACOS_CERTIFICATE_PASSWORD` | the `.p12` file's password |
+| `MACOS_SIGNING_IDENTITY` | e.g. `Developer ID Application: Your Name (TEAMID)` |
+| `APPLE_ID` | the Apple Developer account's email, for `notarytool` |
+| `APPLE_TEAM_ID` | the 10-character team ID |
+| `APPLE_APP_PASSWORD` | an app-specific password for that Apple ID |
+
+Why it matters: the Keychain ties *Always Allow* to the program's code
+signature. An ad-hoc signed binary is a new program after every update,
+so macOS asks again for the saved Spotify login (lava-1xk.38); releases
+signed with the same Developer ID keep the answer.
+
 ## The README's pictures
 
 The screenshots are drawn from the release binary in sized ptys, with a

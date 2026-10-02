@@ -34,6 +34,10 @@ What changed in each version of LavaTUI, in plain words.
 - Find a playlist or song in the playlist browser: press `/` and type.
 - Play a song from a playlist without Premium on a Mac; the rest of the
   playlist follows.
+- No Keychain question when LavaTUI starts on a Mac. Your Spotify login
+  is read only when you first use a library feature, and LavaTUI tells
+  you first that macOS may ask (choose *Always Allow*). You can keep the
+  login in a private file instead, which never asks.
 - Saved lyrics and covers stay small: old ones are removed on their
   own. The settings show how much is saved and can clear it all.
 - Like, add and shuffle now follow the song you're actually playing on

@@ -42,6 +42,8 @@ pub struct Client<H> {
     client_id: String,
     tokens: Option<Tokens>,
     store: Box<dyn TokenStore>,
+    /// The store has been read (or overwritten): [`Self::load`] is a no-op.
+    loaded: bool,
     /// Unix seconds.
     clock: Box<dyn Fn() -> u64 + Send>,
     sleep: Box<dyn Fn(Duration) + Send>,
@@ -59,15 +61,41 @@ struct TokenReply {
 impl<H: Http> Client<H> {
     /// A client for `client_id`, logged in if `store` holds its tokens.
     pub fn new(http: H, client_id: String, store: Box<dyn TokenStore>) -> Self {
-        let tokens = store.load(&client_id);
+        let mut client = Self::unloaded(http, client_id, store);
+        client.load();
+        client
+    }
+
+    /// A client that hasn't read `store` yet: [`Self::load`] does, when
+    /// the saved login is first needed (on macOS, reading the Keychain can
+    /// make the system ask the user, lava-1xk.38).
+    pub fn unloaded(http: H, client_id: String, store: Box<dyn TokenStore>) -> Self {
         Self {
             http,
             client_id,
-            tokens,
+            tokens: None,
             store,
+            loaded: false,
             clock: Box::new(unix_now),
             sleep: Box::new(std::thread::sleep),
         }
+    }
+
+    /// Reads the saved login, the first time only.
+    pub fn load(&mut self) {
+        if !std::mem::replace(&mut self.loaded, true) {
+            self.tokens = self.store.load(&self.client_id);
+        }
+    }
+
+    /// Keeps the login in `store` from now on: read from the old store (if
+    /// it wasn't yet), forgotten there, saved in the new one. `false`:
+    /// logged in, but `store` couldn't keep it (this session only).
+    pub fn move_to(&mut self, store: Box<dyn TokenStore>) -> bool {
+        self.load();
+        self.store.clear();
+        self.store = store;
+        self.tokens.is_none() || self.persist()
     }
 
     #[cfg(test)]
@@ -92,6 +120,7 @@ impl<H: Http> Client<H> {
 
     /// Forgets the tokens, here and in the store.
     pub fn logout(&mut self) {
+        self.loaded = true;
         self.tokens = None;
         self.store.clear();
     }
@@ -117,6 +146,7 @@ impl<H: Http> Client<H> {
         let Some(refresh_token) = reply.refresh_token.clone() else {
             return Err(Error::Login("no refresh token in the reply".into()));
         };
+        self.loaded = true;
         self.set_tokens(reply, refresh_token);
         Ok(self.persist())
     }

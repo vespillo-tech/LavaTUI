@@ -601,17 +601,102 @@ fn a_refused_player_call_is_forbidden() {
 
 // ---- the worker -----------------------------------------------------------
 
+/// A worker that reads the saved login at once (`Unlocked` comes first).
 fn handle(saved: Option<Tokens>) -> (SpotifyWeb, Mock, MemoryStore) {
+    let logged_in = saved.is_some();
+    let (web, mock, store) = spawn(saved, false);
+    assert_eq!(next(&web), Event::Unlocked { logged_in });
+    (web, mock, store)
+}
+
+fn spawn(saved: Option<Tokens>, lazy: bool) -> (SpotifyWeb, Mock, MemoryStore) {
     let mock = Mock::default();
     let store = MemoryStore::default();
     if let Some(t) = saved {
         store.save(&t).unwrap();
     }
     let (m, s) = (mock.clone(), store.clone());
-    let web = SpotifyWeb::spawn(ID.into(), move || {
-        Client::new(m, ID.into(), Box::new(s)).with_time(|| NOW, |_| {})
+    let web = SpotifyWeb::spawn(ID.into(), lazy, move || {
+        Client::unloaded(m, ID.into(), Box::new(s)).with_time(|| NOW, |_| {})
     });
     (web, mock, store)
+}
+
+/// A store that counts its reads, to prove nobody looked.
+#[derive(Clone, Default)]
+struct Watched(MemoryStore, Arc<Mutex<u32>>);
+
+impl TokenStore for Watched {
+    fn load(&self, client_id: &str) -> Option<Tokens> {
+        *self.1.lock().unwrap() += 1;
+        self.0.load(client_id)
+    }
+    fn save(&self, tokens: &Tokens) -> Result<(), String> {
+        self.0.save(tokens)
+    }
+    fn clear(&self) {
+        self.0.clear();
+    }
+}
+
+#[test]
+fn a_lazy_worker_reads_the_saved_login_only_when_unlocked() {
+    let watched = Watched::default();
+    watched.save(&tokens(NOW + 3600)).unwrap();
+    let w = watched.clone();
+    let mut web = SpotifyWeb::spawn(ID.into(), true, move || {
+        Client::unloaded(Mock::default(), ID.into(), Box::new(w)).with_time(|| NOW, |_| {})
+    });
+    assert!(web.locked());
+    assert_eq!(web.poll_timeout(Duration::from_millis(200)), None);
+    assert_eq!(*watched.1.lock().unwrap(), 0, "read before it was asked");
+    assert!(!web.is_logged_in());
+
+    web.unlock();
+    assert!(!web.locked());
+    assert_eq!(next(&web), Event::Unlocked { logged_in: true });
+    assert!(web.is_logged_in());
+    // Once only.
+    web.unlock();
+    assert_eq!(web.poll_timeout(Duration::from_millis(100)), None);
+    assert_eq!(*watched.1.lock().unwrap(), 1);
+}
+
+#[test]
+fn an_unlock_with_nothing_saved_says_logged_out() {
+    let (mut web, _, _) = spawn(None, true);
+    web.unlock();
+    assert_eq!(next(&web), Event::Unlocked { logged_in: false });
+    assert!(!web.is_logged_in());
+}
+
+#[test]
+fn set_store_moves_the_login_without_an_unlock() {
+    let (web, _, old) = spawn(Some(tokens(NOW + 3600)), true);
+    let new = MemoryStore::default();
+    let _ = web.jobs.send(Job::Move(Box::new(new.clone())));
+    assert_eq!(
+        next(&web),
+        Event::Moved {
+            logged_in: true,
+            saved: true
+        }
+    );
+    assert_eq!(old.load(ID), None);
+    assert_eq!(new.load(ID), Some(tokens(NOW + 3600)));
+    assert!(web.is_logged_in());
+
+    // Logged out: nothing to move, nothing failed.
+    let (web, _, _) = spawn(None, false);
+    assert_eq!(next(&web), Event::Unlocked { logged_in: false });
+    let _ = web.jobs.send(Job::Move(Box::new(MemoryStore::default())));
+    assert_eq!(
+        next(&web),
+        Event::Moved {
+            logged_in: false,
+            saved: true
+        }
+    );
 }
 
 fn next(web: &SpotifyWeb) -> Event {
