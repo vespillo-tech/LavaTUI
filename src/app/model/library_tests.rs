@@ -41,6 +41,7 @@ fn rig(name: &str, account: &FakeWeb) -> (Model, Instant, FakeSource) {
         1,
         t0,
     );
+    m.welcome = false;
     let source = FakeSource::new(
         Snapshot {
             player: Some("Spotify".into()),
@@ -266,7 +267,7 @@ fn logged_out_the_browser_offers_the_login() {
     assert_eq!(m.list_len(ListKind::Playlists), 0);
     assert_eq!(
         m.list_message(ListKind::Playlists),
-        "not logged in · ⏎ to log in"
+        "not logged in · Enter to log in"
     );
     m.update(Action::Keep, t0);
     assert_eq!(m.library.account(), Account::LoggingIn);

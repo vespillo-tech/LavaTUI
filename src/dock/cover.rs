@@ -59,7 +59,8 @@ impl Default for ArtSettings {
     }
 }
 
-/// `art.detail`: how covers are drawn.
+/// `art.detail`: how covers are drawn. Stored by the technical names
+/// (`pixels`, `sextant`, …); the names the user reads on screen also load.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Detail {
@@ -67,10 +68,13 @@ pub enum Detail {
     #[default]
     Auto,
     /// Real pixels (kitty, iTerm2 or sixel: whichever the terminal has).
+    #[serde(alias = "photo")]
     Pixels,
+    #[serde(alias = "fine")]
     Sextant,
+    #[serde(alias = "medium")]
     Quadrant,
-    #[serde(rename = "halfblock")]
+    #[serde(rename = "halfblock", alias = "coarse")]
     HalfBlock,
 }
 
@@ -88,13 +92,14 @@ impl Detail {
         Self::ALL[(i + 1) % Self::ALL.len()]
     }
 
-    pub fn name(self) -> &'static str {
+    /// The name the user reads (toasts, help): how fine the picture is.
+    pub fn label(self) -> &'static str {
         match self {
             Detail::Auto => "auto",
-            Detail::Pixels => "pixels",
-            Detail::Sextant => "sextant",
-            Detail::Quadrant => "quadrant",
-            Detail::HalfBlock => "halfblock",
+            Detail::Pixels => "photo",
+            Detail::Sextant => Drawn::Text(TextMode::Sextant).label(),
+            Detail::Quadrant => Drawn::Text(TextMode::Quadrant).label(),
+            Detail::HalfBlock => Drawn::Text(TextMode::HalfBlock).label(),
         }
     }
 }
@@ -133,6 +138,19 @@ pub enum Drawn {
     None,
 }
 
+impl Drawn {
+    /// How fine the picture is, as the user reads it.
+    pub fn label(self) -> &'static str {
+        match self {
+            Drawn::Pixels(_) => "photo",
+            Drawn::Text(TextMode::Sextant) => "fine",
+            Drawn::Text(TextMode::Quadrant) => "medium",
+            Drawn::Text(TextMode::HalfBlock) => "coarse",
+            Drawn::None => "no pictures in this terminal",
+        }
+    }
+}
+
 /// What the terminal can show, read once at start ([`crate::graphics`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Caps {
@@ -153,10 +171,11 @@ impl Caps {
             return (Self::default(), None);
         }
         let var = |k: &str| std::env::var(k).ok();
-        let pixels = graphics::detect(var);
+        let ghostex = graphics::ghostex_env();
+        let pixels = graphics::detect(var).filter(|_| !ghostex || graphics::forced(var));
         let caps = Self {
             pixels,
-            sextants: pixels == Some(Protocol::Kitty) || sextants(var),
+            sextants: !ghostex && (pixels == Some(Protocol::Kitty) || sextants(var)),
         };
         if pixels.is_some() && cfg!(unix) && !graphics::forced(var) {
             (
@@ -173,8 +192,13 @@ impl Caps {
 }
 
 /// Terminals known to draw block sextants themselves: WezTerm, foot,
-/// Windows Terminal (and kitty / Ghostty, which have pixels anyway).
+/// Windows Terminal (and kitty / Ghostty, which have pixels anyway). Never
+/// through a multiplexer: its screen draws them, whatever `TERM_PROGRAM`
+/// it inherited (Ghostex's shows `?`).
 pub fn sextants(var: impl Fn(&str) -> Option<String>) -> bool {
+    if graphics::multiplexed(&var) {
+        return false;
+    }
     let program = var("TERM_PROGRAM").unwrap_or_default().to_lowercase();
     let term = var("TERM").unwrap_or_default();
     program == "wezterm"
@@ -199,7 +223,9 @@ pub fn resolve(detail: Detail, caps: Caps, depth: ColorDepth) -> Drawn {
     match detail {
         _ if depth == ColorDepth::None => Drawn::None,
         Detail::Pixels | Detail::Auto => caps.pixels.map_or(as_text(best_text), Drawn::Pixels),
-        Detail::Sextant => as_text(TextMode::Sextant),
+        // Fine where sextants can't be drawn: the next finest (the toast
+        // says so).
+        Detail::Sextant => as_text(best_text),
         Detail::Quadrant => as_text(TextMode::Quadrant),
         Detail::HalfBlock => as_text(TextMode::HalfBlock),
     }
@@ -220,23 +246,27 @@ const MESSAGE_W: (u16, u16) = (20, 30);
 pub enum Show {
     /// The cover (or its placeholder while it loads).
     Picture,
-    Message(&'static str),
+    Message(String),
 }
 
 fn show(model: &Model) -> Show {
     if model.pictures() == Drawn::None {
-        return Show::Message("covers need 256 colours");
+        return Show::Message("covers need 256 colours".into());
     }
     let Some(snap) = model.music.snapshot.as_ref() else {
-        return Show::Message("…");
+        return Show::Message("…".into());
     };
     let track = match (&snap.status, &snap.track) {
         (Status::Playing | Status::Paused, Some(track)) => track,
-        (Status::Connecting, _) => return Show::Message("…"),
-        _ => return Show::Message("nothing playing"),
+        (Status::Connecting, _) => return Show::Message("…".into()),
+        // The player's own problem and next step, as the music widget says.
+        (Status::Unavailable(reason), _) => {
+            return Show::Message(reason.message_for(snap.player_name(), "album art"));
+        }
+        _ => return Show::Message("nothing playing".into()),
     };
     if track.artwork_url.is_empty() || model.music.art() == ArtState::Missing {
-        return Show::Message("no cover");
+        return Show::Message("no cover".into());
     }
     Show::Picture
 }
@@ -330,7 +360,7 @@ impl DockWidget for Cover {
                 Backdrop::Panel => Place::Side,
             };
             let dim = model.theme.text(Role::Dim);
-            for (i, line) in message(text, place).iter().enumerate() {
+            for (i, line) in message(&text, place).iter().enumerate() {
                 if i as u16 >= area.height {
                     break;
                 }
@@ -502,8 +532,13 @@ mod tests {
             resolve(Detail::HalfBlock, KITTY, TrueColor),
             Drawn::Text(TextMode::HalfBlock)
         );
+        // Fine only where sextants are drawn; else the next finest.
         assert_eq!(
             resolve(Detail::Sextant, PLAIN, Ansi256),
+            Drawn::Text(TextMode::Quadrant)
+        );
+        assert_eq!(
+            resolve(Detail::Sextant, KITTY, Ansi256),
             Drawn::Text(TextMode::Sextant)
         );
         assert_eq!(resolve(Detail::Quadrant, KITTY, Ansi16), Drawn::None);
@@ -539,7 +574,7 @@ mod tests {
         let tall = cover_forms(&Show::Picture, Place::Overlay, CoverSize::Medium, 2.4);
         assert_eq!(tall[0].size.height, 10);
         let msg = cover_forms(
-            &Show::Message("no cover"),
+            &Show::Message("no cover".into()),
             Place::Side,
             CoverSize::Fill,
             2.0,
@@ -547,7 +582,7 @@ mod tests {
         assert_eq!(msg.len(), 1);
         assert_eq!((msg[0].size.width, msg[0].size.height), (10, 1));
         // Longer ones wrap to fit the panel's narrowest.
-        let long = Show::Message("covers need 256 colours");
+        let long = Show::Message("covers need 256 colours".into());
         let side = cover_forms(&long, Place::Side, CoverSize::Fill, 2.0);
         assert!(
             side[0].size.width <= 20 && side[0].size.height == 2,

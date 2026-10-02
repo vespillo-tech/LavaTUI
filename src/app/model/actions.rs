@@ -18,10 +18,13 @@ const RESEED_MIX: u64 = 0x9E37_79B9_7F4A_7C15;
 /// Toasts for the boolean settings' new value: `[on, off]`.
 const STATUS_BAR: [&str; 2] = ["status bar on", "status bar off"];
 const HOUR24: [&str; 2] = ["24h", "12h"];
+/// `l` / `L` with nothing on the lamp.
+pub(super) const NOTHING_ON_LAMP: &str = "nothing on the lamp · t f a y o put things there";
 
 impl Model {
     pub fn update(&mut self, action: Action, now: Instant) {
         self.now = now;
+        self.welcome_key(action, now);
         let handled = match self.overlay {
             Overlay::Picker(picker) => self.picker_action(picker, action),
             Overlay::Help { scroll } => self.help_action(scroll, action),
@@ -43,6 +46,25 @@ impl Model {
         self.sync_music();
         self.sync_library();
         self.relayout(self.layout.area);
+    }
+
+    /// The welcome card goes with the first key (which then does what it
+    /// always does: `s` changes the look). Too small for the card, only
+    /// esc, `?` and quitting dismiss it, so it waits for a larger window.
+    fn welcome_key(&mut self, action: Action, now: Instant) {
+        if !crate::ui::cards::welcome_shown(self)
+            || matches!(action, Action::Resize | Action::Focus(_))
+        {
+            return;
+        }
+        let card = crate::ui::cards::welcome_card(&self.layout).is_some();
+        if card || matches!(action, Action::Close | Action::Help | Action::Quit) {
+            self.welcome = false;
+            if self.settings.ui.welcome {
+                self.settings.ui.welcome = false;
+                self.changed(now);
+            }
+        }
     }
 
     fn help_action(&mut self, scroll: u16, action: Action) -> bool {
@@ -107,7 +129,7 @@ impl Model {
             Action::ToggleStatusBar if !self.minimal() => {
                 self.toggle(now, |s| &mut s.ui.status_bar, STATUS_BAR);
             }
-            Action::ToggleStatusBar => self.toast("no status bar in minimal · m to leave"),
+            Action::ToggleStatusBar => self.toast("no status bar in lamp-only mode · m to leave"),
             Action::NextStyle => self.cycle_pick(PickerKind::Style),
             Action::NextFace => {
                 self.face = clock::next_face(self.face.name());
@@ -123,13 +145,14 @@ impl Model {
             Action::NextLavaWidget => self.next_lava_widget(),
             Action::PlayerKeys => self.player_keys_on(),
             Action::CoverDetail => self.next_cover_detail(now),
+            Action::Welcome => self.welcome = true,
             // Only while the player keys are on (`player_action`).
             Action::Player(_) => {}
             Action::ToggleHour24 => self.toggle(now, |s| &mut s.clock.hour24, HOUR24),
             Action::PomodoroToggle => self.pomodoro_toggle(now),
             Action::PomodoroSkip => match self.pomodoro.skip(now) {
                 Some(end) => self.phase_ended(end, now),
-                None => self.toast("pomodoro idle · ␣ to start"),
+                None => self.toast("timer not running · Space starts it"),
             },
             Action::PomodoroReset => self.reset_key(now),
             Action::HeatUp => self.set_heat(self.world.heat().saturating_add(1), now),
@@ -144,7 +167,7 @@ impl Model {
             Action::Reseed => {
                 let seed = now.duration_since(self.started).as_nanos() as u64 ^ RESEED_MIX;
                 self.world.reseed(seed);
-                self.toast("reseeding");
+                self.toast("new wax pattern");
             }
             Action::DebugHud => self.hud = !self.hud,
             // A resize needs no clear of its own: the terminal clears and
@@ -189,16 +212,17 @@ impl Model {
         let note = match place {
             Place::Off => "",
             _ if self.layout.placed(index).is_some() => "",
-            Place::Side if self.minimal() => " · not in minimal",
-            _ => " · no room",
+            Place::Side if self.minimal() => " · hidden in lamp-only mode",
+            _ => " · enlarge to see",
         };
         // Placing the lyrics is the opt-in to lookups: say where they go.
         let via = if name == "lyrics" && place != Place::Off {
-            " · via lrclib.net"
+            " · song details go to lrclib.net"
         } else {
             ""
         };
-        self.toast(format!("{name} · {}{note}{via}", place.describe()));
+        let label = dock::label(name);
+        self.toast(format!("{label} · {}{note}{via}", place.describe()));
     }
 
     /// The widgets on the lava, by index.
@@ -221,7 +245,7 @@ impl Model {
     /// clockwise. The toast names it and where it went.
     fn next_anchor(&mut self, now: Instant) {
         let Some(index) = self.focused_lava_widget() else {
-            self.toast("nothing on the lava · t f a put widgets there");
+            self.toast(NOTHING_ON_LAMP);
             return;
         };
         let widget = dock::WIDGETS[index];
@@ -233,16 +257,17 @@ impl Model {
         let note = if self.layout.placed(index).is_some() {
             ""
         } else {
-            " · no room"
+            " · enlarge to see"
         };
-        self.toast(format!("{} · {}{note}", widget.name(), anchor.name()));
+        let label = dock::label(widget.name());
+        self.toast(format!("{label} · {}{note}", anchor.name()));
     }
 
     /// `L`: `l` moves the next widget on the lava.
     fn next_lava_widget(&mut self) {
         let there = self.on_the_lava();
         let Some(current) = self.focused_lava_widget() else {
-            self.toast("nothing on the lava · t f a put widgets there");
+            self.toast(NOTHING_ON_LAMP);
             return;
         };
         let at = there.iter().position(|&i| i == current).unwrap_or(0);
@@ -250,7 +275,8 @@ impl Model {
         self.lava_focus = Some(next);
         let widget = dock::WIDGETS[next];
         let anchor = self.settings.dock.anchor(widget).name();
-        self.toast(format!("l moves {} · now {anchor}", widget.name()));
+        let label = dock::label(widget.name());
+        self.toast(format!("l moves the {label} · now {anchor}"));
     }
 
     fn toggle_minimal(&mut self, now: Instant) {
@@ -261,7 +287,7 @@ impl Model {
         };
         self.overridden.retain(|o| *o != Overridden::Mode);
         if self.minimal() {
-            self.toast("minimal · m to return");
+            self.toast("lamp only · m to return");
         }
         self.changed(now);
     }
@@ -332,7 +358,7 @@ impl Model {
                 self.reset_pending = Some(now);
             } else {
                 self.reset_armed = Some(now);
-                self.toast("press r again to reset");
+                self.toast("press r again to reset the timer");
             }
         }
     }

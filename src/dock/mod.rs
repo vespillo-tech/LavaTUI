@@ -30,14 +30,14 @@ use serde::{Deserialize, Serialize};
 use crate::app::Model;
 use crate::theme::Role;
 
-pub use clock::Clock;
 #[cfg(test)]
-pub use clock::{clock_forms, clock_parts};
+pub use clock::clock_forms;
+pub use clock::{Clock, clock_parts};
 pub use cover::Cover;
 pub use lyrics::Lyrics;
 #[cfg(test)]
 pub use lyrics::{Show as LyricsShow, lyrics_forms};
-pub use music::{Music, fit, hit as music_hit};
+pub use music::{Music, fit, hit as music_hit, wrap};
 #[cfg(test)]
 pub use music::{Show, music_forms};
 pub use pomodoro::Pomodoro;
@@ -72,8 +72,8 @@ impl Place {
     /// For toasts: `clock · on the lava`.
     pub fn describe(self) -> &'static str {
         match self {
-            Place::Side => "side panel",
-            Place::Overlay => "on the lava",
+            Place::Side => "beside the lamp",
+            Place::Overlay => "on the lamp",
             Place::Off => "off",
         }
     }
@@ -356,6 +356,15 @@ pub trait DockWidget: Sync {
     /// The one-line chip shown when this widget's place has no room, or
     /// `None` when it has nothing to say there.
     fn chip(&self, model: &Model) -> Option<ChipText>;
+}
+
+/// What the user reads for widget `name` (its config key): the pomodoro
+/// is "the timer" on screen.
+pub fn label(name: &str) -> &str {
+    match name {
+        "pomodoro" => "timer",
+        _ => name,
+    }
 }
 
 pub fn by_name(name: &str) -> Option<(usize, &'static dyn DockWidget)> {

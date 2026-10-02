@@ -46,6 +46,8 @@ pub use settings_screen::{Item, Kind, Page, Row, SettingsState, SettingsView};
 pub const SIM_HZ: u32 = 120;
 /// Headless steps run at launch so the first frame already looks alive.
 const PREWARM_STEPS: u32 = 600;
+/// The toast a lamp-only start opens with.
+const MINIMAL_START: &str = "lamp only · ? help · m shows more";
 /// How long a toast stays up (§4.2).
 pub const TOAST_TIME: Duration = Duration::from_millis(1400);
 /// The end of a toast's time that it fades out over (truecolor).
@@ -176,6 +178,9 @@ pub struct Model {
     pub save_problem: Option<String>,
 
     // Chrome.
+    /// The welcome card is up (`ui.welcome` at start, or `w`): see
+    /// [`crate::ui::cards`].
+    pub welcome: bool,
     pub overlay: Overlay,
     pub toast: Option<Toast>,
     pub hud: bool,
@@ -263,6 +268,7 @@ impl Model {
             library: Library::new(settings.spotify_client_id()),
             lyrics: LyricsState::default(),
             lava_focus: None,
+            welcome: settings.ui.welcome,
             settings_screen: SettingsState::default(),
             save_problem: None,
             overlay: Overlay::None,
@@ -289,6 +295,9 @@ impl Model {
         model.warm_up(area, seed);
         if let Some(problem) = loaded.problem {
             model.toast(problem);
+        } else if model.minimal() && !model.welcome {
+            // Lamp only shows no keys: say once where they are.
+            model.toast(MINIMAL_START);
         }
         model
     }
@@ -490,7 +499,7 @@ impl Model {
         if self.reset_pending.is_some_and(|at| now - at >= REPEAT_GAP) {
             self.reset_pending = None;
             self.pomodoro.reset();
-            self.toast("pomodoro reset");
+            self.toast("timer reset");
         }
         self.poll_saves();
         self.stats.save_us = 0;

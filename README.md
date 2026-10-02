@@ -76,9 +76,11 @@ in minimal mode:
   with a small cover beside it, title, artist, album, a progress bar,
   play state and volume, beside the lamp or on the lava. It shrinks from
   that card down to `▶ title – artist`, and says calmly
-  when Spotify isn't running or needs permission. `A` turns on the player
-  keys: `space` play/pause, `n`/`p` next/previous, `←`/`→` seek, `↑`/`↓`
-  volume, `esc` when done. It never blocks a frame: the player is polled on
+  what to do when Spotify isn't open or needs permission (with no room
+  for the widget, a small `♪ open Spotify` / `♪ see Shift+A` note in the
+  corner instead). `Shift+A` turns on the music controls: `space`
+  play/pause, `n`/`p` next/previous, `←`/`→` seek, `↑`/`↓` volume, `esc`
+  back (a quiet `music controls · Esc back` line says they're on). It never blocks a frame: the player is polled on
   its own thread, only while the widget is shown, and covers are fetched
   and cached (`$XDG_CACHE_HOME/lavatui/art`) in the background. On Linux
   and Windows it shows any player (Spotify first); see
@@ -98,9 +100,10 @@ in minimal mode:
   protocol, sent once per track and size, then just cells that never
   flicker), and in iTerm2, WezTerm, foot, mlterm and Konsole too (their
   own picture formats: iTerm2 images or sixel); elsewhere it's drawn in
-  text cells: sextants (2 × 3 pixels a
-  cell), quadrants (2 × 2) or half blocks (1 × 2). `O` cycles the detail
-  (`auto` picks the best your terminal has). Clicking it plays / pauses.
+  text cells: fine (2 × 3 pixels a cell, where the terminal draws those
+  glyphs), medium (2 × 2) or coarse (1 × 2). `Shift+O` cycles the cover
+  quality (auto → photo → fine → medium → coarse; auto picks the best your
+  terminal has, and the message says what it actually uses). Clicking it plays / pauses.
   With the cover widget on, the music card leaves its own small cover
   out (`art.inline = false` drops that one for good).
 - **Mouse**: the music widget has quiet buttons (`◂◂ ‖ ▸▸`, `♡ + ≡`) and a
@@ -194,49 +197,58 @@ unknown `--style` or `--palette` name exits with the list of valid ones.
 | Key | Action |
 |---|---|
 | **Lamp** | |
-| `s` / `S` | next style / style picker |
-| `p` / `P` | next palette / palette picker |
+| `s` / `Shift+S` | next style / choose a style |
+| `p` / `Shift+P` | next colours / choose colours |
 | `[` / `]` | heat − / + (5 steps) |
 | `-` / `+` (`=`) | sim speed ×0.25 … ×4 |
 | `z` | freeze / unfreeze the lamp |
 | `0` | reset heat and speed |
-| `R` | reseed the wax |
-| **Clock & pomodoro** | |
-| `c` / `C` | next clock face / face picker |
-| `T` | 12h / 24h |
-| `space` | pomodoro start / pause / resume |
+| `Shift+R` | a new wax pattern |
+| **Clock & timer** | |
+| `c` / `Shift+C` | next clock face / choose a clock face (with a preview) |
+| `Shift+T` | 12h / 24h |
+| `space` | focus timer start / pause / resume |
 | `n` | skip to the next phase |
-| `r` `r` | reset the pomodoro (press twice within 2 s) |
+| `r` `r` | reset the timer (press twice within 2 s) |
 | **Widgets** | |
-| `t` | clock: side panel → on the lava → off |
-| `f` | pomodoro: side panel → on the lava → off |
-| `a` | music (now playing): side panel → on the lava → off |
-| `A` | player keys on (see below) |
-| `y` | lyrics: side panel → on the lava → off (looks tracks up on lrclib.net) |
-| `o` | album cover: side panel → on the lava → off |
-| `O` | cover detail: auto → pixels → sextant → quadrant → halfblock |
-| `l` | move a widget on the lava (the last put there): centre, top, the corners, bottom |
-| `L` | pick which widget on the lava `l` moves |
+| `t` | clock: beside the lamp → on the lamp → off |
+| `f` | timer: beside the lamp → on the lamp → off |
+| `a` | music (now playing): beside the lamp → on the lamp → off |
+| `Shift+A` | music controls on (see below) |
+| `y` | lyrics: beside the lamp → on the lamp → off (sends the song's title, artist, album and length to lrclib.net) |
+| `o` | album cover: beside the lamp → on the lamp → off |
+| `Shift+O` | cover quality: auto → photo → fine → medium → coarse |
+| `l` | move the selected item on the lamp: centre, top, the corners, bottom |
+| `Shift+L` | select which item on the lamp `l` moves |
 | **App** | |
-| `m` | minimal mode on/off |
+| `m` | lamp only on/off |
 | `b` | status bar on/off |
-| `d` | debug HUD (fps, frame time, samples) |
+| `d` | performance info (fps, frame time, samples) |
 | `ctrl-l` | force a full redraw |
 | `?` | help |
 | `,` | settings |
+| `w` | show the welcome tips again |
 | `q` / `ctrl-c` | quit |
 
-`esc` never quits: it only closes overlays. When help or a picker is
-open, `q` closes it instead of quitting.
+Capital letters mean hold Shift. `esc` never quits: it closes overlays
+and the welcome card. When help or a picker is open, `q` closes it
+instead of quitting.
 
-- **Player keys** (after `A`, until `esc`, `q` or `A`): `space` play /
+On the first start a small welcome card shows the main keys; the first
+key you press puts it away (and does what it always does). In a very
+small window it waits, showing just `? help · q quit`, until there's room.
+
+- **Music controls** (after `Shift+A`, until `esc`, `q` or `Shift+A`): `space` play /
   pause, `n` / `p` next / previous, `←` / `→` (`h` / `l`) seek 10 s,
   `↑` / `↓` (`k` / `j`, `+` / `-`) volume, `x` / `r` shuffle / repeat
   where the player supports them (Spotify's AppleScript doesn't; logged
   in with Premium they go through the Web API), `s` like / unlike, `a` add
   to playlist, `b` playlists, `i` log in to Spotify (again, twice: log
   out). They take the keyboard like an overlay, so they can reuse `space`,
-  `n` and `p`; the status bar shows them while they're on.
+  `n` and `p`; the status bar shows them while they're on, and a quiet
+  `music controls · Esc back` line at the top of the lamp says so at any
+  size. If the player has a problem the music widget has no room to
+  show, the controls show it in a small card.
 - **In the playlist browser:** `j`/`k` move, `enter` (or `l`) opens a
   playlist you own or share (others: plays it) or plays a track in it
   (then the rest of the playlist follows, Premium or not), `p` plays the
@@ -255,7 +267,8 @@ open, `q` closes it instead of quitting.
   change it. To paste the Spotify Client ID, press `enter` on its row (or
   just paste), then `enter` to save.
 - **In pickers:** `j`/`k` or `↑`/`↓` move (with live preview), `1`–`9`
-  jump, `enter` or `space` keep, and `esc` or `q` revert. Pressing the
+  jump, `enter` or `space` save, and `esc` or `q` cancel (small pickers
+  say `Enter save · Esc cancel` themselves). Pressing the
   opening key again keeps the choice and closes the picker. In the tiny
   inline picker, `h`/`l` and `←`/`→` move too.
 - **Mouse** (on by default; *controls* in the settings turns it off): click the
@@ -341,8 +354,9 @@ cycles = 4               # focus phases before a long break
 bell = true
 
 [ui]
-mode = "full"            # full | minimal
+mode = "full"            # full | minimal (lamp only)
 status_bar = true
+welcome = true           # the welcome card at start; off once dismissed (w shows it)
 
 [minimal]
 clock = "corner"         # corner | off
@@ -362,7 +376,7 @@ anchor = { clock = "center", pomodoro = "center", music = "top-left", lyrics = "
 backing = "none"         # none (text floats on the lamp) | soft (a veiled pool behind)
 
 [art]
-detail = "auto"          # auto | pixels | sextant | quadrant | halfblock
+detail = "auto"          # auto | pixels (photo) | sextant (fine) | quadrant (medium) | halfblock (coarse)
 size = "medium"          # small (16 cols) | medium (24) | large (34) | fill (up to 64)
 inline = true            # the music card's own small cover (while the cover widget is off)
 

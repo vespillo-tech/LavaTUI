@@ -8,8 +8,8 @@ description = "A lava lamp for your terminal: glowing wax blobs that rise, sink,
 readme = "README.md"
 keywords = ["lava-lamp", "terminal", "tui", "ambient", "ratatui"]
 categories = ["command-line-utilities", "visualization"]
-repository = "https://github.com/Vespillo/LavaTUI"
-homepage = "https://github.com/Vespillo/LavaTUI"
+repository = "https://github.com/vespillo-tech/LavaTUI"
+homepage = "https://github.com/vespillo-tech/LavaTUI"
 # What `cargo package` / `cargo install` ship: the code and its test
 # snapshots, not screenshots, perf traces, tools or agent config.
 include = ["/src/**", "/Cargo.toml", "/Cargo.lock", "/README.md", "/CHANGELOG.md", "/LICENSE-*"]

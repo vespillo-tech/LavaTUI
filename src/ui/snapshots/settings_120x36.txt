@@ -198,7 +198,7 @@
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    look             ▸ spotify                    not set up  │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    clock & timer      lyrics                            off  │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    widgets            cover picture               automatic  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    widgets            cover picture                    auto  │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│  ▸ music & lyrics     cover size                     medium  │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    controls           small cover with music             on  │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    window             reset this page                 reset  │

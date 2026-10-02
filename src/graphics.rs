@@ -90,6 +90,21 @@ pub enum Protocol {
     Sixel,
 }
 
+/// Inside a multiplexer (tmux, screen, zellij, zmx: Ghostex's built-in
+/// terminal) whose own screen, not the terminal `TERM_PROGRAM` names,
+/// draws what we write. Pixels and uncommon glyphs (sextants) are off
+/// there. Callers with the whole environment also check for any
+/// `GHOSTEX_*` variable ([`ghostex_env`]).
+pub fn multiplexed(var: impl Fn(&str) -> Option<String>) -> bool {
+    let multiplexer = ["TMUX", "STY", "ZELLIJ", "ZMX_SESSION", "GHOSTEX_SESSION_ID"];
+    multiplexer.iter().any(|k| var(k).is_some())
+}
+
+/// Whether the process environment has any `GHOSTEX_*` variable.
+pub fn ghostex_env() -> bool {
+    std::env::vars_os().any(|(k, _)| k.to_string_lossy().starts_with("GHOSTEX_"))
+}
+
 /// The pixel protocol this terminal speaks, from its environment (`var`
 /// reads one variable; no query, so nothing can block), best first:
 ///
@@ -114,8 +129,7 @@ pub fn detect(var: impl Fn(&str) -> Option<String>) -> Option<Protocol> {
     if let Some(choice) = override_from(&var) {
         return choice;
     }
-    let multiplexer = ["TMUX", "STY", "ZELLIJ", "ZMX_SESSION", "GHOSTEX_SESSION_ID"];
-    if multiplexer.iter().any(|k| var(k).is_some()) {
+    if multiplexed(&var) {
         return None;
     }
     let term = var("TERM").unwrap_or_default();

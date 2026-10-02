@@ -838,7 +838,7 @@ impl Model {
         let lib = &self.library;
         match lib.account() {
             Account::Unavailable => return "no Spotify Client ID".into(),
-            Account::LoggedOut => return "not logged in · ⏎ to log in".into(),
+            Account::LoggedOut => return "not logged in · Enter to log in".into(),
             Account::LoggingIn => return "finish logging in in your browser…".into(),
             Account::LoggedIn => {}
         }

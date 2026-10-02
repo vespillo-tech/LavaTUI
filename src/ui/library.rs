@@ -83,6 +83,7 @@ pub fn placement(area: Rect, layout: &Layout, view: &ListView, model: &Model) ->
         width: SHEET_W,
         left: false,
         current: &current,
+        guide: &[],
     };
     picker::place(area, layout, spec)
 }
@@ -99,12 +100,14 @@ pub fn draw(buf: &mut Buffer, area: Rect, layout: &Layout, view: &ListView, mode
         theme.text(Role::Accent),
     );
     let (sheet, list, hint) = match place {
-        Placement::Inline { rect, text } => {
+        Placement::Inline { rect, text, .. } => {
             let s = text.render(&current(model, view));
             buf.set_string(rect.x, rect.y, s, accent.patch(bg));
             return;
         }
-        Placement::Sheet { sheet, list, hint } => (sheet, list, hint),
+        Placement::Sheet {
+            sheet, list, hint, ..
+        } => (sheet, list, hint),
     };
 
     Clear.render(sheet, buf);

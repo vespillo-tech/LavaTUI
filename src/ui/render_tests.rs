@@ -75,6 +75,8 @@ pub(super) fn model(cols: u16, rows: u16, seed: u64) -> (Model, Instant) {
     );
     m.stats.fps = 60.0;
     m.stats.frame_ms = 2.1;
+    // The welcome card has its own tests; the rest show the lamp as used.
+    m.welcome = false;
     (m, t0)
 }
 
@@ -150,6 +152,14 @@ fn scenarios() -> Vec<(&'static str, Setup)> {
         ("style picker", |m, t| m.update(Action::StylePicker, t)),
         ("face picker", |m, t| m.update(Action::FacePicker, t)),
         ("palette picker", |m, t| m.update(Action::PalettePicker, t)),
+        ("welcome (first start)", |m, _| m.welcome = true),
+        ("face picker, clock off: a preview", |m, t| {
+            m.update(Action::Place("clock"), t);
+            m.update(Action::Place("clock"), t);
+            m.update(Action::FacePicker, t);
+            m.update(Action::Down, t);
+            m.toast = None;
+        }),
         ("toast + hud", |m, t| {
             m.update(Action::DebugHud, t);
             m.toast("focus · 25:00");
@@ -190,6 +200,18 @@ fn scenarios() -> Vec<(&'static str, Setup)> {
         }),
         ("music beside, player keys", |m, t| {
             music(m, t, Status::Playing, 1);
+            m.update(Action::PlayerKeys, t);
+            m.toast = None;
+        }),
+        ("lamp only, music controls after the toast", |m, t| {
+            music(m, t, Status::Playing, 1);
+            m.update(Action::ToggleMinimal, t);
+            m.update(Action::PlayerKeys, t);
+            m.toast = None;
+        }),
+        ("lamp only, music controls, not allowed", |m, t| {
+            music(m, t, Status::Unavailable(Unavailable::PermissionDenied), 1);
+            m.update(Action::ToggleMinimal, t);
             m.update(Action::PlayerKeys, t);
             m.toast = None;
         }),
@@ -630,7 +652,7 @@ fn small_help_pins_app_keys_and_hints_scrolling() {
         };
         let first = top(&mut m, 0);
         assert!(
-            first.contains('↓') && first.contains("esc close"),
+            first.contains('↓') && first.contains("Esc close"),
             "{ctx}: {first:?}"
         );
         assert!(top(&mut m, max).contains('↑'), "{ctx}");
@@ -752,15 +774,21 @@ fn status_bar_matches_the_spec() {
     let buf = draw(&m, 80, 24);
     let line = row(&buf, m.layout.status.unwrap().y);
     let at = |h: &str| line.find(h).unwrap_or_else(|| panic!("{h:?} in {line:?}"));
-    assert!(at("s style") < at("c clock") && at("c clock") < at("p palette"));
-    assert!(at("p palette") < at("␣ pomo") && at("␣ pomo") < at("? help"));
+    assert!(at("s style") < at("c clock") && at("c clock") < at("p colours"));
+    assert!(at("p colours") < at(", settings") && at(", settings") < at("? help"));
+    // Wider, the timer's too (it goes before settings, §4.1).
+    let (m, _) = model(100, 30, 7);
+    let buf = draw(&m, 100, 30);
+    let line = row(&buf, m.layout.status.unwrap().y);
+    let at = |h: &str| line.find(h).unwrap_or_else(|| panic!("{h:?} in {line:?}"));
+    assert!(at("p colours") < at("Space timer") && at("Space timer") < at(", settings"));
 }
 
 fn key(k: &str) -> Event {
     let code = match k {
-        "␣" => KeyCode::Char(' '),
-        "⏎" => KeyCode::Enter,
-        "esc" => KeyCode::Esc,
+        "Space" => KeyCode::Char(' '),
+        "Enter" => KeyCode::Enter,
+        "Esc" => KeyCode::Esc,
         "↑↓" => KeyCode::Up,
         "←→" => KeyCode::Right,
         "n p" => KeyCode::Char('n'),
@@ -778,7 +806,7 @@ fn hint_keys_resolve_through_the_keymap() {
         ("c", Action::NextFace),
         ("p", Action::NextPalette),
         ("m", Action::ToggleMinimal),
-        ("␣", Action::PomodoroToggle),
+        ("Space", Action::PomodoroToggle),
         (",", Action::Settings),
         ("?", Action::Help),
     ];
@@ -798,8 +826,8 @@ fn hint_keys_resolve_through_the_keymap() {
     for (k, label, _) in PICKER_HINTS {
         let want = match *label {
             "preview" => Action::Up,
-            "keep" => Action::Keep,
-            "revert" => Action::Close,
+            "save" => Action::Keep,
+            "cancel" => Action::Close,
             other => panic!("unknown picker hint {other}"),
         };
         assert_eq!(action_for(&key(k), picker), Some(want), "{k} {label}");
@@ -811,7 +839,7 @@ fn hint_keys_resolve_through_the_keymap() {
             "seek" => Action::Player(PlayerKey::SeekForward),
             "volume" => Action::Player(PlayerKey::VolumeUp),
             "playlists" => Action::Player(PlayerKey::Playlists),
-            "done" => Action::Close,
+            "back" => Action::Close,
             other => panic!("unknown player hint {other}"),
         };
         assert_eq!(

@@ -68,13 +68,15 @@ fn show(model: &Model) -> Show {
         return message("…");
     };
     match (&snap.status, &snap.track) {
-        (Status::Unavailable(reason), _) => return message(&reason.message(snap.player_name())),
+        (Status::Unavailable(reason), _) => {
+            return message(&reason.message_for(snap.player_name(), "lyrics"));
+        }
         (Status::Connecting, _) => return message("…"),
         (Status::Stopped, _) | (_, None) => return message("nothing playing"),
         _ => {}
     }
     match &model.lyrics.found {
-        None | Some(Fetch::Looking) => message("looking for lyrics…"),
+        None | Some(Fetch::Looking) => message("asking lrclib.net for lyrics…"),
         Some(Fetch::NotFound) => message("no lyrics for this track"),
         Some(Fetch::Offline) => message("lyrics offline"),
         Some(Fetch::Lyrics(Words::Instrumental)) => message("instrumental"),
