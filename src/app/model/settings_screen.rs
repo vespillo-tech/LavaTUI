@@ -20,7 +20,7 @@ use crate::config::{
 };
 use crate::disk_cache::size_words;
 use crate::dock::cover::{CoverSize, Detail};
-use crate::dock::{self, Anchor, Backing, Place, WIDGETS};
+use crate::dock::{self, Anchor, Backing, Place, TextInk, WIDGETS};
 use crate::media::{Status, Unavailable};
 use crate::render::StyleId;
 use crate::sim::{HEAT_LEVELS, SimSpeed};
@@ -160,6 +160,8 @@ pub enum Item {
     /// Where on the lamp widget `n` sits.
     Position(usize),
     Backing,
+    /// The ink of text on the lamp.
+    LampText,
     Spotify,
     CoverDetail,
     CoverSize,
@@ -410,7 +412,7 @@ impl Model {
                 for i in 0..WIDGETS.len() {
                     with_position(i, &mut out);
                 }
-                out.push(Backing);
+                out.extend([LampText, Backing]);
             }
             Page::Music => {
                 out.push(Spotify);
@@ -574,6 +576,17 @@ impl Model {
                     Backing::Soft => "soft shade",
                 },
                 "What items on the lamp sit on. The soft shade needs millions of colours.",
+            ),
+            Item::LampText => choice(
+                "text on the lamp",
+                match s.dock.text {
+                    TextInk::Auto => "automatic",
+                    TextInk::Light => "light",
+                    TextInk::Dark => "dark",
+                },
+                "Automatic makes each letter light or dark, whichever stands out from the \
+                 wax behind it. Light or dark keeps it one colour, even where that's hard \
+                 to read.",
             ),
             Item::Spotify => row(
                 "spotify",
@@ -1345,6 +1358,14 @@ impl Model {
                     Backing::None => Backing::Soft,
                     Backing::Soft => Backing::None,
                 }
+            }
+            Item::LampText => {
+                let i = wrap(
+                    index_of(&TextInk::ALL, &s.dock.text),
+                    TextInk::ALL.len(),
+                    step,
+                );
+                s.dock.text = TextInk::ALL[i];
             }
             Item::CoverDetail => {
                 let i = wrap(

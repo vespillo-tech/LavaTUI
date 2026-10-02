@@ -742,6 +742,23 @@ mod tests {
     }
 
     #[test]
+    fn dock_text_loads_and_defaults_to_auto() {
+        assert_eq!(Settings::default().dock.text, dock::TextInk::Auto);
+        for (name, ink) in [
+            ("light", dock::TextInk::Light),
+            ("dark", dock::TextInk::Dark),
+        ] {
+            let p = Settings::parse(&format!("[dock]\ntext = \"{name}\"\n")).unwrap();
+            assert_eq!(p.settings.dock.text, ink);
+            assert!(p.ignored.is_empty() && p.unknown.is_empty());
+        }
+        let p = Settings::parse("[dock]\ntext = \"white\"\nclock = \"overlay\"\n").unwrap();
+        assert_eq!(p.ignored, ["dock.text"]);
+        assert_eq!(p.settings.dock.text, dock::TextInk::Auto);
+        assert_eq!(p.settings.dock.place(&dock::Clock), dock::Place::Overlay);
+    }
+
+    #[test]
     fn art_settings_load_and_a_bad_value_costs_only_itself() {
         use crate::dock::cover::{CoverSize, Detail};
         let art = Settings::default().art;
