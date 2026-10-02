@@ -17,6 +17,11 @@ It runs in the terminal window you already use, on macOS, Linux and
 Windows. It's one small program. For the best look, we recommend a
 terminal that supports shaders, like [Ghostty](https://ghostty.org).
 Shaders add effects such as glow, which make the wax look even better.
+They do cost something, though. A shader redraws every dot of the window
+on every frame, so it makes your graphics chip work harder, and more so
+in a big window. Glow is one of the heaviest. If the lamp stutters or
+your laptop runs warm, try a lighter shader or a smaller window (see
+[Questions](#questions-and-fixes)).
 
 We've tested LavaTUI in a handful of terminals, but not all of them. If
 something looks wrong in yours, please
