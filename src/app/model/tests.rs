@@ -1186,7 +1186,7 @@ mod music {
             ("TERM", "xterm-ghostty"),
             ("TERM_PROGRAM", "ghostty"),
             ("ZMX_SESSION", "s1"),
-            ("GHOSTEX_SESSION_ID", "G4blh"),
+            ("GHOSTEX_SESSION_ID", "test-session"),
         ];
         let env = |pairs: &'static [(&'static str, &'static str)]| {
             move |k: &str| pairs.iter().find(|p| p.0 == k).map(|p| p.1.to_owned())
