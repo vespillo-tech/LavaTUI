@@ -295,7 +295,7 @@ playing differs:
 | | macOS | Linux | Windows |
 |---|---|---|---|
 | Builds (`cargo check --all-targets`) | ✓ (aarch64) | ✓ (x86_64-unknown-linux-gnu) | ✓ (x86_64-pc-windows-msvc) |
-| Tested on real hardware | ✓ | not yet | not yet |
+| Tested on real hardware | ✓ | in Linux (Docker) with a stand-in player; not yet on a desktop | not yet |
 | Now playing via | AppleScript, one long-lived `osascript` | MPRIS on the D-Bus session bus (zbus) | System Media Transport Controls |
 | Players | the Spotify desktop app | any MPRIS player, Spotify first | any app in the media flyout, Spotify first |
 | Play/pause, next/previous, seek | ✓ | ✓ | ✓ |
@@ -308,7 +308,8 @@ playing differs:
 | Permission | macOS asks once (Automation) | none | none |
 
 Linux players vary: Spotify has long reported its position as 0 over
-MPRIS (the bar then counts from where it was first seen) and ignored
+MPRIS (the bar then counts on from where it was first seen, or from
+where you last skipped or paused in LavaTUI) and ignored
 shuffle and repeat. Anything a player leaves out falls back quietly.
 Like and add work only for Spotify songs: local files, ads and other
 players have nothing for Spotify to save, and the app says so. Windows'

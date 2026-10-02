@@ -107,6 +107,10 @@ sized pty sessions and summarizes frame intervals/spike locations; see
 terminal interval percentiles and every >2-period gap with its measured stage.
 `docs/screenshots/capture.py` does exactly this (pyte + Pillow) and
 regenerates the README screenshots; rerun it after visible changes.
+`tools/linux/run.sh [--amd64]` builds, lints and tests on real Linux in Docker,
+runs the MPRIS live tests against `tools/linux/fake_mpris.py` (also as Spotify)
+and drives lavatui in a pty with the music widget (`tools/linux/pty_check.py`;
+screens in `target/linux-check/`).
 `README.md` is the user-facing overview (features, keys, config, perf
 numbers); `docs/design.md` is the layout/visual contract.
 

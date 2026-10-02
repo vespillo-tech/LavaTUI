@@ -1322,11 +1322,9 @@ impl Model {
             Page::Widgets => s.dock = d.dock,
             Page::Music => {
                 s.art = d.art;
-                for w in ["lyrics"] {
-                    if let Some((_, widget)) = dock::by_name(w) {
-                        s.dock.set(widget, d.dock.place(widget));
-                        s.dock.set_anchor(widget, d.dock.anchor(widget));
-                    }
+                if let Some((_, widget)) = dock::by_name("lyrics") {
+                    s.dock.set(widget, d.dock.place(widget));
+                    s.dock.set_anchor(widget, d.dock.anchor(widget));
                 }
             }
             Page::Controls => s.input = d.input,
