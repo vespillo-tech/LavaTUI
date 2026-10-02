@@ -315,7 +315,9 @@ numbers); `docs/design.md` is the layout/visual contract.
                 (any MPRIS player via zbus, Spotify first), Windows
                 `smtc.rs` (system media controls, Spotify first; no
                 volume/URIs; covers from the thumbnail stream via
-                `art::stash`); `capabilities()` says what each can do,
+                `art::stash`); `capabilities()` says what each can do (read after
+                every exchange: MPRIS's `ModesCheck` withdraws shuffle/repeat
+                from a player seen to ignore them),
                 `FakeSource` for tests, `art.rs`: `ArtLoader` (cover fetch
                 https-only on its thread, or `lavatui-thumb:` bytes a
                 backend stashed; disk cache in

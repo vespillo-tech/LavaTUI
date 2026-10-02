@@ -299,11 +299,10 @@ pub struct PlayerState {
     pub is_playing: bool,
     /// The device's name ("MacBook Pro"), if it says.
     pub device: Option<String>,
-    /// URI of what's playing, if anything.
-    pub item_uri: Option<String>,
-    /// Its name: how a player that names no URI (Windows) is matched to
-    /// it.
-    pub item_name: Option<String>,
+    /// What's playing, if anything: its URI, and the name, artists,
+    /// album, length and local-ness a player that names no URI (Windows)
+    /// is matched to it by.
+    pub item: Option<Track>,
     /// URI of the playlist / album it plays in, if any.
     pub context_uri: Option<String>,
     /// Spotify won't toggle shuffle here (`actions.disallows`: a lone
@@ -311,6 +310,13 @@ pub struct PlayerState {
     pub shuffle_blocked: bool,
     /// Nor repeat (neither the context nor the track).
     pub repeat_blocked: bool,
+}
+
+impl PlayerState {
+    /// URI of what's playing, if anything.
+    pub fn item_uri(&self) -> Option<&str> {
+        self.item.as_ref().map(|t| t.uri.as_str())
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -322,7 +328,7 @@ pub(super) struct RawPlayer {
     #[serde(default)]
     is_playing: bool,
     device: Option<Named>,
-    item: Option<RawUri>,
+    item: Option<RawTrack>,
     context: Option<RawUri>,
     actions: Option<RawActions>,
 }
@@ -336,8 +342,6 @@ struct RawActions {
 #[derive(Debug, Deserialize)]
 struct RawUri {
     uri: Option<String>,
-    #[serde(default)]
-    name: Option<String>,
 }
 
 impl From<RawPlayer> for PlayerState {
@@ -351,8 +355,7 @@ impl From<RawPlayer> for PlayerState {
             repeat: Repeat::parse(&p.repeat_state),
             is_playing: p.is_playing,
             device: p.device.map(|d| d.name).filter(|n| !n.is_empty()),
-            item_name: p.item.as_ref().and_then(|i| i.name.clone()),
-            item_uri: p.item.and_then(|i| i.uri),
+            item: p.item.and_then(RawTrack::into_track),
             context_uri: p.context.and_then(|c| c.uri),
         }
     }

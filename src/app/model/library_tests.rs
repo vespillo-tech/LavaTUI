@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use super::*;
 use crate::media::{Capabilities, Command, FakeSource, Snapshot, Status as Play, Track};
-use crate::spotify_web::fake::{FakeWeb, demo};
+use crate::spotify_web::fake::{FakeWeb, demo, track as web_track};
 use crate::spotify_web::{Error, PlayerState, Repeat, Request, Web};
 use crate::ui::keymap::{Action, PlayerKey as P};
 
@@ -306,8 +306,7 @@ fn premium(shuffle: bool) -> PlayerState {
         repeat: Repeat::Off,
         is_playing: true,
         device: Some("Mac".into()),
-        item_uri: Some(PLAYING.into()),
-        item_name: Some("Slow Rise 0".into()),
+        item: Some(web_track("t0", "Slow Rise 0", "Wax & Wane")),
         context_uri: None,
         shuffle_blocked: false,
         repeat_blocked: false,
@@ -621,13 +620,47 @@ fn smtc_track(name: &str) -> Track {
     crate::media::smtc::track(name, "Wax & Wane", "Lamplight", Duration::from_secs(200)).unwrap()
 }
 
-/// The Web API's player on some device, playing `uri` called `name`.
+/// The Web API's player on some device, playing `uri` called `name` (by
+/// the demo's artist, on its album, as long as [`smtc_track`]).
 fn web_playing(uri: &str, name: &str) -> PlayerState {
+    let item = crate::spotify_web::Track {
+        uri: uri.into(),
+        name: name.into(),
+        ..web_track("t0", name, "Wax & Wane")
+    };
     PlayerState {
-        item_uri: Some(uri.into()),
-        item_name: Some(name.into()),
+        item: Some(item),
         ..premium(false)
     }
+}
+
+/// [`web_playing`] the [`PLAYING`] track, as `change` makes it.
+fn web_item(change: impl FnOnce(&mut crate::spotify_web::Track)) -> PlayerState {
+    let mut state = web_playing(PLAYING, "Slow Rise 0");
+    change(state.item.as_mut().unwrap());
+    state
+}
+
+/// Whether anything was asked of the account about a track or its modes.
+fn touched(account: &FakeWeb) -> Vec<Request> {
+    account
+        .state()
+        .requests
+        .iter()
+        .filter(|r| {
+            matches!(
+                r,
+                Request::LibraryContains { .. }
+                    | Request::Like { .. }
+                    | Request::Unlike { .. }
+                    | Request::AddToPlaylist { .. }
+                    | Request::SetShuffle(_)
+                    | Request::SetRepeat(_)
+                    | Request::Play { .. }
+            )
+        })
+        .cloned()
+        .collect()
 }
 
 #[test]
@@ -719,6 +752,147 @@ fn windows_spotify_is_matched_through_the_web_player() {
     assert_eq!(toast(&m), "nothing to like");
     key(&mut m, later, P::AddToPlaylist);
     assert_eq!(toast(&m), "nothing playing to add");
+}
+
+#[test]
+fn windows_spotify_needs_more_than_a_title_to_match() {
+    // The desktop app (media controls: no URI) plays "Slow Rise 0" by Wax
+    // & Wane, 200 s, on Lamplight; the account's player says...
+    let cases: [(&str, PlayerState); 7] = [
+        (
+            "the same title by another artist",
+            web_item(|t| {
+                t.artists = vec!["The Paraffins".into()];
+            }),
+        ),
+        (
+            "the same title and artist, another length",
+            web_item(|t| {
+                t.duration_ms = 245_000;
+            }),
+        ),
+        (
+            "the same title and artist on another album",
+            web_item(|t| {
+                t.album = "Live at the Lamp".into();
+            }),
+        ),
+        (
+            "a local file of it",
+            web_item(|t| {
+                t.uri = "spotify:local:Wax+%26+Wane:Lamplight:Slow+Rise+0:200".into();
+                t.id = None;
+                t.is_local = true;
+            }),
+        ),
+        (
+            "an episode of that name",
+            web_item(|t| {
+                t.uri = "spotify:episode:0LavaTuiFakeEpisode001".into();
+            }),
+        ),
+        ("no artist", web_item(|t| t.artists.clear())),
+        (
+            "only the title, nothing else to go on",
+            web_item(|t| {
+                t.duration_ms = 0;
+                t.album.clear();
+            }),
+        ),
+    ];
+    for (what, state) in cases {
+        let account = demo();
+        account.state().player = Ok(Some(state));
+        let t0 = Instant::now();
+        let snap = desktop("Spotify", smtc_track("Slow Rise 0"), t0);
+        let (mut m, t0, source) = rig_on("smtc-same-title", &account, snap, SMTC);
+        settle(&mut m, t0);
+        assert_eq!(m.liked(), None, "{what}");
+        assert_eq!(m.music.web_caps, Capabilities::NONE, "{what}");
+        key(&mut m, t0, P::Like);
+        assert_eq!(toast(&m), "nothing to like", "{what}");
+        key(&mut m, t0, P::AddToPlaylist);
+        assert_eq!(toast(&m), "nothing playing to add", "{what}");
+        // Shuffle stays the desktop app's own: the account is untouched.
+        key(&mut m, t0, P::Shuffle);
+        assert_eq!(source.sent(), [Command::SetShuffle(true)], "{what}");
+        settle(&mut m, t0);
+        assert_eq!(touched(&account), [], "{what}");
+    }
+}
+
+#[test]
+fn windows_spotify_matches_the_same_track_however_its_artists_are_listed() {
+    let both = |t: &mut crate::spotify_web::Track| {
+        t.artists = vec!["Wax & Wane".into(), "Mara Vell".into()];
+    };
+    let cases: [(&str, &str, Duration, PlayerState); 4] = [
+        (
+            "every artist, a rounded length",
+            "Wax & Wane, Mara Vell",
+            Duration::from_millis(200_400),
+            web_item(both),
+        ),
+        (
+            "the first artist only",
+            "Wax & Wane",
+            Duration::from_secs(200),
+            web_item(both),
+        ),
+        (
+            "no length: the album says",
+            "Wax & Wane",
+            Duration::ZERO,
+            web_playing(PLAYING, "Slow Rise 0"),
+        ),
+        (
+            "case and punctuation aside",
+            "wax and wane",
+            Duration::from_secs(200),
+            web_item(|t| {
+                t.artists = vec!["Wax And Wane".into()];
+                t.name = "slow rise 0".into();
+            }),
+        ),
+    ];
+    for (what, artist, length, state) in cases {
+        let account = demo();
+        account.state().player = Ok(Some(state));
+        let track = crate::media::smtc::track("Slow Rise 0", artist, "Lamplight", length).unwrap();
+        let t0 = Instant::now();
+        let (mut m, t0, _) = rig_on("smtc-match", &account, desktop("Spotify", track, t0), SMTC);
+        settle(&mut m, t0);
+        assert_eq!(m.liked(), Some(false), "{what}");
+        key(&mut m, t0, P::Like);
+        assert!(account.state().liked.contains(PLAYING), "{what}");
+    }
+}
+
+#[test]
+fn windows_spotify_never_matches_a_state_from_before_the_track_changed() {
+    // The account's player (another device) plays "Slow Rise 0"; the
+    // desktop app moves on to a track of that very name.
+    let account = demo();
+    account.state().player = Ok(Some(web_playing(PLAYING, "Slow Rise 0")));
+    let t0 = Instant::now();
+    let other =
+        crate::media::smtc::track("Ember", "Wax & Wane", "Lamplight", Duration::from_secs(180));
+    let (mut m, t0, source) = rig_on(
+        "smtc-stale",
+        &account,
+        desktop("Spotify", other.unwrap(), t0),
+        SMTC,
+    );
+    settle(&mut m, t0);
+    assert_eq!(m.liked(), None, "Ember is not it");
+    source.set(desktop("Spotify", smtc_track("Slow Rise 0"), t0));
+    // The state in hand was asked for while Ember played: not about this.
+    tick(&mut m, t0);
+    assert_eq!(m.playing_uri(), None);
+    assert_eq!(m.music.web_caps, Capabilities::NONE);
+    // Once Spotify answers for this track, it is.
+    settle(&mut m, t0);
+    assert_eq!(m.playing_uri().as_deref(), Some(PLAYING));
 }
 
 #[test]
@@ -852,6 +1026,87 @@ fn web_modes_belong_only_to_the_player_they_describe() {
     tick(&mut m, t0);
     assert_eq!(m.music.web_caps, Capabilities::NONE);
     assert!(!m.music.snapshot.as_ref().unwrap().shuffle);
+}
+
+#[test]
+fn a_player_that_ignores_shuffle_says_so_and_spotify_then_uses_the_account() {
+    // Spotify over MPRIS, logged out: shuffle goes to the player, which
+    // (as Spotify on Linux does) takes it and changes nothing.
+    let account = demo();
+    account.state().logged_in = false;
+    let caps = Capabilities {
+        contexts: false,
+        ..Capabilities::ALL
+    };
+    let t0 = Instant::now();
+    let track = Track {
+        id: "/com/spotify/track/t0".into(),
+        uri: Some(PLAYING.into()),
+        ..smtc_track("Slow Rise 0")
+    };
+    let snap = desktop("Spotify", track, t0);
+    let (mut m, t0, source) = rig_on("modes-ignored", &account, snap.clone(), caps);
+    settle(&mut m, t0);
+    key(&mut m, t0, P::Shuffle);
+    assert_eq!(source.sent(), [Command::SetShuffle(true)]);
+    // The backend sees the read didn't change ([`ModesCheck`]): the
+    // optimistic "on" is undone and shuffle / repeat are withdrawn.
+    source.set(snap.clone());
+    source.set_capabilities(Capabilities {
+        shuffle: false,
+        repeat: false,
+        ..caps
+    });
+    tick(&mut m, t0);
+    assert_eq!(
+        toast(&m),
+        "Spotify ignored that · log in (i) to shuffle and repeat"
+    );
+    assert!(!m.music.snapshot.as_ref().unwrap().shuffle);
+    assert!(!m.music.capabilities().shuffle, "no longer offered");
+    // Pressed again: nothing sent, and it says what would work.
+    key(&mut m, t0, P::Repeat);
+    assert_eq!(source.sent().len(), 1);
+    assert_eq!(
+        toast(&m),
+        "Spotify can't shuffle or repeat from here · log in (i) to"
+    );
+
+    // Logged in (Premium, this track): the account's player does it.
+    account.state().player = Ok(Some(premium(false)));
+    account.finish_login();
+    settle(&mut m, t0);
+    assert!(m.music.capabilities().shuffle);
+    key(&mut m, t0, P::Shuffle);
+    tick(&mut m, t0);
+    assert!(
+        account
+            .state()
+            .requests
+            .contains(&Request::SetShuffle(true))
+    );
+    assert_eq!(source.sent().len(), 1, "not the player that ignores it");
+}
+
+#[test]
+fn spotify_modes_go_to_the_account_even_when_its_player_offers_them() {
+    // A player with its own shuffle (MPRIS, before any check) playing the
+    // track the logged-in account's player shows: the modes shown are the
+    // account's, so that's where a change goes.
+    let account = demo();
+    account.state().player = Ok(Some(premium(false)));
+    let (mut m, t0, source) = rig("modes-web-first", &account);
+    assert!(m.music.source_capabilities().repeat);
+    settle(&mut m, t0);
+    key(&mut m, t0, P::Repeat);
+    tick(&mut m, t0);
+    assert!(source.sent().is_empty(), "{:?}", source.sent());
+    assert!(
+        account
+            .state()
+            .requests
+            .contains(&Request::SetRepeat(Repeat::Context))
+    );
 }
 
 #[test]

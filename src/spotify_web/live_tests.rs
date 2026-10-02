@@ -165,7 +165,7 @@ impl Live {
             assert!(uri.starts_with("spotify:track:"), "{TRACK_ENV}: {uri}");
             return Some(uri);
         }
-        let playing = self.player()?.item_uri?;
+        let playing = self.player()?.item?.uri;
         eprintln!("playing: {playing}");
         playing.starts_with("spotify:track:").then_some(playing)
     }
@@ -585,7 +585,7 @@ fn live_play_in_context() {
     let p = read(&mut ask);
     eprintln!(
         "playing: {:?} in {:?} (desktop app: {:?})",
-        p.item_uri,
+        p.item_uri(),
         p.context_uri,
         during.track.as_ref().map(|t| &t.id)
     );
@@ -613,7 +613,7 @@ fn live_play_in_context() {
         after.status
     );
 
-    assert_eq!(p.item_uri.as_deref(), Some(track.uri.as_str()));
+    assert_eq!(p.item_uri(), Some(track.uri.as_str()));
     assert_eq!(p.context_uri.as_deref(), Some(playlist.uri.as_str()));
     assert_eq!(after.track.map(|t| t.id.clone()), Some(was.id.clone()));
     assert_eq!(

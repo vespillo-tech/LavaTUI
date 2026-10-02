@@ -9,7 +9,7 @@
 use std::time::{Duration, Instant};
 
 use super::Model;
-use super::library::ListKind;
+use super::library::{Account, ListKind};
 use crate::dock::cover::{self, Detail, Drawn};
 use crate::dock::{self, DockWidget, Place};
 use crate::graphics::inline::Wish;
@@ -40,6 +40,9 @@ pub struct Music {
     /// Premium, a device playing, the context allows it), where the
     /// desktop app's own setters don't work (lava-75z.12).
     pub web_caps: Capabilities,
+    /// The source offered shuffle or repeat at the last sync: when that
+    /// goes, the player was found to ignore them (lava-75z.21).
+    own_modes: bool,
     connect: Connect,
     load_art: LoadArt,
 }
@@ -52,6 +55,7 @@ impl Default for Music {
             snapshot: None,
             keys: false,
             web_caps: Capabilities::NONE,
+            own_modes: false,
             connect: Box::new(media::detect),
             load_art: Box::new(ArtLoader::start),
         }
@@ -76,17 +80,22 @@ impl Music {
     /// Once a frame: connect when `on` (the widget is placed), disconnect
     /// when not (which stops the polling), read the latest state, and ask
     /// for the cover when pictures can be shown (`hires`: the sharp copy
-    /// for real pixels too).
-    pub fn sync(&mut self, on: bool, images: bool, hires: bool) {
+    /// for real pixels too). Whether the player has just been found to
+    /// ignore shuffle and repeat.
+    pub fn sync(&mut self, on: bool, images: bool, hires: bool) -> bool {
         if !on {
             self.source = None;
             self.art = None;
             self.snapshot = None;
             self.keys = false;
-            return;
+            self.own_modes = false;
+            return false;
         }
         let source = self.source.get_or_insert_with(|| (self.connect)());
         let snapshot = source.snapshot();
+        let caps = source.capabilities();
+        let modes = caps.shuffle || caps.repeat;
+        let lost = std::mem::replace(&mut self.own_modes, modes) && !modes;
         let url = snapshot
             .track
             .as_ref()
@@ -98,6 +107,7 @@ impl Music {
             art.want(url);
         }
         self.snapshot = Some(snapshot);
+        lost
     }
 
     /// The cover of the playing track, as far as it has loaded.
@@ -202,12 +212,15 @@ impl Model {
         let pictures = self.pictures();
         let images = (self.music_on() && self.inline_cover()) || self.cover_on();
         let images = images && pictures != Drawn::None;
-        self.music.sync(
+        let ignored = self.music.sync(
             self.media_on(),
             images,
             matches!(pictures, Drawn::Pixels(_)),
         );
         self.patch_modes();
+        if ignored {
+            self.modes_ignored();
+        }
         self.sync_lyrics();
     }
 
@@ -329,6 +342,25 @@ impl Model {
         });
     }
 
+    /// The player took a shuffle / repeat change and didn't make it
+    /// (Spotify over MPRIS, lava-75z.21): the change it showed is undone
+    /// by now, so say so, and what does work.
+    fn modes_ignored(&mut self) {
+        let Some(snap) = &self.music.snapshot else {
+            return;
+        };
+        let player = snap.player_name().to_owned();
+        let web = self.music.web_caps;
+        let next = if web.shuffle || web.repeat {
+            "press again to use your Spotify account"
+        } else if snap.is_spotify() && self.library.account() == Account::LoggedOut {
+            "log in (i) to shuffle and repeat"
+        } else {
+            "it can't shuffle or repeat from here"
+        };
+        self.toast(format!("{player} ignored that · {next}"));
+    }
+
     /// `A`: the player keys on (they last until esc).
     pub(super) fn player_keys_on(&mut self) {
         if !self.music_on() {
@@ -337,7 +369,7 @@ impl Model {
         }
         self.music.keys = true;
         self.toast(match self.library.account() {
-            super::library::Account::LoggedOut => "music controls · i log in · Esc back",
+            Account::LoggedOut => "music controls · i log in · Esc back",
             _ => "music controls · Esc back",
         });
     }
@@ -385,6 +417,16 @@ impl Model {
                 self.toast(format!("volume {volume}"));
                 Command::SetVolume(volume)
             }
+            // The modes shown are the account's (patch_modes): change them
+            // there, not in a player that may ignore it (lava-75z.21).
+            PlayerKey::Shuffle if web.shuffle => {
+                self.web_mode(true);
+                return;
+            }
+            PlayerKey::Repeat if web.repeat => {
+                self.web_mode(false);
+                return;
+            }
             PlayerKey::Shuffle if caps.shuffle => {
                 self.toast(if snap.shuffle {
                     "shuffle off"
@@ -401,21 +443,16 @@ impl Model {
                 });
                 Command::SetRepeat(!snap.repeat)
             }
-            PlayerKey::Shuffle if web.shuffle => {
-                self.web_mode(true);
-                return;
-            }
-            PlayerKey::Repeat if web.repeat => {
-                self.web_mode(false);
-                return;
-            }
             PlayerKey::Shuffle | PlayerKey::Repeat if self.web_modes().is_some() => {
                 self.toast("Spotify won't change that for what's playing");
                 return;
             }
             PlayerKey::Shuffle | PlayerKey::Repeat => {
+                let logged_out = self.library.account() == Account::LoggedOut;
                 self.toast(if self.library.player.needs_login {
                     "log in to Spotify again for shuffle and repeat (i twice, then i)".to_owned()
+                } else if snap.is_spotify() && logged_out {
+                    format!("{player} can't shuffle or repeat from here · log in (i) to")
                 } else {
                     format!("{player} can't shuffle or repeat from here")
                 });
