@@ -142,6 +142,12 @@ pub struct Capabilities {
     /// `SetVolume` takes effect (and `Snapshot::volume` means something;
     /// Windows' media controls have no volume).
     pub volume: bool,
+    /// `PlayUri` / `PlayInContext` start something (Windows' media
+    /// controls can't be told what to play).
+    pub uris: bool,
+    /// `PlayInContext` carries on through the rest of the playlist; where
+    /// it's off, the track plays alone (MPRIS has no contexts).
+    pub contexts: bool,
 }
 
 impl Capabilities {
@@ -149,11 +155,15 @@ impl Capabilities {
         shuffle: true,
         repeat: true,
         volume: true,
+        uris: true,
+        contexts: true,
     };
     pub const NONE: Self = Self {
         shuffle: false,
         repeat: false,
         volume: false,
+        uris: false,
+        contexts: false,
     };
 }
 
@@ -292,8 +302,16 @@ impl Unavailable {
 /// The track that is loaded.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Track {
-    /// Player-specific identifier (`spotify:track:…`).
+    /// The player's own identifier: Spotify's URI on macOS, an MPRIS
+    /// object path (what seeking needs), or the title, artist and album
+    /// where the player gives none (Windows). Tells tracks apart; not
+    /// something to hand to the Web API (that's [`Track::uri`]).
     pub id: String,
+    /// The Spotify track this is (`spotify:track:…`), when the player says
+    /// so ([`spotify_track_uri`]); `None` for local files, ads, episodes
+    /// and other players. Windows never says (see
+    /// `Model::playing_uri`).
+    pub uri: Option<String>,
     pub name: String,
     pub artist: String,
     pub album: String,
@@ -301,6 +319,33 @@ pub struct Track {
     pub duration: Duration,
     /// Cover art URL (may be empty: local files, some ads).
     pub artwork_url: String,
+}
+
+/// The canonical Spotify track URI (`spotify:track:<id>`) for the ways
+/// players name one: the URI itself, an `open.spotify.com/track/<id>`
+/// link (any `?si=` ignored), or Spotify's MPRIS object path
+/// `/com/spotify/track/<id>`. Anything else (a local file, an ad, an
+/// episode, another player's id) is `None`: never a guess.
+pub fn spotify_track_uri(text: &str) -> Option<String> {
+    let text = text.trim();
+    let link = || {
+        let rest = text
+            .strip_prefix("https://open.spotify.com/")
+            .or_else(|| text.strip_prefix("http://open.spotify.com/"))?;
+        // Links may carry a locale first (`intl-de/track/…`).
+        let rest = match rest.split_once('/') {
+            Some((first, tail)) if first.starts_with("intl-") => tail,
+            _ => rest,
+        };
+        let id = rest.strip_prefix("track/")?;
+        Some(id.split(['?', '#']).next().unwrap_or(id))
+    };
+    let id = text
+        .strip_prefix("spotify:track:")
+        .or_else(|| text.strip_prefix("/com/spotify/track/"))
+        .or_else(link)?;
+    let base62 = !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric());
+    base62.then(|| format!("spotify:track:{id}"))
 }
 
 /// The player's state as last known.
@@ -336,6 +381,13 @@ impl Snapshot {
     /// The player's name, or a generic one.
     pub fn player_name(&self) -> &str {
         self.player.as_deref().unwrap_or(UNNAMED_PLAYER)
+    }
+
+    /// The player is a Spotify app (by the name its backend gives it).
+    pub fn is_spotify(&self) -> bool {
+        self.player
+            .as_deref()
+            .is_some_and(|name| name.to_ascii_lowercase().starts_with("spotify"))
     }
 
     /// Why there's nothing to show, as one sentence (`None` when available
@@ -524,6 +576,46 @@ mod tests {
             })
         );
         assert_eq!(both.unwrap().uri(), Some("spotify:track:t"));
+    }
+
+    #[test]
+    fn spotify_track_uris_are_normalised_never_guessed() {
+        let uri = Some("spotify:track:4uLU6hMCjMI75M1A2tKUQC".to_owned());
+        for named in [
+            "spotify:track:4uLU6hMCjMI75M1A2tKUQC",
+            " /com/spotify/track/4uLU6hMCjMI75M1A2tKUQC ",
+            "https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC",
+            "https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC?si=abc123",
+            "https://open.spotify.com/intl-de/track/4uLU6hMCjMI75M1A2tKUQC",
+        ] {
+            assert_eq!(spotify_track_uri(named), uri, "{named:?}");
+        }
+        for not in [
+            "",
+            "spotify:track:",
+            "spotify:local:Artist:Album:Song:215",
+            "spotify:ad:000000012c4a1bd4",
+            "spotify:episode:4uLU6hMCjMI75M1A2tKUQC",
+            "/com/spotify/ad/000000012c4a1bd4",
+            "/org/mpris/MediaPlayer2/Track/7",
+            "https://open.spotify.com/episode/4uLU6hMCjMI75M1A2tKUQC",
+            "https://example.com/track/4uLU6hMCjMI75M1A2tKUQC",
+            "file:///home/someone/Music/song.flac",
+            "spotify:track:a b",
+            "Song\u{1f}Artist\u{1f}Album",
+        ] {
+            assert_eq!(spotify_track_uri(not), None, "{not:?}");
+        }
+    }
+
+    #[test]
+    fn spotify_players_by_name() {
+        let mut snap = Snapshot::new(Status::Playing, Instant::now());
+        assert!(!snap.is_spotify());
+        for (name, spotify) in [("Spotify", true), ("spotify", true), ("VLC", false)] {
+            snap.player = Some(name.into());
+            assert_eq!(snap.is_spotify(), spotify, "{name}");
+        }
     }
 
     #[test]

@@ -532,7 +532,7 @@ fn player_state_reads_shuffle_repeat_and_nothing_playing() {
         .reply(
             200,
             r#"{"shuffle_state":true,"repeat_state":"context","is_playing":true,
-                "device":{"name":"Mac","type":"Computer"},"item":{"uri":"spotify:track:x"},
+                "device":{"name":"Mac","type":"Computer"},"item":{"uri":"spotify:track:x","name":"Slow Rise"},
                 "context":{"uri":"spotify:playlist:p","type":"playlist"},
                 "actions":{"disallows":{"toggling_shuffle":true,"resuming":true}}}"#,
         )
@@ -542,6 +542,7 @@ fn player_state_reads_shuffle_repeat_and_nothing_playing() {
     assert_eq!(state.repeat, Repeat::Context);
     assert_eq!(state.device.as_deref(), Some("Mac"));
     assert_eq!(state.item_uri.as_deref(), Some("spotify:track:x"));
+    assert_eq!(state.item_name.as_deref(), Some("Slow Rise"));
     assert_eq!(state.context_uri.as_deref(), Some("spotify:playlist:p"));
     assert!(state.shuffle_blocked && !state.repeat_blocked);
     assert_eq!(r.client.player().unwrap(), None, "204: nothing playing");

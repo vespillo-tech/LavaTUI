@@ -310,6 +310,7 @@ fn lyrics(m: &mut Model, t: Instant, presses: usize, secs: u64) {
     use crate::lyrics::client::tests::{Mock, ok};
     let track = Track {
         id: "fake:1".into(),
+        uri: None,
         name: "Slow Rise".into(),
         artist: "The Paraffins".into(),
         album: "Heat Rises".into(),
@@ -362,6 +363,7 @@ fn music(m: &mut Model, t: Instant, status: Status, presses: usize) {
 fn music_track(m: &mut Model, t: Instant, status: Status, presses: usize, id: &str) {
     let track = Track {
         id: id.into(),
+        uri: crate::media::spotify_track_uri(id),
         name: "Convection (Long Version)".into(),
         artist: "Wax & Wane".into(),
         album: "Lamplight".into(),
