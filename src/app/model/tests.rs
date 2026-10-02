@@ -1180,6 +1180,68 @@ mod music {
     }
 
     #[test]
+    fn pixels_wait_for_the_terminal_to_confirm_them() {
+        use crate::dock::cover::Drawn;
+        use crate::graphics::Protocol;
+        use crate::graphics::probe::{Probe, WAIT};
+        let setup = |name: &str| {
+            let (mut m, t0) = model_with(Session::default(), temp_config(name), 120, 36);
+            m.caps.sextants = true;
+            m.probe = Some(Probe::new(Protocol::Kitty, t0));
+            with_hires(&mut m, &fake(t0));
+            m.update(Action::Place("cover"), t0);
+            tick(&mut m, t0);
+            m.toast = None;
+            (m, t0)
+        };
+        // Native Ghostty: OK. Text cells until then, pixels after.
+        let (mut m, t0) = setup("probe-ok");
+        assert_eq!(
+            m.pictures(),
+            Drawn::Text(crate::dock::picture::TextMode::Sextant)
+        );
+        assert!(
+            m.idle_until()
+                .is_none_or(|at| at <= t0 + WAIT + Duration::from_millis(50))
+        );
+        m.terminal_replies(&["]11;rgb:0/0/0".into(), "_Gi=31;OK".into()]);
+        assert!(m.probe.is_none());
+        assert_eq!(m.pictures(), Drawn::Pixels(Protocol::Kitty));
+        assert!(m.toast.is_none());
+        // The sharp copy is asked for now (the test loader can't fetch it:
+        // a fresh one has it).
+        with_hires(&mut m, &fake(t0));
+        tick(&mut m, t0);
+        assert!(m.kitty.busy(), "and the cover goes out");
+        // Ghostex-like: the fence comes back first. Text, and a toast.
+        let (mut m, t0) = setup("probe-no");
+        m.terminal_replies(&["]10;rgb:ffff/ffff/ffff".into()]);
+        assert!(m.probe.is_none());
+        assert_eq!(m.caps.pixels, None);
+        assert_eq!(
+            m.pictures(),
+            Drawn::Text(crate::dock::picture::TextMode::Sextant)
+        );
+        assert_eq!(
+            m.toast.as_ref().unwrap().text,
+            "no pixels in this terminal · cover in sextant"
+        );
+        tick(&mut m, t0);
+        assert!(!m.kitty.busy(), "nothing sent");
+        // No answer at all: settled at the deadline, the same way.
+        let (mut m, t0) = setup("probe-silent");
+        tick(&mut m, t0 + WAIT / 2);
+        assert!(m.probe.is_some());
+        tick(&mut m, t0 + WAIT);
+        assert!(m.probe.is_none());
+        assert_eq!(m.caps.pixels, None);
+        assert!(m.toast.is_some());
+        // A late OK changes nothing.
+        m.terminal_replies(&["_Gi=31;OK".into()]);
+        assert_eq!(m.caps.pixels, None);
+    }
+
+    #[test]
     fn the_detail_key_cycles_and_says_what_it_comes_to() {
         let (mut m, t0) = model("cover-detail");
         let mut seen = Vec::new();
@@ -1190,7 +1252,7 @@ mod music {
         assert_eq!(
             seen,
             [
-                "cover · pixels",
+                "cover · pixels · quadrant",
                 "cover · sextant",
                 "cover · quadrant",
                 "cover · halfblock",

@@ -144,15 +144,30 @@ pub struct Caps {
 
 impl Caps {
     /// From the environment; never in tests (they say what they want).
-    pub fn detect() -> Self {
+    /// A pixel protocol the terminal still has to confirm
+    /// ([`graphics::probe`]) comes back apart, `pixels` staying `None`
+    /// until it does: everywhere but Windows (whose console input doesn't
+    /// pass replies on), unless `LAVATUI_GRAPHICS` said it.
+    pub fn detect() -> (Self, Option<Protocol>) {
         if cfg!(test) {
-            return Self::default();
+            return (Self::default(), None);
         }
         let var = |k: &str| std::env::var(k).ok();
         let pixels = graphics::detect(var);
-        Self {
+        let caps = Self {
             pixels,
             sextants: pixels == Some(Protocol::Kitty) || sextants(var),
+        };
+        if pixels.is_some() && cfg!(unix) && !graphics::forced(var) {
+            (
+                Self {
+                    pixels: None,
+                    ..caps
+                },
+                pixels,
+            )
+        } else {
+            (caps, None)
         }
     }
 }
@@ -169,8 +184,10 @@ pub fn sextants(var: impl Fn(&str) -> Option<String>) -> bool {
         || var("WT_SESSION").is_some()
 }
 
-/// `detail` at this terminal and depth (pure). `pixels` where the
-/// terminal wasn't recognised assumes the kitty protocol.
+/// `detail` at this terminal and depth (pure). `pixels` where there are
+/// none (not recognised, or not confirmed) is the best text cells: never
+/// a protocol the terminal may not speak (kitty placeholders show as `?`).
+/// `LAVATUI_GRAPHICS` is the way to name one.
 pub fn resolve(detail: Detail, caps: Caps, depth: ColorDepth) -> Drawn {
     let text = matches!(depth, ColorDepth::TrueColor | ColorDepth::Ansi256);
     let best_text = if caps.sextants {
@@ -181,8 +198,7 @@ pub fn resolve(detail: Detail, caps: Caps, depth: ColorDepth) -> Drawn {
     let as_text = |mode| if text { Drawn::Text(mode) } else { Drawn::None };
     match detail {
         _ if depth == ColorDepth::None => Drawn::None,
-        Detail::Pixels => Drawn::Pixels(caps.pixels.unwrap_or(Protocol::Kitty)),
-        Detail::Auto => caps.pixels.map_or(as_text(best_text), Drawn::Pixels),
+        Detail::Pixels | Detail::Auto => caps.pixels.map_or(as_text(best_text), Drawn::Pixels),
         Detail::Sextant => as_text(TextMode::Sextant),
         Detail::Quadrant => as_text(TextMode::Quadrant),
         Detail::HalfBlock => as_text(TextMode::HalfBlock),
@@ -468,11 +484,12 @@ mod tests {
     #[test]
     fn a_chosen_detail_is_kept_where_it_can_be() {
         use ColorDepth::*;
-        // Pixels when asked: the terminal's protocol, else kitty's.
+        // Pixels when asked: the terminal's protocol, else the best text.
         assert_eq!(
             resolve(Detail::Pixels, PLAIN, TrueColor),
-            Drawn::Pixels(Protocol::Kitty)
+            Drawn::Text(TextMode::Quadrant)
         );
+        assert_eq!(resolve(Detail::Pixels, PLAIN, Ansi16), Drawn::None);
         assert_eq!(
             resolve(Detail::Pixels, SIXEL, TrueColor),
             Drawn::Pixels(Protocol::Sixel)

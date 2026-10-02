@@ -65,6 +65,13 @@ pub fn run(
     model.cell_px = cell.map(|c| c.px);
     model.background_saves()?;
     let modes = TerminalModes::enable(model.settings.input.mouse)?;
+    if let Some(probe) = &model.probe {
+        // Does the terminal really show pictures? Asked once; the answer
+        // comes back as input, whenever it does.
+        let mut out = io::stdout();
+        out.write_all(&probe.query())?;
+        out.flush()?;
+    }
     let mut trace = trace::Trace::new(trace_path)?;
     let result = run_loop(
         terminal,
@@ -323,6 +330,10 @@ fn wait_for_input(
         }
         let now = events.now();
         replies.filter(&mut burst, now);
+        let answers = replies.take();
+        if !answers.is_empty() && model.terminal_replies(&answers) {
+            handled = true;
+        }
         for event in burst.drain(..) {
             if let Event::Resize(..) = event {
                 let cell = reported_cell();

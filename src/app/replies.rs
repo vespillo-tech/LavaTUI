@@ -18,6 +18,9 @@
 //! A string still open at the end of a burst stays open into the next one
 //! if it comes within [`STRING_GAP`] (a reply split across reads); after
 //! that the next key is the user's again, so a stray alt-] can't eat input.
+//!
+//! The strings dropped are kept as text too ([`ReplyFilter::take`]): the
+//! answers to our own questions (the picture probe, `graphics::probe`).
 
 use std::time::{Duration, Instant};
 
@@ -26,12 +29,19 @@ use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 /// How long an unterminated string reply keeps swallowing the next burst.
 pub const STRING_GAP: Duration = Duration::from_millis(100);
 
-/// Drops terminal replies from bursts of events. Keeps only whether a
-/// string reply is still open, and since when.
+/// Longest string reply kept as text (longer ones are cut).
+const MAX_REPLY: usize = 1024;
+
+/// Drops terminal replies from bursts of events. Keeps whether a string
+/// reply is still open, and since when, and the strings it dropped.
 #[derive(Debug, Default)]
 pub struct ReplyFilter {
     /// Inside a DCS/OSC/APC string, as of this burst.
     open: Option<Instant>,
+    /// The open string so far: its introducer (`P`, `]`, `_`, …), body.
+    text: String,
+    /// Whole strings dropped, not yet taken.
+    done: Vec<String>,
 }
 
 impl ReplyFilter {
@@ -39,6 +49,9 @@ impl ReplyFilter {
     /// the events read together at `now`.
     pub fn filter(&mut self, burst: &mut Vec<Event>, now: Instant) {
         let mut in_string = self.open.is_some_and(|at| now - at < STRING_GAP);
+        if !in_string {
+            self.text.clear();
+        }
         let mut keep = vec![true; burst.len()];
         let mut i = 0;
         while i < burst.len() {
@@ -46,9 +59,20 @@ impl ReplyFilter {
             if in_string {
                 keep[i] = false;
                 in_string = !key.is_some_and(ends_string);
-            } else if key.is_some_and(starts_string) {
+                if !in_string {
+                    self.done.push(std::mem::take(&mut self.text));
+                } else if let Some(c) = key.and_then(plain_char)
+                    && self.text.len() < MAX_REPLY
+                {
+                    self.text.push(c);
+                }
+            } else if let Some(k) = key.filter(|k| starts_string(k)) {
                 keep[i] = false;
                 in_string = true;
+                self.text.clear();
+                if let KeyCode::Char(c) = k.code {
+                    self.text.push(c);
+                }
             } else if let Some(end) = csi_tail(&burst[i..]) {
                 keep[i..i + end].fill(false);
                 i += end;
@@ -59,6 +83,12 @@ impl ReplyFilter {
         self.open = in_string.then_some(now);
         let mut flags = keep.into_iter();
         burst.retain(|_| flags.next().unwrap_or(true));
+    }
+
+    /// The string replies dropped since last time, each as its introducer
+    /// and body (`_Gi=31;OK`, `P>|foot(1.18)`, `]10;rgb:…`).
+    pub fn take(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.done)
     }
 }
 
@@ -231,6 +261,35 @@ pub(super) mod tests {
         let mut burst = vec![esc.clone(), alt_s.clone(), ch('q')];
         ReplyFilter::default().filter(&mut burst, Instant::now());
         assert_eq!(burst, [esc, alt_s, ch('q')]);
+    }
+
+    #[test]
+    fn dropped_strings_are_kept_as_text() {
+        let mut f = ReplyFilter::default();
+        let mut burst = crossterm_events(b"\x1b_Gi=31;OK\x1b\\x\x1bP>|foot(1.18.1)\x1b\\");
+        f.filter(&mut burst, Instant::now());
+        assert_eq!(burst, [ch('x')]);
+        let mut fence = crossterm_events(b"\x1b]10;rgb:ffff/ffff/ffff\x07");
+        f.filter(&mut fence, Instant::now());
+        assert_eq!(
+            f.take(),
+            ["_Gi=31;OK", "P>|foot(1.18.1)", "]10;rgb:ffff/ffff/ffff"]
+        );
+        assert!(f.take().is_empty());
+        // Split across reads: whole once it ends.
+        let t0 = Instant::now();
+        let mut a = crossterm_events(b"\x1b_Gi=31;");
+        f.filter(&mut a, t0);
+        assert!(f.take().is_empty());
+        let mut b = crossterm_events(b"OK\x1b\\");
+        f.filter(&mut b, t0 + Duration::from_millis(5));
+        assert_eq!(f.take(), ["_Gi=31;OK"]);
+        // A lapsed one is forgotten, not glued onto the next.
+        let mut c = crossterm_events(b"\x1b_Gi=31;");
+        f.filter(&mut c, t0);
+        let mut d = crossterm_events(b"\x1b_Gi=1;OK\x1b\\");
+        f.filter(&mut d, t0 + STRING_GAP);
+        assert_eq!(f.take(), ["_Gi=1;OK"]);
     }
 
     #[test]

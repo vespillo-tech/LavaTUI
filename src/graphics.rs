@@ -28,6 +28,7 @@
 //! whatever writer the app hands over, so tests read them back.
 
 pub mod inline;
+pub mod probe;
 mod sixel;
 
 use std::collections::VecDeque;
@@ -95,7 +96,12 @@ pub enum Protocol {
 /// * `LAVATUI_GRAPHICS` = `kitty` / `iterm` / `sixel` / `none` says so
 ///   outright (for terminals that can't be told apart, e.g. xterm built
 ///   with sixel).
-/// * None inside tmux or screen (they'd need passthrough).
+/// * None inside a multiplexer: tmux, screen, zellij, or zmx (which
+///   Ghostex's built-in terminal runs every session through, under
+///   `TERM_PROGRAM=ghostty` but without kitty graphics).
+///
+/// What the environment says is then checked with the terminal itself
+/// ([`probe`]), unless `LAVATUI_GRAPHICS` said it ([`forced`]).
 /// * Kitty: kitty and Ghostty (`TERM`, `TERM_PROGRAM`, their own
 ///   variables). Not WezTerm or Konsole: kitty graphics, but no
 ///   placeholders.
@@ -105,15 +111,11 @@ pub enum Protocol {
 ///   Konsole 22.04 or later (`KONSOLE_VERSION`), Contour
 ///   (`TERMINAL_NAME=contour`).
 pub fn detect(var: impl Fn(&str) -> Option<String>) -> Option<Protocol> {
-    let forced = var("LAVATUI_GRAPHICS").map(|v| v.trim().to_lowercase());
-    match forced.as_deref() {
-        Some("kitty") => return Some(Protocol::Kitty),
-        Some("iterm" | "iterm2") => return Some(Protocol::Iterm),
-        Some("sixel") => return Some(Protocol::Sixel),
-        Some("none" | "off" | "text") => return None,
-        _ => {}
+    if let Some(choice) = override_from(&var) {
+        return choice;
     }
-    if var("TMUX").is_some() || var("STY").is_some() {
+    let multiplexer = ["TMUX", "STY", "ZELLIJ", "ZMX_SESSION", "GHOSTEX_SESSION_ID"];
+    if multiplexer.iter().any(|k| var(k).is_some()) {
         return None;
     }
     let term = var("TERM").unwrap_or_default();
@@ -142,6 +144,24 @@ pub fn detect(var: impl Fn(&str) -> Option<String>) -> Option<Protocol> {
         Some(Protocol::Sixel)
     } else {
         None
+    }
+}
+
+/// Whether `LAVATUI_GRAPHICS` names the protocol outright (then it isn't
+/// probed).
+pub fn forced(var: impl Fn(&str) -> Option<String>) -> bool {
+    override_from(&var).is_some()
+}
+
+/// `LAVATUI_GRAPHICS`, if it holds a value we know.
+fn override_from(var: &impl Fn(&str) -> Option<String>) -> Option<Option<Protocol>> {
+    let value = var("LAVATUI_GRAPHICS")?.trim().to_lowercase();
+    match value.as_str() {
+        "kitty" => Some(Some(Protocol::Kitty)),
+        "iterm" | "iterm2" => Some(Some(Protocol::Iterm)),
+        "sixel" => Some(Some(Protocol::Sixel)),
+        "none" | "off" | "text" => Some(None),
+        _ => None,
     }
 }
 
@@ -408,12 +428,42 @@ mod tests {
         );
         assert_eq!(d(&[("TERM_PROGRAM", "WezTerm"), ("TMUX", "x")]), None);
         assert_eq!(d(&[("TERM", "foot"), ("STY", "x")]), None);
+        assert_eq!(d(&[("TERM_PROGRAM", "WezTerm"), ("ZELLIJ", "0")]), None);
         assert_eq!(
             d(&[("TERM", "xterm-256color")]),
             None,
             "plain xterm: unknown"
         );
         assert_eq!(d(&[("TERM_PROGRAM", "vscode")]), None);
+    }
+
+    #[test]
+    fn ghostex_and_zmx_are_multiplexers() {
+        // Ghostex's built-in terminal: Ghostty's name, no kitty graphics.
+        let ghostex = env(&[
+            ("TERM_PROGRAM", "ghostty"),
+            ("TERM", "xterm-256color"),
+            ("ZMX_SESSION", "s1"),
+            ("GHOSTEX_SESSION_ID", "G4blh"),
+        ]);
+        assert_eq!(detect(ghostex), None);
+        assert_eq!(
+            detect(env(&[("TERM_PROGRAM", "ghostty"), ("ZMX_SESSION", "s1")])),
+            None
+        );
+        assert_eq!(
+            detect(env(&[
+                ("TERM", "xterm-ghostty"),
+                ("GHOSTEX_SESSION_ID", "x")
+            ])),
+            None
+        );
+        // Unless told outright.
+        let told = env(&[("ZMX_SESSION", "s1"), ("LAVATUI_GRAPHICS", "kitty")]);
+        assert_eq!(detect(&told), Some(Protocol::Kitty));
+        assert!(forced(&told));
+        assert!(!forced(env(&[("TERM_PROGRAM", "ghostty")])));
+        assert!(!forced(env(&[("LAVATUI_GRAPHICS", "bogus")])));
     }
 
     #[test]

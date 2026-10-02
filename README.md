@@ -449,7 +449,10 @@ synchronized update; `tools/kitty_check.py` shows exactly what goes out
 (`tools/inline_check.py` does the same for iTerm2 images and sixel, which
 are sent whole, once, when the cover appears, moves or changes size). If
 your terminal can show pictures but isn't recognised, set
-`LAVATUI_GRAPHICS` to `kitty`, `iterm` or `sixel` (or `none`).
+`LAVATUI_GRAPHICS` to `kitty`, `iterm` or `sixel` (or `none`). Otherwise
+lavatui asks the terminal once at start whether it really can, and draws
+the cover in text until it says yes (inside tmux, screen, zellij or
+Ghostex it doesn't try).
 
 Here is the render time per frame at 200×60 in truecolor: the field
 sampling plus the style draw (`bench_lamp`: a full-area lamp, two sim

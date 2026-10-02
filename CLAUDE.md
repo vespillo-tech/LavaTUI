@@ -311,8 +311,15 @@ numbers); `docs/design.md` is the layout/visual contract.
                 `Action::Press` → `Model::music_hit` → a `PlayerKey` (a
                 click on the cover widget is play / pause).
 - `graphics.rs` — pictures in pixels. `detect(env) -> Option<Protocol>`
-                (`Kitty` / `Iterm` / `Sixel`, env only, none in tmux;
-                `LAVATUI_GRAPHICS` overrides). Kitty graphics protocol
+                (`Kitty` / `Iterm` / `Sixel`, env only, none in tmux /
+                screen / zellij / zmx (Ghostex); `LAVATUI_GRAPHICS`
+                overrides, `forced`). `graphics/probe.rs`: `Probe`, the
+                start-up check of what env promised (kitty `a=q`, else
+                XTVERSION, then an OSC 10 fence; never waited on): `query`
+                written once by `app::run`, `reply` fed the strings
+                `ReplyFilter::take` collects, `expired` after 1.5 s;
+                `Caps::detect` returns the unconfirmed protocol apart and
+                `Model::settle_probe` sets `caps.pixels` (or toasts). Kitty graphics protocol
                 with Unicode placeholders (pure bytes):
                 `Kitty` (`want(Option<(Key, png)>)` once a frame after the
                 layout, `write` after the frame's cells: chunks ≤ `BUDGET`

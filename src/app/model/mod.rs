@@ -27,6 +27,7 @@ use crate::dock::cover::Caps;
 use crate::dock::{Place, WIDGETS};
 use crate::graphics::Kitty;
 use crate::graphics::inline::Inline;
+use crate::graphics::probe::Probe;
 use crate::render::StyleId;
 use crate::sim::{Field, HEAT_LEVELS, SimSpeed, World};
 use crate::theme::{ColorDepth, Palette, Theme};
@@ -141,8 +142,12 @@ pub struct Model {
 
     /// The music widget's player, cover and keys.
     pub music: Music,
-    /// What the terminal can show pictures with (read once at start).
+    /// What the terminal can show pictures with (read once at start;
+    /// `pixels` once the terminal confirms it).
     pub caps: Caps,
+    /// The pixel protocol the environment promises, being checked with the
+    /// terminal (the app writes its query once at start).
+    pub probe: Option<Probe>,
     /// Ghostty's config makes cell backgrounds see-through (read once at
     /// start, for `display.cells = "auto"`).
     pub ghostty_translucent: bool,
@@ -204,6 +209,7 @@ impl Model {
         let speed = SimSpeed::from_factor(settings.lamp.speed);
         let mut world = World::new(seed, 1.0);
         world.set_heat(settings.lamp.heat);
+        let (caps, unconfirmed) = Caps::detect();
         let mut model = Model {
             style: StyleId::by_name(&settings.lamp.style).unwrap_or_default(),
             theme: Theme::new(
@@ -232,7 +238,8 @@ impl Model {
             reset_pending: None,
             last_reset_key: None,
             music: Music::default(),
-            caps: Caps::detect(),
+            caps,
+            probe: unconfirmed.map(|p| Probe::new(p, now)),
             ghostty_translucent: crate::cells::detect(),
             kitty: Kitty::default(),
             inline: Inline::default(),
@@ -364,6 +371,10 @@ impl Model {
             // The next line (or the end of a fade).
             wake = wake.min(at);
         }
+        if let Some(p) = &self.probe {
+            // Settled by then, answer or not.
+            wake = wake.min(p.deadline());
+        }
         if self.kitty.busy() || self.inline.busy() {
             // A cover on its way to the terminal, a slice a frame.
             wake = wake.min(self.now + Duration::from_millis(16));
@@ -462,6 +473,9 @@ impl Model {
             let started = Instant::now();
             self.save();
             self.stats.save_us = started.elapsed().as_micros() as u64;
+        }
+        if let Some(verdict) = self.probe.as_ref().and_then(|p| p.expired(now)) {
+            self.settle_probe(verdict);
         }
         self.sync_music();
         self.sync_library();

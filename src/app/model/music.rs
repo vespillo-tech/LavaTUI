@@ -10,9 +10,10 @@ use std::time::{Duration, Instant};
 
 use super::Model;
 use super::library::ListKind;
-use crate::dock::cover::{self, Drawn};
+use crate::dock::cover::{self, Detail, Drawn};
 use crate::dock::{self, DockWidget, Place};
 use crate::graphics::inline::Wish;
+use crate::graphics::probe::Verdict;
 use crate::graphics::{self, Protocol};
 use crate::media::art::{ArtLoader, ArtState};
 use crate::media::{self, Capabilities, Command, MediaSource, Snapshot};
@@ -192,6 +193,43 @@ impl Model {
         self.sync_lyrics();
     }
 
+    /// String replies from the terminal (`app::replies`): the answer to
+    /// the picture probe, if one is among them. Whether it settled it
+    /// (a redraw is due).
+    pub fn terminal_replies(&mut self, replies: &[String]) -> bool {
+        let mut settled = false;
+        for reply in replies {
+            if let Some(verdict) = self.probe.as_ref().and_then(|p| p.reply(reply)) {
+                self.settle_probe(verdict);
+                settled = true;
+            }
+        }
+        settled
+    }
+
+    /// The probe's answer: pixels from now on, or (if covers were going
+    /// to use them) a toast that they're drawn in text cells instead.
+    pub(super) fn settle_probe(&mut self, verdict: Verdict) {
+        let Some(probe) = self.probe.take() else {
+            return;
+        };
+        if verdict == Verdict::Yes {
+            self.caps.pixels = Some(probe.protocol);
+            return;
+        }
+        let covers = self.cover_on() || (self.music_on() && self.settings.art.inline);
+        let wanted = matches!(self.settings.art.detail, Detail::Auto | Detail::Pixels);
+        if covers
+            && wanted
+            && let Drawn::Text(mode) = self.pictures()
+        {
+            self.toast(format!(
+                "no pixels in this terminal · cover in {}",
+                mode.name()
+            ));
+        }
+    }
+
     /// After each layout: the picture the terminal should hold (the cover
     /// at the size it's laid out at, in pixels mode), or none.
     pub(super) fn sync_pictures(&mut self) {
@@ -267,11 +305,7 @@ impl Model {
         self.sync_music();
         let drawn = match self.pictures() {
             Drawn::Pixels(_) => "pixels",
-            Drawn::Text(cover_mode) => match cover_mode {
-                dock::picture::TextMode::Sextant => "sextant",
-                dock::picture::TextMode::Quadrant => "quadrant",
-                dock::picture::TextMode::HalfBlock => "halfblock",
-            },
+            Drawn::Text(mode) => mode.name(),
             Drawn::None => "no pictures here",
         };
         self.toast(if drawn == detail.name() {

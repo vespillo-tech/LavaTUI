@@ -1040,8 +1040,27 @@ track, size, detail and depth and kept. Without a way to show a picture
 (`TERM` `xterm-kitty` / `xterm-ghostty`, `TERM_PROGRAM` `ghostty` /
 `kitty`, `KITTY_WINDOW_ID`, `GHOSTTY_RESOURCES_DIR`; never inside tmux or
 screen, and not WezTerm or Konsole, which lack Unicode placeholders), so
-there's no terminal query and no reply to read. `art.detail = "pixels"`
-forces it anywhere. The cover is sent as a PNG (`a=T,U=1,f=100,q=2`) with
+there's no blocking terminal query. `art.detail = "pixels"` where none
+was found (or confirmed) is the best text cells, never a guess.
+
+**Verified before use** (lava-1xk.18). The environment can lie:
+Ghostex's built-in terminal sets `TERM_PROGRAM=ghostty` but runs sessions
+through its zmx multiplexer and has no kitty graphics, so placeholders
+showed as `?` boxes. So zmx (`ZMX_SESSION`, `GHOSTEX_SESSION_ID`) and
+zellij count as multiplexers like tmux and screen, and whatever the
+environment promises is then checked with the terminal itself
+(`graphics/probe.rs`; not on Windows, whose console input doesn't pass
+replies on, and not when `LAVATUI_GRAPHICS` names it). At start the app
+writes one query and never waits for it: kitty gets a graphics query
+(`a=q`, a 1×1 image never stored); iTerm2 / sixel get XTVERSION (crossterm
+swallows DA1, whose `4` would mean sixel). Each is followed by an OSC 10
+fence, which nearly every terminal answers, in order. Replies arrive as
+input; `app::replies` takes them out of the key stream and hands the
+strings over. Kitty: `OK` → pixels; an error, the fence first, or nothing
+within 1.5 s → no. iTerm2 / sixel: a name not known to speak the
+protocol → no; no name → the environment is believed. Until then the
+cover is drawn in text cells; a no, while a cover is shown in `auto` /
+`pixels`, toasts `no pixels in this terminal · cover in sextant`. The cover is sent as a PNG (`a=T,U=1,f=100,q=2`) with
 a *virtual* placement of exactly the cover's cells (`c`, `r`), in 4096-byte
 base64 chunks, at most 96 KB a frame, after the frame's cells and inside
 its synchronized update; meanwhile the best text cells show. From the
