@@ -2,15 +2,18 @@
 //! widget (`o`: side → lava → off), at the detail and size of `[art]`.
 //! Off by default.
 //!
-//! **Detail** (`art.detail`, `O` cycles it): `pixels` is the real picture
-//! through whichever pixel protocol the terminal speaks: kitty graphics
-//! (kitty, Ghostty), iTerm2 inline images (iTerm2, WezTerm) or sixel
-//! (foot, mlterm, Konsole); see [`crate::graphics`]. `sextant` (2 × 3 pixels a cell, Unicode 13),
-//! `quadrant` (2 × 2) and `halfblock` (1 × 2) draw it in text cells
-//! ([`super::picture`]). `auto` picks pixels where the terminal has them,
-//! else sextants where it's known to draw them, else quadrants. Text cells
-//! need 256 colours or more; pixels any colour at all. With no way to
-//! show it the widget is one calm line.
+//! **Detail** (`art.detail`, `O` cycles it; on screen the cover quality):
+//! `sharp` is the real picture through whichever pixel protocol the
+//! terminal speaks: kitty graphics (kitty, Ghostty), iTerm2 inline images
+//! (iTerm2, WezTerm) or sixel (foot, mlterm, Konsole); see
+//! [`crate::graphics`]. Without one it's the finest text cells: sextants
+//! (2 × 3 pixels a cell, Unicode 13) where they're known to be drawn, else
+//! quadrants (2 × 2). `small-pixels`, `medium-pixels` and `big-pixels` are
+//! pixel art, the cover in flat square blocks, about 32, 16 and 10
+//! across: sent as a picture where the terminal shows pictures, else drawn
+//! in whole and half cells ([`super::picture`]). `auto` is `sharp`. Text cells need 256 colours or
+//! more; pixels any colour at all. With no way to show it the widget is
+//! one calm line.
 //!
 //! **Size** (`art.size`): the largest cover it may be, as columns (rows
 //! follow from the cell shape, so it's square): small 16, medium 24, large
@@ -33,7 +36,7 @@ use super::{Anchor, Backdrop, ChipText, DockWidget, Look, Place, WidgetForm, ali
 use crate::app::Model;
 use crate::graphics::{self, Protocol};
 use crate::media::Status;
-use crate::media::art::ArtState;
+use crate::media::art::{ArtState, PIXEL_ART};
 use crate::theme::{ColorDepth, Ink, Rgb, Role};
 
 pub struct Cover;
@@ -59,32 +62,37 @@ impl Default for ArtSettings {
     }
 }
 
-/// `art.detail`: how covers are drawn. Stored by the technical names
-/// (`pixels`, `sextant`, …); the names the user reads on screen also load.
+/// `art.detail`: how covers are drawn, as fine or coarse as the user
+/// likes. Older names still load as the nearest look: `pixels` / `photo`
+/// / `sextant` / `fine` are `sharp`; `quadrant` / `medium` / `pixelated`
+/// `medium-pixels`; `halfblock` / `coarse` / `chunky` `big-pixels`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 pub enum Detail {
-    /// The best the terminal can do.
+    /// The best the terminal can do (sharp).
     #[default]
     Auto,
-    /// Real pixels (kitty, iTerm2 or sixel: whichever the terminal has).
-    #[serde(alias = "photo")]
-    Pixels,
-    #[serde(alias = "fine")]
-    Sextant,
-    #[serde(alias = "medium")]
-    Quadrant,
-    #[serde(rename = "halfblock", alias = "coarse")]
-    HalfBlock,
+    /// The real picture where the terminal shows pictures, else the finest
+    /// text cells.
+    #[serde(alias = "pixels", alias = "photo", alias = "sextant", alias = "fine")]
+    Sharp,
+    /// Pixel art, about 32 blocks across.
+    SmallPixels,
+    /// Pixel art, about 16 blocks across.
+    #[serde(alias = "quadrant", alias = "medium", alias = "pixelated")]
+    MediumPixels,
+    /// Pixel art, about 10 blocks across.
+    #[serde(alias = "halfblock", alias = "coarse", alias = "chunky")]
+    BigPixels,
 }
 
 impl Detail {
     pub const ALL: [Detail; 5] = [
         Detail::Auto,
-        Detail::Pixels,
-        Detail::Sextant,
-        Detail::Quadrant,
-        Detail::HalfBlock,
+        Detail::Sharp,
+        Detail::SmallPixels,
+        Detail::MediumPixels,
+        Detail::BigPixels,
     ];
 
     pub fn next(self) -> Self {
@@ -92,14 +100,59 @@ impl Detail {
         Self::ALL[(i + 1) % Self::ALL.len()]
     }
 
-    /// The name the user reads (toasts, help): how fine the picture is.
+    /// The name the user reads (toasts, settings).
     pub fn label(self) -> &'static str {
         match self {
             Detail::Auto => "auto",
-            Detail::Pixels => "photo",
-            Detail::Sextant => Drawn::Text(TextMode::Sextant).label(),
-            Detail::Quadrant => Drawn::Text(TextMode::Quadrant).label(),
-            Detail::HalfBlock => Drawn::Text(TextMode::HalfBlock).label(),
+            _ => self.grain().label(),
+        }
+    }
+
+    /// How coarse the picture is.
+    pub fn grain(self) -> Grain {
+        match self {
+            Detail::Auto | Detail::Sharp => Grain::Sharp,
+            Detail::SmallPixels => Grain::Pixels(0),
+            Detail::MediumPixels => Grain::Pixels(1),
+            Detail::BigPixels => Grain::Pixels(2),
+        }
+    }
+}
+
+/// The pixel-art sizes, as the user reads them (by `PIXEL_ART` level).
+const PIXEL_NAMES: [&str; 3] = ["small pixels", "medium pixels", "big pixels"];
+
+/// How coarse a cover is drawn: as sharp as it can be, or pixel art at a
+/// level of [`PIXEL_ART`] (0 the finest).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Grain {
+    Sharp,
+    Pixels(usize),
+}
+
+impl Grain {
+    pub fn label(self) -> &'static str {
+        match self {
+            Grain::Sharp => "sharp",
+            Grain::Pixels(level) => PIXEL_NAMES[level.min(PIXEL_NAMES.len() - 1)],
+        }
+    }
+
+    /// Pixel-art blocks across a picture sent in pixels; `None`: the sharp
+    /// picture.
+    pub fn blocks(self) -> Option<u16> {
+        match self {
+            Grain::Sharp => None,
+            Grain::Pixels(level) => PIXEL_ART.get(level).copied(),
+        }
+    }
+
+    /// The same in text cells, in a terminal with `caps`.
+    pub fn text(self, caps: Caps) -> TextMode {
+        match self {
+            Grain::Sharp if caps.sextants => TextMode::Sextant,
+            Grain::Sharp => TextMode::Quadrant,
+            Grain::Pixels(level) => TextMode::Pixels(level),
         }
     }
 }
@@ -132,7 +185,8 @@ impl CoverSize {
 /// terminal and the colour depth.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Drawn {
-    Pixels(Protocol),
+    /// A picture, sharp or pixel art.
+    Pixels(Protocol, Grain),
     Text(TextMode),
     /// No picture at all (16 colours without pixels, or no colour).
     None,
@@ -142,10 +196,9 @@ impl Drawn {
     /// How fine the picture is, as the user reads it.
     pub fn label(self) -> &'static str {
         match self {
-            Drawn::Pixels(_) => "photo",
-            Drawn::Text(TextMode::Sextant) => "fine",
-            Drawn::Text(TextMode::Quadrant) => "medium",
-            Drawn::Text(TextMode::HalfBlock) => "coarse",
+            Drawn::Pixels(_, grain) => grain.label(),
+            Drawn::Text(TextMode::Sextant | TextMode::Quadrant) => "sharp",
+            Drawn::Text(TextMode::Pixels(level)) => Grain::Pixels(level).label(),
             Drawn::None => "no pictures in this terminal",
         }
     }
@@ -208,26 +261,20 @@ pub fn sextants(var: impl Fn(&str) -> Option<String>) -> bool {
         || var("WT_SESSION").is_some()
 }
 
-/// `detail` at this terminal and depth (pure). `pixels` where there are
-/// none (not recognised, or not confirmed) is the best text cells: never
-/// a protocol the terminal may not speak (kitty placeholders show as `?`).
+/// `detail` at this terminal and depth (pure): a picture where the
+/// terminal shows them, else the same grain in text cells. Where there are
+/// none (not recognised, or not confirmed) it's always text: never a
+/// protocol the terminal may not speak (kitty placeholders show as `?`).
 /// `LAVATUI_GRAPHICS` is the way to name one.
 pub fn resolve(detail: Detail, caps: Caps, depth: ColorDepth) -> Drawn {
-    let text = matches!(depth, ColorDepth::TrueColor | ColorDepth::Ansi256);
-    let best_text = if caps.sextants {
-        TextMode::Sextant
-    } else {
-        TextMode::Quadrant
-    };
-    let as_text = |mode| if text { Drawn::Text(mode) } else { Drawn::None };
-    match detail {
+    let grain = detail.grain();
+    match caps.pixels {
         _ if depth == ColorDepth::None => Drawn::None,
-        Detail::Pixels | Detail::Auto => caps.pixels.map_or(as_text(best_text), Drawn::Pixels),
-        // Fine where sextants can't be drawn: the next finest (the toast
-        // says so).
-        Detail::Sextant => as_text(best_text),
-        Detail::Quadrant => as_text(TextMode::Quadrant),
-        Detail::HalfBlock => as_text(TextMode::HalfBlock),
+        Some(protocol) => Drawn::Pixels(protocol, grain),
+        None if matches!(depth, ColorDepth::TrueColor | ColorDepth::Ansi256) => {
+            Drawn::Text(grain.text(caps))
+        }
+        None => Drawn::None,
     }
 }
 
@@ -404,11 +451,12 @@ pub(super) fn draw_cover(model: &Model, r: Rect, buf: &mut Buffer) {
         _ => return placeholder(model, r, buf),
     };
     let text = match model.pictures() {
-        Drawn::Pixels(protocol) => {
+        Drawn::Pixels(protocol, grain) => {
             let key = graphics::Key {
                 source: url.to_owned(),
                 cols: r.width,
                 rows: r.height,
+                blocks: grain.blocks(),
             };
             let Rgb(red, green, blue) = art.mean();
             let bg = Color::Rgb(red, green, blue);
@@ -424,12 +472,8 @@ pub(super) fn draw_cover(model: &Model, r: Rect, buf: &mut Buffer) {
                     }
                 }
             }
-            // Until the picture is all there: the best text cells.
-            if model.caps.sextants {
-                TextMode::Sextant
-            } else {
-                TextMode::Quadrant
-            }
+            // Until the picture is all there: the same in text cells.
+            grain.text(model.caps)
         }
         Drawn::Text(mode) => mode,
         Drawn::None => return placeholder(model, r, buf),
@@ -494,7 +538,7 @@ mod tests {
     fn auto_picks_the_best_the_terminal_has() {
         use ColorDepth::*;
         let r = |d, c, depth| resolve(d, c, depth);
-        let pixels = |p| Drawn::Pixels(p);
+        let pixels = |p| Drawn::Pixels(p, Grain::Sharp);
         assert_eq!(r(Detail::Auto, KITTY, TrueColor), pixels(Protocol::Kitty));
         assert_eq!(r(Detail::Auto, ITERM, TrueColor), pixels(Protocol::Iterm));
         assert_eq!(r(Detail::Auto, SIXEL, Ansi256), pixels(Protocol::Sixel));
@@ -520,37 +564,92 @@ mod tests {
         }
     }
 
+    /// lava-bq0: every quality is its own look, in pictures and in text
+    /// cells alike (a terminal with pictures used to show the same photo
+    /// for most of them).
     #[test]
-    fn a_chosen_detail_is_kept_where_it_can_be() {
+    fn every_quality_is_its_own_look_everywhere() {
         use ColorDepth::*;
-        // Pixels when asked: the terminal's protocol, else the best text.
+        for caps in [KITTY, ITERM, SIXEL, PLAIN] {
+            for depth in [TrueColor, Ansi256] {
+                let drawn: Vec<Drawn> = Detail::ALL[1..]
+                    .iter()
+                    .map(|&d| resolve(d, caps, depth))
+                    .collect();
+                for (i, a) in drawn.iter().enumerate() {
+                    assert!(
+                        drawn[i + 1..].iter().all(|b| a != b),
+                        "{caps:?} {depth:?}: {drawn:?}"
+                    );
+                }
+                let labels: Vec<&str> = drawn.iter().map(|d| d.label()).collect();
+                assert_eq!(
+                    labels,
+                    ["sharp", "small pixels", "medium pixels", "big pixels"]
+                );
+                assert_eq!(
+                    resolve(Detail::Auto, caps, depth),
+                    drawn[0],
+                    "auto is sharp"
+                );
+            }
+        }
+        // Pictures: pixel art goes as pixels too.
         assert_eq!(
-            resolve(Detail::Pixels, PLAIN, TrueColor),
+            resolve(Detail::BigPixels, KITTY, Ansi16),
+            Drawn::Pixels(Protocol::Kitty, Grain::Pixels(2))
+        );
+        assert_eq!(
+            resolve(Detail::SmallPixels, PLAIN, Ansi256),
+            Drawn::Text(TextMode::Pixels(0))
+        );
+        assert_eq!(resolve(Detail::MediumPixels, PLAIN, Ansi16), Drawn::None);
+        // Sharp only uses sextants where they're drawn.
+        assert_eq!(
+            resolve(Detail::Sharp, PLAIN, TrueColor),
             Drawn::Text(TextMode::Quadrant)
         );
-        assert_eq!(resolve(Detail::Pixels, PLAIN, Ansi16), Drawn::None);
+        let blocks = Detail::ALL.map(|d| d.grain().blocks());
         assert_eq!(
-            resolve(Detail::Pixels, SIXEL, TrueColor),
-            Drawn::Pixels(Protocol::Sixel)
+            blocks,
+            [Option::None, Option::None, Some(32), Some(16), Some(10)]
         );
-        assert_eq!(
-            resolve(Detail::Pixels, ITERM, Ansi16),
-            Drawn::Pixels(Protocol::Iterm)
-        );
-        assert_eq!(
-            resolve(Detail::HalfBlock, KITTY, TrueColor),
-            Drawn::Text(TextMode::HalfBlock)
-        );
-        // Fine only where sextants are drawn; else the next finest.
-        assert_eq!(
-            resolve(Detail::Sextant, PLAIN, Ansi256),
-            Drawn::Text(TextMode::Quadrant)
-        );
-        assert_eq!(
-            resolve(Detail::Sextant, KITTY, Ansi256),
-            Drawn::Text(TextMode::Sextant)
-        );
-        assert_eq!(resolve(Detail::Quadrant, KITTY, Ansi16), Drawn::None);
+    }
+
+    /// Settings saved by older versions (and this one's own names) load
+    /// as the nearest look; each is written back by its own name.
+    #[test]
+    fn old_detail_names_still_load() {
+        for (names, detail) in [
+            (
+                &["pixels", "photo", "sextant", "fine", "sharp"][..],
+                Detail::Sharp,
+            ),
+            (&["small-pixels"], Detail::SmallPixels),
+            (
+                &["quadrant", "medium", "pixelated", "medium-pixels"],
+                Detail::MediumPixels,
+            ),
+            (
+                &["halfblock", "coarse", "chunky", "big-pixels"],
+                Detail::BigPixels,
+            ),
+            (&["auto"], Detail::Auto),
+        ] {
+            for name in names {
+                let s: ArtSettings = toml::from_str(&format!("detail = \"{name}\"")).unwrap();
+                assert_eq!(s.detail, detail, "{name}");
+            }
+        }
+        for detail in Detail::ALL {
+            let text = toml::to_string(&ArtSettings {
+                detail,
+                ..ArtSettings::default()
+            })
+            .unwrap();
+            let name = detail.label().replace(' ', "-");
+            assert!(text.contains(&format!("detail = \"{name}\"")), "{text}");
+        }
     }
 
     #[test]
@@ -604,10 +703,10 @@ mod tests {
     #[test]
     fn settings_read_and_write_lowercase_names() {
         let s: ArtSettings =
-            toml::from_str("detail = \"halfblock\"\nsize = \"fill\"\ninline = false").unwrap();
+            toml::from_str("detail = \"big-pixels\"\nsize = \"fill\"\ninline = false").unwrap();
         assert_eq!(
             (s.detail, s.size, s.inline),
-            (Detail::HalfBlock, CoverSize::Fill, false)
+            (Detail::BigPixels, CoverSize::Fill, false)
         );
         let text = toml::to_string(&ArtSettings::default()).unwrap();
         assert!(text.contains("detail = \"auto\""), "{text}");

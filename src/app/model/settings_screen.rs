@@ -605,9 +605,10 @@ impl Model {
             Item::CoverDetail => choice(
                 "cover picture",
                 s.art.detail.label(),
-                "Auto picks the best this terminal can show. Photo needs one that shows \
-                 images, like kitty or Ghostty. Fine, medium and coarse are drawn in \
-                 text; coarser looks softer.",
+                "Sharp is the real picture where the terminal can show one, like kitty \
+                 or Ghostty; elsewhere it's as fine as text allows. Small, medium and \
+                 big pixels turn the cover into pixel art with bigger and bigger \
+                 squares. Auto is sharp.",
             ),
             Item::CoverSize => choice(
                 "cover size",

@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use super::Model;
 use super::library::{Account, ListKind};
-use crate::dock::cover::{self, Detail, Drawn};
+use crate::dock::cover::{self, Drawn, Grain};
 use crate::dock::{self, DockWidget, Place};
 use crate::graphics::inline::Wish;
 use crate::graphics::probe::Verdict;
@@ -214,7 +214,7 @@ impl Model {
         let ignored = self.music.sync(
             self.media_on(),
             images,
-            matches!(pictures, Drawn::Pixels(_)),
+            matches!(pictures, Drawn::Pixels(..)),
         );
         self.patch_modes();
         if ignored {
@@ -248,15 +248,10 @@ impl Model {
             return;
         }
         let covers = self.cover_on() || (self.music_on() && self.settings.art.inline);
-        let wanted = matches!(self.settings.art.detail, Detail::Auto | Detail::Pixels);
-        if covers
-            && wanted
-            && let Drawn::Text(mode) = self.pictures()
-        {
-            self.toast(format!(
-                "no photo in this terminal · cover quality {}",
-                Drawn::Text(mode).label()
-            ));
+        // Pixel art looks the same in text cells; a sharp cover doesn't.
+        let sharp = self.settings.art.detail.grain() == Grain::Sharp;
+        if covers && sharp && matches!(self.pictures(), Drawn::Text(_)) {
+            self.toast("no photos in this terminal · covers drawn in text");
         }
     }
 
@@ -264,19 +259,20 @@ impl Model {
     /// at the size it's laid out at, in pixels mode), or none.
     pub(super) fn sync_pictures(&mut self) {
         let want = (|| {
-            let Drawn::Pixels(protocol) = self.pictures() else {
+            let Drawn::Pixels(protocol, grain) = self.pictures() else {
                 return None;
             };
             let ArtState::Ready(art) = self.music.art() else {
                 return None;
             };
-            let png = art.hires.clone()?;
+            let png = art.png(grain.blocks())?;
             let track = self.music.snapshot.as_ref()?.track.as_ref()?;
             let r = dock::cover_at(&self.layout)?;
             let key = graphics::Key {
                 source: track.artwork_url.clone(),
                 cols: r.width,
                 rows: r.height,
+                blocks: grain.blocks(),
             };
             let Rgb(red, green, blue) = art.mean();
             Some(Wish {

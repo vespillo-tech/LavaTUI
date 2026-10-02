@@ -134,12 +134,12 @@ impl Inline {
                     usize::from(wish.key.cols) * usize::from(cell.0),
                     usize::from(wish.key.rows) * usize::from(cell.1),
                 );
-                let bg = wish.bg;
+                let (bg, crisp) = (wish.bg, wish.key.blocks.is_some());
                 let started = std::thread::Builder::new()
                     .name("lavatui-sixel".into())
                     .spawn(move || {
                         crate::thread_qos::worker();
-                        let _ = tx.send(sixel_picture(&png, w, h, bg));
+                        let _ = tx.send(sixel_picture(&png, (w, h), bg, crisp));
                     });
                 match started {
                     Ok(_) => self.job = Some((spec, rx)),
@@ -278,9 +278,10 @@ fn iterm(png: &str, cols: u16, rows: u16) -> Vec<u8> {
 
 /// The sixel image for `png` (base64) at `w × h` pixels: the square cover
 /// as big as fits, centred on `bg`; the height rounded down to whole
-/// bands so the last one never spills past the cells. `None` if it can't
-/// be decoded.
-fn sixel_picture(png: &str, w: usize, h: usize, bg: [u8; 3]) -> Option<Vec<u8>> {
+/// bands so the last one never spills past the cells; pixel art (`crisp`)
+/// scaled without blending its blocks' edges. `None` if it can't be
+/// decoded.
+fn sixel_picture(png: &str, (w, h): (usize, usize), bg: [u8; 3], crisp: bool) -> Option<Vec<u8>> {
     use base64::Engine;
     let h = h / 6 * 6;
     if w == 0 || h == 0 || w > 4096 || h > 4096 {
@@ -289,8 +290,11 @@ fn sixel_picture(png: &str, w: usize, h: usize, bg: [u8; 3]) -> Option<Vec<u8>> 
     let bytes = base64::engine::general_purpose::STANDARD.decode(png).ok()?;
     let image = image::load_from_memory(&bytes).ok()?.to_rgb8();
     let side = w.min(h) as u32;
-    let square =
-        image::imageops::resize(&image, side, side, image::imageops::FilterType::CatmullRom);
+    let filter = match crisp {
+        true => image::imageops::FilterType::Nearest,
+        false => image::imageops::FilterType::CatmullRom,
+    };
+    let square = image::imageops::resize(&image, side, side, filter);
     let (x0, y0) = ((w - side as usize) / 2, (h - side as usize) / 2);
     let mut pixels = vec![bg; w * h];
     for (x, y, p) in square.enumerate_pixels() {
@@ -315,6 +319,7 @@ mod tests {
             source: "https://i.example/a".into(),
             cols,
             rows,
+            blocks: None,
         }
     }
 
@@ -551,7 +556,7 @@ mod tests {
 
     #[test]
     fn letterboxed_on_the_background() {
-        let bytes = sixel_picture(&png(), 30, 12, [0, 255, 0]).unwrap();
+        let bytes = sixel_picture(&png(), (30, 12), [0, 255, 0], false).unwrap();
         let (w, h, pixels) = sixel::tests::decode(&bytes);
         assert_eq!((w, h), (30, 12));
         let edge = pixels[6 * 30].unwrap();
@@ -561,7 +566,7 @@ mod tests {
             "the cover in the middle"
         );
         assert!(
-            sixel_picture(&png(), 30, 5, [0; 3]).is_none(),
+            sixel_picture(&png(), (30, 5), [0; 3], false).is_none(),
             "under a band"
         );
     }

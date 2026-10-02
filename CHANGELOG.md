@@ -18,6 +18,12 @@ What changed in each version of LavaTUI, in plain words.
   the music stays on screen. A cover or lyrics that couldn't load are
   tried again while the song plays.
 - The add-to-playlist button shows for every Spotify song right away.
+- Cover quality (`O`, or in settings) is now sharp, small pixels, medium
+  pixels or big pixels, and each one looks clearly different. Sharp is
+  the real picture where your terminal can show it. The three pixel
+  sizes turn the cover into pixel art with bigger and bigger squares, in
+  every terminal. Before, the choices often looked the same. Your old
+  choice carries over.
 
 ## 1.2.0 — 2026-10-02 — first public release
 

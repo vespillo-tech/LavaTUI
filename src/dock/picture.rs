@@ -1,11 +1,18 @@
-//! A cover in text cells: each cell shows a few of the picture's pixels
-//! with two colours and a block glyph.
+//! A cover in text cells: sharp, each cell showing a few of the picture's
+//! pixels with two colours and a block glyph, or pixel art, flat square
+//! blocks of whole cells and half cells.
 //!
 //! | mode | pixels a cell | glyphs |
 //! |---|---|---|
-//! | half block | 1 × 2 | `▀` (exact: top ink, bottom paper) |
 //! | quadrant | 2 × 2 | `▘▝▀▖▌▞▛▗▚▐▜▄▙▟█` |
 //! | sextant | 2 × 3 | U+1FB00..U+1FB3B (Unicode 13), `▌▐█` |
+//! | pixels (small, medium, big) | blocks of k columns × k half rows | `▀` (exact: top ink, bottom paper), `█` |
+//!
+//! Pixel-art blocks are about [`PIXEL_ART`] across (32 small, 16 medium,
+//! 10 big), a whole number of columns wide, at least two
+//! ([`block_side`]), so every
+//! block is the same size give or take one; each size's blocks are always
+//! bigger than the one before's, however small the cover.
 //!
 //! Quadrants and sextants split each cell's pixels in the two groups whose
 //! means lose the least (every split is tried: 8 or 32), one mean the
@@ -20,7 +27,8 @@
 //! darker than an ink one. So a cell whose two colours look the same (or
 //! that has only one) is a `█` in their mean, and with `translucent` (the
 //! terminal is known to do this) every cell is: one colour a cell, but no
-//! streaks.
+//! streaks. There pixel-art blocks are whole cells (an even side), so
+//! they keep their two colours a cell apart.
 
 use std::cell::RefCell;
 
@@ -28,27 +36,39 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
-use crate::media::art::Art;
+use crate::media::art::{Art, PIXEL_ART};
 use crate::render::{quadrant, sextant};
 use crate::theme::{NEAR, Rgb, Theme};
 
 /// How a cover is drawn in text cells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TextMode {
-    HalfBlock,
+    /// Sharp, 2 × 2 pixels a cell.
     Quadrant,
+    /// Sharp, 2 × 3 pixels a cell (terminals that draw sextants).
     Sextant,
+    /// Pixel art, about `PIXEL_ART[level]` blocks across.
+    Pixels(usize),
 }
 
-impl TextMode {
-    /// Pixels a cell, across and down.
-    fn grid(self) -> (usize, usize) {
-        match self {
-            TextMode::HalfBlock => (1, 2),
-            TextMode::Quadrant => (2, 2),
-            TextMode::Sextant => (2, 3),
-        }
-    }
+/// The side of a pixel-art block in `mode` on a cover `cols` wide: in
+/// columns across and half rows down (about square on screen); at least
+/// two (one column is as fine as text gets: it would look sharp); even,
+/// so a block is whole cells, where cell backgrounds are see-through;
+/// always bigger than the level before's. `None` for the sharp modes.
+pub fn block_side(mode: TextMode, cols: u16, translucent: bool) -> Option<usize> {
+    let TextMode::Pixels(level) = mode else {
+        return None;
+    };
+    let unit = if translucent { 2 } else { 1 };
+    let side = |across: u16| {
+        let k = (f64::from(cols) / f64::from(across)).round() as usize;
+        k.max(2).next_multiple_of(unit)
+    };
+    let sides = PIXEL_ART[..=level.min(PIXEL_ART.len() - 1)].iter();
+    sides.fold(None, |before: Option<usize>, &across| {
+        Some(before.map_or(side(across), |b| side(across).max(b + unit)))
+    })
 }
 
 /// One cell of a picture: the glyph, its ink and its background.
@@ -112,10 +132,16 @@ pub fn cells(
     (mode, translucent): (TextMode, bool),
     theme: &Theme,
 ) -> Vec<PictureCell> {
-    let (gw, gh) = mode.grid();
+    let (gw, gh) = match mode {
+        TextMode::Quadrant => (2, 2),
+        TextMode::Sextant => (2, 3),
+        TextMode::Pixels(_) => {
+            let side = block_side(mode, cols, translucent).unwrap_or(1);
+            return blocks(art, (cols, rows), (side, translucent), theme);
+        }
+    };
     let (w, h) = (usize::from(cols), usize::from(rows));
     let px = art.scaled(cols * gw as u16, rows * gh as u16);
-    let color = |c: Rgb| theme.image(c).unwrap_or(Color::Reset);
     let mut out = Vec::with_capacity(w * h);
     let mut block = [Rgb::default(); 6];
     for row in 0..h {
@@ -127,27 +153,68 @@ pub fn cells(
                 }
             }
             let pixels = &block[..gw * gh];
-            let (ch, fg, bg, mask) = match mode {
-                TextMode::HalfBlock => ('▀', pixels[0], pixels[1], 1),
-                TextMode::Quadrant => {
-                    let (mask, ink, paper) = split(pixels);
-                    (quadrant(mask), ink, paper, mask)
-                }
-                TextMode::Sextant => {
-                    let (mask, ink, paper) = split(pixels);
-                    (sextant(mask), ink, paper, mask)
-                }
+            let (mask, ink, paper) = split(pixels);
+            let ch = match mode {
+                TextMode::Sextant => sextant(mask),
+                _ => quadrant(mask),
             };
-            let alike = |a: Rgb, b: Rgb| {
-                let rgb = |c: Rgb| Color::Rgb(c.0, c.1, c.2);
-                theme.merge(rgb(a), rgb(b), NEAR).is_some()
-            };
-            if translucent || mask == 0 || alike(fg, bg) {
-                let c = color(mean(pixels));
-                out.push(('█', c, c));
+            out.push(cell(pixels, (ch, mask, ink, paper), translucent, theme));
+        }
+    }
+    out
+}
+
+/// One cell: `ch` in `ink` on `paper` (`mask` its ink pixels), or a
+/// whole `█` in the mean of `pixels` where the two look alike or
+/// backgrounds are see-through.
+fn cell(
+    pixels: &[Rgb],
+    (ch, mask, ink, paper): (char, u8, Rgb, Rgb),
+    translucent: bool,
+    theme: &Theme,
+) -> PictureCell {
+    let color = |c: Rgb| theme.image(c).unwrap_or(Color::Reset);
+    let rgb = |c: Rgb| Color::Rgb(c.0, c.1, c.2);
+    if translucent || mask == 0 || theme.merge(rgb(ink), rgb(paper), NEAR).is_some() {
+        let c = color(mean(pixels));
+        ('█', c, c)
+    } else {
+        (ch, color(ink), color(paper))
+    }
+}
+
+/// Pixel art: `art` in flat square blocks `side` columns × `side` half
+/// rows (whole rows where `translucent`), as many as fit the area, each
+/// the mean of what it covers; block edges spread evenly.
+fn blocks(
+    art: &Art,
+    (cols, rows): (u16, u16),
+    (side, translucent): (usize, bool),
+    theme: &Theme,
+) -> Vec<PictureCell> {
+    let (w, h) = (usize::from(cols), usize::from(rows));
+    // Down, in half rows, or in rows where a cell can show one colour.
+    let unit = if translucent { 2 } else { 1 };
+    let down = 2 * h / unit;
+    let count = |len: usize, side: usize| ((len + side / 2) / side).max(1);
+    let (nx, ny) = (count(w, side), count(down, side / unit));
+    let px = art.scaled(nx as u16, ny as u16);
+    let at = |x: usize, y: usize| px[(y * ny / down) * nx + x * nx / w];
+    let mut out = Vec::with_capacity(w * h);
+    for row in 0..h {
+        for col in 0..w {
+            let pixels = if translucent {
+                [at(col, row); 2]
             } else {
-                out.push((ch, color(fg), color(bg)));
-            }
+                [at(col, 2 * row), at(col, 2 * row + 1)]
+            };
+            let mask = u8::from(pixels[0] != pixels[1]);
+            out.push(cell(
+                &pixels,
+                ('▀', mask, pixels[0], pixels[1]),
+                false,
+                theme,
+            ));
         }
     }
     out
@@ -233,10 +300,18 @@ mod tests {
         assert_eq!((mask, paper), (0, r));
     }
 
+    const MODES: [TextMode; 5] = [
+        TextMode::Sextant,
+        TextMode::Quadrant,
+        TextMode::Pixels(0),
+        TextMode::Pixels(1),
+        TextMode::Pixels(2),
+    ];
+
     #[test]
     fn every_mode_fills_the_area_with_the_picture() {
         let art = Art::solid(Rgb(200, 120, 40));
-        for mode in [TextMode::HalfBlock, TextMode::Quadrant, TextMode::Sextant] {
+        for mode in MODES {
             for depth in [ColorDepth::TrueColor, ColorDepth::Ansi256] {
                 let t = theme(depth);
                 let cells = cells(&art, 7, 3, (mode, false), &t);
@@ -252,17 +327,9 @@ mod tests {
         assert_eq!(buf, Buffer::empty(buf.area), "no pictures in 16 colours");
     }
 
-    /// Opacity-safe: a smooth gradient is whole `█` cells (no colour in a
-    /// see-through background), a hard edge still splits, and drawn for
-    /// translucent backgrounds nothing does.
-    /// Each mode samples the cover at its own grid, so the finer one shows
-    /// detail the coarser can't: on a 32-col cover (the 128 px art is
-    /// plenty: 64 × 48 samples in fine), a pattern of thin rings comes
-    /// out as more distinct cells the finer the mode.
-    #[test]
-    fn finer_modes_show_more_detail() {
-        let t = theme(ColorDepth::TrueColor);
-        let art = Art::from_fn(|x, y| {
+    /// Rings: thin enough that every coarser mode loses some.
+    fn rings() -> Art {
+        Art::from_fn(|x, y| {
             let (dx, dy) = (x as i32 - 64, y as i32 - 64);
             let ring = ((dx * dx + dy * dy) as f64).sqrt() as i32 / 3 % 2 == 0;
             if ring {
@@ -270,22 +337,92 @@ mod tests {
             } else {
                 Rgb(30, 20, 80)
             }
-        });
-        let distinct = |mode| {
-            let cells = cells(&art, 32, 16, (mode, false), &t);
-            let mut glyphs: Vec<char> = cells.iter().map(|c| c.0).collect();
-            glyphs.sort_unstable();
-            glyphs.dedup();
-            glyphs.len()
-        };
-        let (coarse, medium, fine) = (
-            distinct(TextMode::HalfBlock),
-            distinct(TextMode::Quadrant),
-            distinct(TextMode::Sextant),
-        );
-        assert!(coarse < medium && medium < fine, "{coarse} {medium} {fine}");
+        })
     }
 
+    /// Each mode samples the cover at its own grid, so the finer one shows
+    /// detail the coarser can't: on a 32-col cover (the 128 px art is
+    /// plenty: 64 × 48 samples in sextants), a pattern of thin rings comes
+    /// out as more distinct cells in sextants than quadrants, and as fewer
+    /// edges between cells the bigger the pixel-art blocks.
+    #[test]
+    fn finer_modes_show_more_detail() {
+        let t = theme(ColorDepth::TrueColor);
+        let art = rings();
+        let cells = |mode| cells(&art, 32, 16, (mode, false), &t);
+        let distinct = |mode| {
+            let mut cells = cells(mode);
+            cells.sort_unstable_by_key(|c| format!("{c:?}"));
+            cells.dedup();
+            cells.len()
+        };
+        assert!(distinct(TextMode::Sextant) > distinct(TextMode::Quadrant));
+        let edges = |mode| {
+            let cells = cells(mode);
+            let across = cells
+                .chunks(32)
+                .flat_map(|r| r.windows(2))
+                .filter(|p| p[0] != p[1]);
+            let down = (32..cells.len()).filter(|&i| cells[i] != cells[i - 32]);
+            across.count() + down.count()
+        };
+        // Sharp ones: nearly every cell differs from the next.
+        let [sextant, quadrant, small, medium, big] = MODES.map(edges);
+        assert!(
+            sextant.min(quadrant) > medium,
+            "{sextant} {quadrant} {medium}"
+        );
+        assert!(small > medium && medium > big, "{small} {medium} {big}");
+    }
+
+    /// Pixel art: about 32, 16 and 10 blocks across, whole columns, each
+    /// size always bigger than the one before; whole cells where
+    /// backgrounds are see-through.
+    #[test]
+    fn pixel_art_blocks_are_whole_cells_and_get_bigger() {
+        use TextMode::Pixels;
+        assert_eq!(block_side(TextMode::Sextant, 24, false), None);
+        for translucent in [false, true] {
+            for cols in 4..=64 {
+                let sides = [0, 1, 2].map(|l| block_side(Pixels(l), cols, translucent).unwrap());
+                assert!(
+                    sides[0] < sides[1] && sides[1] < sides[2],
+                    "{cols} {translucent}: {sides:?}"
+                );
+                assert!(!translucent || sides.iter().all(|s| s.is_multiple_of(2)));
+            }
+        }
+        let across = |cols| {
+            [0, 1, 2].map(|l| usize::from(cols) / block_side(Pixels(l), cols, false).unwrap())
+        };
+        assert_eq!(across(64), [32, 16, 10]);
+        assert_eq!(across(24), [12, 8, 6]);
+        // Blocks are flat: a cell row's colours change only at block edges.
+        let t = theme(ColorDepth::TrueColor);
+        let art = rings();
+        for (level, side) in [(0, 2), (1, 3), (2, 4)] {
+            let cells = cells(&art, 24, 12, (Pixels(level), false), &t);
+            assert_eq!(block_side(Pixels(level), 24, false), Some(side));
+            for row in cells.chunks(24) {
+                for (x, pair) in row.windows(2).enumerate() {
+                    assert!(pair[0] == pair[1] || (x + 1) % side == 0, "{level} col {x}");
+                }
+            }
+        }
+        // See-through backgrounds: whole cells, one colour each, still in
+        // blocks two, four and six columns wide.
+        for (level, side) in [(0, 2), (1, 4), (2, 6)] {
+            let cells = cells(&art, 24, 12, (Pixels(level), true), &t);
+            assert!(cells.iter().all(|&(ch, fg, bg)| ch == '█' && fg == bg));
+            for row in cells.chunks(24) {
+                assert!(row.chunks(side).all(|b| b.iter().all(|c| *c == b[0])));
+            }
+        }
+    }
+
+    /// Opacity-safe: a smooth gradient is whole `█` cells (no colour in a
+    /// see-through background), a hard edge still splits, and drawn for
+    /// translucent backgrounds nothing does.
     #[test]
     fn alike_colours_and_translucent_cells_are_whole_blocks() {
         let t = theme(ColorDepth::TrueColor);
@@ -295,7 +432,7 @@ mod tests {
             false => Rgb(10, 20, 60),
         });
         let whole = |cells: &[PictureCell]| cells.iter().all(|&(ch, fg, bg)| ch == '█' && fg == bg);
-        for mode in [TextMode::HalfBlock, TextMode::Quadrant, TextMode::Sextant] {
+        for mode in MODES {
             assert!(
                 whole(&cells(&gradient, 12, 6, (mode, false), &t)),
                 "{mode:?}"

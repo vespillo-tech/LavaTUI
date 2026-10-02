@@ -83,7 +83,11 @@ text = "auto"            # text on the lamp: auto (light or dark per letter, by 
                          # behind it) | light | dark (always the palette's light / dark ink)
 
 [art]
-detail = "auto"          # auto | pixels (photo) | sextant (fine) | quadrant (medium) | halfblock (coarse)
+detail = "auto"          # auto (= sharp) | sharp (the real picture where the terminal shows
+                         # pictures, else the finest text) | small-pixels (pixel art, ~32
+                         # squares across) | medium-pixels (~16) | big-pixels (~10); older
+                         # pixels / photo / sextant / fine load as sharp, quadrant / medium as
+                         # medium-pixels, halfblock / coarse as big-pixels
 size = "medium"          # small (16 cols) | medium (24) | large (34) | fill (up to 64)
 inline = true            # the music card's own small cover (while the cover widget is off)
 
