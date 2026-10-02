@@ -1,0 +1,26 @@
+{
+  "model": "gpt-image-2-5-sunburst",
+  "provider": "Venice",
+  "generation_endpoint": "https://api.venice.ai/api/v1/image/generate",
+  "aspect_ratio": "1:1",
+  "resolution": "1K",
+  "size": "1024x1024",
+  "quality": "high",
+  "output_format": "png",
+  "covers": [
+    {
+      "out": "suspended-melt.jpg",
+      "artist": "Wax and Wane",
+      "album": "Suspended Melt",
+      "prompt": "Original square record sleeve, edge-to-edge flat abstract graphic design. Clear lava-lamp / molten paraffin wax theme. Asymmetric organic forms, bold shape hierarchy, negative space, simple readable type; tactile grain, uneven printed ink, 2-4 colors. No photorealism, glossy 3D, perfect symmetry, fantasy scenery, flowers/moons/houses, brands, borrowed album designs, existing artists, or watermarks. Print only the exact invented artist and album names below. A quiet abstract ambient sleeve with lots of pale paper space. Three-color risograph palette: warm ivory paper, misty sage, muted coral. Two large asymmetric soft-edged molten-wax shapes almost merge along an off-center vertical current, one long upward droplet separates at the top. A very subtle limited-ink gradient runs only within the blobs, visibly granular and printed, not a smooth computer glow. A delicate incomplete tapered lamp contour in sage encloses the shapes without dominating. Calm negative space with simple small but readable lowercase sans-serif typography: \"wax and wane\" along the upper-left margin and \"suspended melt\" near the lower-right margin. No moons, flowers, spheres, realistic glass or landscapes. Tactile ink on paper, restrained and intentional."
+    }
+  ],
+  "stored_assets": {
+    "size": "400x400",
+    "format": "jpeg",
+    "quality": 88,
+    "resize_filter": "Lanczos",
+    "progressive": true,
+    "color_adjustments": "none"
+  }
+}
