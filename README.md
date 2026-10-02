@@ -444,8 +444,10 @@ The music controls may be on (a line at the top says so). Press `Esc`
 to leave them.
 
 **No lyrics for a song.**
-lrclib.net doesn't have every song. Lyrics also need an internet
-connection the first time.
+The lyrics come from lrclib.net, a free lyrics site, and it doesn't
+have every song. When it has none, the lyrics box says so (for example
+"no lyrics on lrclib.net for this song"). Songs without singing say
+"instrumental". Lyrics also need an internet connection the first time.
 
 **My Mac asks for a password about the "lavatui" keychain.**
 That's macOS guarding your Spotify login. LavaTUI keeps the login in

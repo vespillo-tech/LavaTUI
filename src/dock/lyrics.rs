@@ -32,7 +32,8 @@
 //! (and the intro) show three dots filling as it passes. Plain (untimed)
 //! lyrics scroll with the track's progress, unhighlighted.
 //! Everything else is one calm dim sentence: `♪ instrumental`, `♪ no
-//! lyrics for this track`, `♪ lyrics offline`, the player's state.
+//! lyrics on lrclib.net for this song` (`♪ not on lrclib.net` where that
+//! doesn't fit), `♪ lyrics offline`, the player's state.
 //!
 //! No backing is assumed: the text is role colours over whatever is
 //! behind it (bold `text` current line, `dim` neighbours).
@@ -65,7 +66,7 @@ const CHIP_MAX: u16 = 32;
 const MESSAGE_W: (u16, u16) = (20, 30);
 
 /// `WidgetForm::variant`: the kind high; for lines, the rows kept for the
-/// lines before the current one low.
+/// lines before the current one low; for messages, which wording (low).
 const V_LINES: u16 = 0x100;
 const V_MESSAGE: u16 = 0x200;
 
@@ -112,12 +113,17 @@ impl Sizing {
 pub enum Show<'a> {
     /// Lines (synced or plain), sized by the song.
     Lines(&'a Sizing),
-    Message(String),
+    /// One calm sentence: the wordings, most preferred first (a shorter
+    /// one for rooms the first doesn't fit).
+    Message(Vec<String>),
 }
 
 fn show(model: &Model) -> Show<'_> {
     // With its `♪`, when the glyphs have one.
-    let message = |text: &str| Show::Message(format!("{}{text}", model.glyphs().note));
+    let note = model.glyphs().note;
+    let messages =
+        |texts: &[&str]| Show::Message(texts.iter().map(|text| format!("{note}{text}")).collect());
+    let message = |text: &str| messages(&[text]);
     let Some(snap) = model.music.snapshot.as_ref() else {
         return message("…");
     };
@@ -131,7 +137,10 @@ fn show(model: &Model) -> Show<'_> {
     }
     match &model.lyrics.found {
         None | Some(Fetch::Looking) => message("asking lrclib.net for lyrics…"),
-        Some(Fetch::NotFound) => message("no lyrics for this track"),
+        // Say whose shelf is bare: the lyrics site, not this app.
+        Some(Fetch::NotFound) => {
+            messages(&["no lyrics on lrclib.net for this song", "not on lrclib.net"])
+        }
         Some(Fetch::Offline) => message("lyrics offline"),
         Some(Fetch::Lyrics(Words::Instrumental)) => message("instrumental"),
         Some(Fetch::Lyrics(_)) => Show::Lines(&model.lyrics.sizing),
@@ -141,14 +150,20 @@ fn show(model: &Model) -> Show<'_> {
 /// The forms for `show` in `place`, most preferred first (pure).
 pub fn lyrics_forms(show: &Show, place: Place) -> Vec<WidgetForm> {
     match show {
-        Show::Message(text) => {
+        Show::Message(texts) => {
             let w = match place {
                 Place::Overlay => MESSAGE_W.1,
                 _ => MESSAGE_W.0,
             };
-            let lines = wrap(text, w);
-            let w = lines.iter().map(|l| width(l)).max().unwrap_or(1).max(1);
-            vec![WidgetForm::fixed(w, lines.len() as u16, V_MESSAGE)]
+            texts
+                .iter()
+                .zip(0..)
+                .map(|(text, n)| {
+                    let lines = wrap(text, w);
+                    let w = lines.iter().map(|l| width(l)).max().unwrap_or(1).max(1);
+                    WidgetForm::fixed(w, lines.len() as u16, V_MESSAGE | n)
+                })
+                .collect()
         }
         Show::Lines(sizing) if place == Place::Overlay => lava_forms(sizing),
         Show::Lines(sizing) => side_forms(sizing),
@@ -253,9 +268,13 @@ impl DockWidget for Lyrics {
         };
         let back = form.variant & 0xff;
         match (form.variant & 0xff00, show(model)) {
-            (V_MESSAGE, Show::Message(text)) => {
+            (V_MESSAGE, Show::Message(texts)) => {
                 let dim = model.theme.text(Role::Dim);
-                for (i, line) in wrap(&text, area.width).iter().enumerate() {
+                let text = texts.get(usize::from(form.variant & 0xff));
+                for (i, line) in wrap(text.map_or("", String::as_str), area.width)
+                    .iter()
+                    .enumerate()
+                {
                     pen.text(i as u16, line, dim);
                 }
             }
@@ -646,14 +665,44 @@ mod tests {
         assert_eq!(neighbour(SONG[4], 20, 2), ["Cooling at the top…"]);
     }
 
+    fn message(texts: &[&str]) -> Show {
+        Show::Message(texts.iter().map(|t| t.to_string()).collect())
+    }
+
+    const NOT_FOUND: [&str; 2] = [
+        "♪ no lyrics on lrclib.net for this song",
+        "♪ not on lrclib.net",
+    ];
+
     #[test]
-    fn messages_are_one_calm_form() {
+    fn messages_are_calm_forms_most_preferred_first() {
         for place in [Place::Side, Place::Overlay] {
-            let forms = lyrics_forms(&Show::Message("♪ no lyrics for this track".into()), place);
-            assert_eq!(forms.len(), 1);
-            assert!(forms[0].size.width <= 30);
+            let forms = lyrics_forms(&message(&NOT_FOUND), place);
+            assert_eq!(forms.len(), 2);
+            assert!(forms.iter().all(|f| f.size.width <= 30));
+            assert!(forms[0].size.height > forms[1].size.height);
         }
-        let short = lyrics_forms(&Show::Message("♪ instrumental".into()), Place::Overlay);
+        let short = lyrics_forms(&message(&["♪ instrumental"]), Place::Overlay);
+        assert_eq!(short.len(), 1);
         assert_eq!(short[0].size, Size::new(14, 1));
+    }
+
+    #[test]
+    fn not_found_names_the_lyrics_site_and_is_never_cut() {
+        // The long wording wraps (2 rows on the lava, 3 in a side panel),
+        // the short one is a single row; every word survives either way.
+        for (place, rows, w) in [(Place::Overlay, 2, 30), (Place::Side, 3, 20)] {
+            let forms = lyrics_forms(&message(&NOT_FOUND), place);
+            assert_eq!(forms[0].size.height, rows, "{place:?}");
+            assert_eq!(forms[1].size, Size::new(19, 1));
+            for text in NOT_FOUND {
+                let lines = wrap(text, w);
+                assert!(lines.iter().all(|l| width(l) <= w), "{lines:?}");
+                assert_eq!(lines.join(" "), text);
+                assert!(
+                    lines.concat().contains("lrclib.net") || lines.join(" ").contains("lrclib.net")
+                );
+            }
+        }
     }
 }
