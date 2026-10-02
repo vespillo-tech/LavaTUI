@@ -266,9 +266,9 @@ and `o` for a large album cover.
 You can play, pause, skip, seek and change the volume. Some players
 ignore shuffle and repeat. LavaTUI notices, tells you, and stops
 offering them. You also get the
-album cover and lyrics, all with no account and no setup. LavaTUI never
-opens your music app for you. It only shows a player that is already
-running.
+album cover and lyrics, all with no account and no setup. LavaTUI shows
+whatever is already playing. It won't open your music app or start music
+on its own.
 
 The cover is a real picture in kitty, Ghostty, iTerm2, WezTerm, foot,
 mlterm and Konsole. In other terminals it's drawn with text blocks.
@@ -375,9 +375,12 @@ connection the first time.
 Your account isn't on the developer app's list, or its owner has no
 Premium. See [the Spotify guide](docs/spotify.md).
 
-**It uses too much of my computer.**
-Try `--fps 30`, or a style like `braille`. LavaTUI already slows down
-when its window isn't in front, and it sleeps when the wax is paused.
+**How do I make LavaTUI lighter on my computer's battery or processor?**
+LavaTUI is already light: it slows down when its window isn't in front,
+and it rests completely while the wax is paused (`z`). To lighten it
+further, lower the frame rate with `lavatui --fps 30` (or *smoothness*
+on the *window* page of the settings), or pick a simpler style such as
+`braille`.
 
 **How do I get my settings back to normal?**
 Each settings page has a reset line. Or delete `config.toml` (see
