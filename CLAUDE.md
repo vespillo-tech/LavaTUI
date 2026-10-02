@@ -383,7 +383,12 @@ numbers); `docs/design.md` is the layout/visual contract.
                 pure geometry the model also reads — form per size, lines,
                 body rect, `footprint`, `max_scroll`; `mod.rs` draws),
                 `picker.rs` (`placement`/`hit`: geometry shared by draw and
-                mouse).
+                mouse),
+                `settings.rs` (the settings screen `,`: `geometry`/`hit`/`draw`;
+                its state and keys are `app/model/settings_screen.rs`: pages
+                of `Row`s built from the model, live changes, reset, the
+                Spotify setup with the Client ID field; bracketed paste →
+                `Model::paste`, `Model::copy` → OSC 52 in the loop).
                 Chrome never shares cells: `ui::draw` leaves out whole any
                 panel/lava stack/chip/toast/HUD an overlay (or a toast)
                 would touch.
@@ -437,7 +442,9 @@ never drift apart; there is no direct crossterm dependency.
   the help overlay), and its arm in `Model::global_action`
   (`app/model/actions.rs`); the match is exhaustive, so the compiler
   points at it. A bool setting is one line: `self.toggle(now, |s| &mut
-  s.<field>, ["on toast", "off toast"])`. Status-bar hint? `chrome::HINTS`.
+  s.<field>, ["on toast", "off toast"])`. Status-bar hint? `chrome::HINTS`. A
+  setting worth changing in the app: an `Item` and its `row`/`change`
+  arms in `app/model/settings_screen.rs`, in plain words.
 
 ## Conventions & Patterns
 

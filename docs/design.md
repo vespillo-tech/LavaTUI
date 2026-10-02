@@ -1207,6 +1207,61 @@ next line's start (and during a fade).
 
 ---
 
+### 4.7 Settings screen (`,`)
+
+Every everyday setting, in plain words, so nobody needs `config.toml`
+(lava-1xk.17). `app/model/settings_screen.rs` holds what's on it and what
+keys do; `ui/settings.rs` places and draws it.
+
+* **Pages:** *look* (style, colours, heat, speed, background, colour
+  range, see-through window fix), *clock & timer* (face, time format,
+  focus / break lengths, long break after, sound at the end), *widgets*
+  (each widget beside the lamp / on the lamp / off, its position while on
+  the lamp, what things on the lamp sit on), *music & lyrics* (Spotify,
+  lyrics with what lrclib.net is sent, cover picture / size, small cover
+  with music), *controls* (mouse), *window* (lamp only, hint line,
+  smoothness, lamp-only clock). Each ends with *reset this page*, which
+  asks for a second `⏎` (the Spotify Client ID is never reset). Labels
+  and values are lowercase words, never config keys: `beside the lamp`,
+  not `side`; `position`, not `anchor`; `sharp picture`, not `pixels`.
+* **Live, saved:** a change applies at once (the lamp, clock, widgets
+  and mouse capture show it) and goes through the usual debounced save;
+  the sheet says `changes save automatically` (or that a save failed).
+* **Explained:** the row under the cursor (or the picked page) is
+  explained in one or two sentences under the list; sentences that don't
+  fit are dropped whole. A value with no room beside its label moves
+  there too, as `‹ value ›`.
+* **≥ 66 × 18: a centred sheet**, up to 64 × 19, rounded `metal` border,
+  title `settings`, `changes save automatically` bottom-left and `esc
+  close` / `esc back` bottom-right. The page list (17 wide) sits left,
+  the page's title (dim) and rows right; the cursor's row is `accent`
+  with `▸` and a choice shows `‹ value ›`. Not dimmed: the lamp behind it
+  is the preview. Chrome it touches hides whole (§8.2).
+* **Smaller: full screen**, one list at a time: the pages, or one page
+  (`settings · look` top-left, `esc back` top-right), the explanation at
+  the bottom. **Micro:** `settings · window too small · esc close`.
+* **Keys:** `↑↓` `j k` move; on the pages `⏎` `→` `l` open one; in a page
+  `← →` `h l` change the value, `⏎` `space` steps a choice on or presses a
+  button, `tab` / `shift-tab` the next / previous page; `esc` (or
+  backspace) goes back a level and closes at the top; `q` and `,` close.
+  Mouse: a click picks a page or a row, a click on the picked row is
+  `⏎`; the wheel moves. Status bar hints: `↑↓ move  ⏎ open  esc close`,
+  in a page `↑↓ move  ←→ change  ⏎ choose  esc back`.
+* **Spotify setup** (*music & lyrics* → *spotify*, and what a library
+  key opens while there's no Client ID): `status`, then four numbered
+  steps: `1 make a spotify app` opens developer.spotify.com/dashboard in
+  the browser (off the input path), `2 add this address` copies the
+  redirect URI with OSC 52 (the explanation shows it too, to type),
+  `3 paste the client id` is a text field (`⏎` to type, or just paste:
+  bracketed paste; `⏎` saves, `esc` stops; checked: 32 hex digits, the
+  problem said in words), `4 connect` logs in in the browser, waits (a
+  `copy the login link` row appears), says `Connected as …` or why it
+  failed (what to check), and `⏎` twice disconnects. `spotify app` says
+  whether the desktop app is playing, not running or needs the
+  Automation permission, with what to do. While the setup is open the
+  player and the Web API client stay connected for it, even with music
+  off.
+
 ## 5. Palettes / lamp themes
 
 ### 5.1 Roles
@@ -1372,6 +1427,7 @@ so they can't drift.
 | Key | Action | Notes |
 |---|---|---|
 | `?` | toggle help | |
+| `,` | settings screen (§4.7) | also from help |
 | `q` | quit | closes the overlay instead when one is open |
 | `ctrl-c` | quit | always, from anywhere |
 | `esc` | close overlay / cancel picker | no-op otherwise: **esc never quits** (esc is muscle memory for "close this"; an accidental quit loses pomodoro state) |
@@ -1404,6 +1460,7 @@ so they can't drift.
 | Context | Keys |
 |---|---|
 | help | `j k ↑ ↓` scroll · `?` `esc` `q` close |
+| settings | `j k ↑ ↓` move · `← →` `h l` change · `⏎` `space` open / choose · `tab` next page · `esc` back · `q` `,` close; typing: `⏎` save, `esc` stop |
 | picker | `j k ↑ ↓` move (live preview) · `1`–`9` jump · `⏎` `space` keep · `esc` `q` revert · opening key = keep + close |
 | tiny inline picker | `h l ← →` (also `j k`) move · `⏎` keep · `esc` revert |
 | player keys (`A`) | `␣` play / pause · `n` `p` next / previous · `← →` (`h l`) seek ∓ 10 s · `↑ ↓` (`k j`, `+ -`) volume ± 5 · `x` `r` shuffle / repeat (where the player can) · `s` like · `a` add to playlist · `b` playlists · `i` log in / out · `esc` `q` `A` done · `?` help (ends them) |
