@@ -45,6 +45,7 @@ mod rng;
 
 use std::f64::consts::PI;
 
+use blob::Ghost;
 pub use blob::{Blob, Phase};
 pub use controls::SimSpeed;
 pub use controls::{DEFAULT_HEAT, HEAT_LEVELS};
@@ -126,8 +127,13 @@ const POOL_HUMP: f64 = 0.9;
 const POOL_MOUND: f64 = 0.55;
 /// A pool deeper than this (lamp heights) heaps no higher.
 const MOUND_DEPTH: f64 = 0.08;
-/// Seconds a bud takes to grow to full size.
+/// Seconds a bud takes to grow to full size. Below `BUD_START` of its
+/// full radius it grows in proportion to its size, so it swells steadily
+/// out of the pool instead of ballooning in its first frames.
 const BUD_TIME: f64 = 6.0;
+const BUD_START: f64 = 0.3;
+/// How squat a bud starts (its stretch), rounding out as it grows.
+const BUD_STRETCH: f64 = 0.72;
 /// Seconds between bud attempts (random in range). A pool deeper than
 /// `POOL_DEPTH` shortens the gap in proportion, and past `DEEP_POOL ×
 /// POOL_DEPTH` it buds even when the lamp already has its blob count
@@ -138,6 +144,26 @@ const DEEP_POOL: f64 = 1.5;
 const MELT_RATE: f64 = 0.5;
 /// A melting blob smaller than this is gone.
 const MELTED_RADIUS: f64 = 0.012;
+/// A melting blob sinks into the pool toward its rest depth at this rate
+/// (1/s), no faster than `MELT_SINK` (lamp heights / s), and takes
+/// `MELT_SINK_EASE` (1/s) to get up to that speed: a big blob settles
+/// in rather than dropping through the pool (and its teardrop, which
+/// follows its speed, eases too).
+const MELT_SINK_RATE: f64 = 2.0;
+const MELT_SINK: f64 = 0.06;
+const MELT_SINK_EASE: f64 = 1.0;
+/// Teardrop taper per unit of vertical speed (lamp heights / s), its cap
+/// (a hot blob at full speed is about 0.4 / 1.6 front / back), and how
+/// fast (1/s) a blob's taper follows its speed.
+const TAPER: f64 = 10.0;
+const MAX_TAPER: f64 = 0.5;
+const TAPER_EASE: f64 = 3.0;
+/// Seconds a merge or split takes to crossfade (see [`Ghost`]), and a
+/// skirt to grow in or fade out.
+const TOPOLOGY_FADE: f64 = 0.4;
+const SKIRT_FADE: f64 = 0.4;
+/// How far a melting blob's skirt is drawn in (see `Blob::neck`).
+const MELT_SKIRT: f64 = 0.3;
 
 /// Cohesion: similar blobs within `COHESION_RANGE × (r1 + r2)` attract.
 const COHESION: f64 = 0.02;
@@ -262,6 +288,8 @@ pub struct World {
     /// Total wax the world aims to hold; changes only with the width.
     wax_target: f64,
     blobs: Vec<Blob>,
+    /// What merges and splits replaced, fading out (drawn only).
+    ghosts: Vec<Ghost>,
     /// Per-blob acceleration scratch, reused every step.
     accel: Vec<(f64, f64)>,
     rng: Rng,
@@ -291,6 +319,7 @@ impl World {
             prev_pool_level: 0.0,
             wax_target: FILL * width,
             blobs: Vec::with_capacity(MAX_BLOBS + 1),
+            ghosts: Vec::new(),
             accel: Vec::with_capacity(MAX_BLOBS + 1),
             rng: Rng::new(seed),
             next_id: 0,
@@ -365,6 +394,7 @@ impl World {
             blob.cooldown = (blob.cooldown - dt).max(0.0);
         }
         self.time += dt;
+        self.fade(dt);
 
         self.update_controls(dt);
         self.ease_walls(dt);
@@ -376,6 +406,7 @@ impl World {
         self.spawn(dt);
         self.balance_pool(dt);
         self.contain();
+        self.carry_ghosts();
     }
 
     // --- geometry --------------------------------------------------------
@@ -441,6 +472,51 @@ impl World {
     }
 
     // --- step stages -------------------------------------------------------
+
+    /// Fade blobs born of a merge or split in and their ghosts out, and
+    /// skirts in or out with the phase.
+    fn fade(&mut self, dt: f64) {
+        for blob in &mut self.blobs {
+            blob.weight = (blob.weight + dt / TOPOLOGY_FADE).min(1.0);
+            let attach = if blob.phase == Phase::Free { 0.0 } else { 1.0 };
+            let step = dt / SKIRT_FADE;
+            blob.attach += (attach - blob.attach).clamp(-step, step);
+            match blob.phase {
+                Phase::Budding { target } => blob.neck = (blob.radius / target).min(1.0),
+                // A skirt not shown yet starts as it should be; one that is
+                // (a bud whose pool ran dry) eases there.
+                Phase::Melting if blob.prev.attach <= 0.0 => blob.neck = MELT_SKIRT,
+                Phase::Melting => relax(&mut blob.neck, MELT_SKIRT, 1.0 / SKIRT_FADE, dt),
+                Phase::Free => {}
+            }
+            // Rising: the tail hangs below; sinking: it trails above.
+            let taper = (TAPER * blob.vy).clamp(-MAX_TAPER, MAX_TAPER);
+            relax(&mut blob.taper, taper, TAPER_EASE, dt);
+        }
+        for ghost in &mut self.ghosts {
+            ghost.blob.prev = ghost.blob.pose();
+            ghost.blob.weight -= dt / TOPOLOGY_FADE;
+        }
+        self.ghosts
+            .retain(|g| g.blob.weight > 0.0 || g.blob.prev.weight > 0.0);
+    }
+
+    /// Fade `blob` out, carried along with the blob `follow`.
+    fn add_ghost(&mut self, blob: Blob, follow: u64) {
+        if blob.weight > 0.0 || blob.prev.weight > 0.0 {
+            self.ghosts.push(Ghost { blob, follow });
+        }
+    }
+
+    /// Ghosts move with the blob that took their place.
+    fn carry_ghosts(&mut self) {
+        for ghost in &mut self.ghosts {
+            if let Some(b) = self.blobs.iter().find(|b| b.id == ghost.follow) {
+                ghost.blob.x += b.x - b.prev.x;
+                ghost.blob.y += b.y - b.prev.y;
+            }
+        }
+    }
 
     fn ease_walls(&mut self, dt: f64) {
         let gap = self.view_width - self.wall_width;
@@ -551,8 +627,10 @@ impl World {
             if blob.phase == Phase::Free {
                 continue;
             }
-            // Walls that moved in on an attached blob nudge it along the pool.
-            let inside = (half - blob.radius).max(0.0);
+            // Walls that moved in on an attached blob nudge it along the pool
+            // (by its half-width, as for a free one: a tall blob settling to
+            // melt beside a wall stays put).
+            let inside = (half - blob.half_extents().0).max(0.0);
             let excess = blob.x.abs() - inside;
             if excess > 0.0 {
                 blob.x -= blob.x.signum() * excess.min(MAX_SPEED * dt);
@@ -563,7 +641,8 @@ impl World {
                 Phase::Free => unreachable!("skipped above"),
                 Phase::Budding { target } => {
                     let full = PI * target * target;
-                    let grow = (full / bud_time * dt).min(self.pool_area - min_pool);
+                    let start = (blob.radius / (BUD_START * target)).min(1.0);
+                    let grow = (full / bud_time * start * dt).min(self.pool_area - min_pool);
                     if grow <= 0.0 {
                         // The pool ran dry: let go if it's worth it, else sink back.
                         blob.phase = if blob.radius > 0.5 * target {
@@ -580,7 +659,7 @@ impl World {
                     // A wide, low bulge on the pool that rises and rounds out
                     // as it swells; the field draws the neck below it.
                     blob.y = surface + blob.radius * (1.7 * g - 0.75);
-                    blob.stretch = 0.72 + 0.4 * g * g;
+                    blob.stretch = BUD_STRETCH + 0.4 * g * g;
                     if g >= 1.0 {
                         blob.phase = Phase::Free;
                         blob.cooldown = COOLDOWN;
@@ -592,7 +671,9 @@ impl World {
                     blob.set_area(blob.area() - drain);
                     self.pool_area += drain;
                     let rest = surface - 0.4 * blob.radius;
-                    blob.y += (rest - blob.y) * (1.0 - (-2.0 * dt).exp());
+                    let sink = (MELT_SINK_RATE * (rest - blob.y)).clamp(-MELT_SINK, MELT_SINK);
+                    relax(&mut blob.vy, sink, MELT_SINK_EASE, dt);
+                    blob.y += blob.vy * dt;
                     blob.x += blob.vx * dt;
                     blob.vx *= 1.0 / (1.0 + DRAG * dt);
                     relax(&mut blob.stretch, 0.85, STRETCH_RELAX, dt);
@@ -603,7 +684,9 @@ impl World {
                     }
                 }
             }
-            blob.vy = (blob.y - old_y) / dt;
+            if let Phase::Budding { .. } = blob.phase {
+                blob.vy = (blob.y - old_y) / dt;
+            }
         }
         self.blobs.retain(|b| b.radius > 0.0);
     }
@@ -645,7 +728,16 @@ impl World {
                 let dist = (b.x - a.x).hypot(b.y - a.y);
                 if can_merge(a, b, max_radius) && dist < MERGE_DIST * (a.radius + b.radius) {
                     let other = self.blobs.remove(j);
+                    let kept = self.blobs[i].clone();
                     self.blobs[i].absorb(&other, MERGE_STRETCH);
+                    let id = self.blobs[i].id;
+                    for ghost in &mut self.ghosts {
+                        if ghost.follow == kept.id || ghost.follow == other.id {
+                            ghost.follow = id;
+                        }
+                    }
+                    self.add_ghost(kept, id);
+                    self.add_ghost(other, id);
                     self.stats.merged += 1;
                 } else {
                     j += 1;
@@ -698,9 +790,11 @@ impl World {
             for part in [&mut top, &mut self.blobs[i]] {
                 part.stretch = 1.15;
                 part.cooldown = COOLDOWN;
+                part.weight = 0.0;
                 part.prev = part.pose();
             }
             self.blobs.push(top);
+            self.add_ghost(parent, self.blobs[i].id);
             self.stats.split += 1;
         }
     }
@@ -761,7 +855,11 @@ impl World {
         // Just under the surface, where the bud's first step puts it.
         let surface = pool_surface(self.pool_level(), x, self.bottom_width(), self.time);
         let y = surface - 0.7 * MELTED_RADIUS;
-        let blob = self.new_blob(x, y, MELTED_RADIUS, POOL_TEMP, Phase::Budding { target });
+        let mut blob = self.new_blob(x, y, MELTED_RADIUS, POOL_TEMP, Phase::Budding { target });
+        // Already the flat bulge its first step makes it, fading in.
+        blob.stretch = BUD_STRETCH;
+        blob.weight = 0.0;
+        blob.prev = blob.pose();
         self.pool_area -= blob.area();
         self.blobs.push(blob);
     }
@@ -871,6 +969,10 @@ impl World {
             y,
             radius,
             stretch: 1.0,
+            taper: 0.0,
+            weight: 1.0,
+            attach: f64::from(u8::from(phase != Phase::Free)),
+            neck: 0.0,
         };
         Blob {
             id,
@@ -882,6 +984,10 @@ impl World {
             stretch: 1.0,
             temp,
             phase,
+            weight: pose.weight,
+            attach: pose.attach,
+            taper: pose.taper,
+            neck: pose.neck,
             prev: pose,
             cooldown: 0.0,
             wander_phase: self.rng.range(0.0, 2.0 * PI),

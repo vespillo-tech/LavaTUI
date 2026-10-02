@@ -505,6 +505,47 @@ fn interpolation_moves_between_steps() {
     assert!((y_at(&field) - (start + end) / 2.0).abs() < 1e-6);
 }
 
+/// The end of one step and the start of the next are the same moment, so
+/// they must draw the same wax, whatever the step did: merges, splits,
+/// buds, melts, a pool running dry (ghosts, fades and every interpolated
+/// part of the pose).
+#[test]
+fn steps_join_up_through_every_event() {
+    let (cols, rows) = (48, 36);
+    let mut events = Stats::default();
+    for (seed, aspect) in [(5, 1.4), (9, 0.6)] {
+        let mut world = World::new(seed, aspect);
+        world.set_heat(5);
+        world.prewarm(600, DT);
+        let mut field = Field::default();
+        let mut end = vec![Sample::default(); cols * rows];
+        let mut start = end.clone();
+        let before = world.stats();
+        for _ in 0..7200 {
+            field.prepare(&world, 1.0);
+            field.fill(&mut end, cols, rows);
+            world.step(DT);
+            field.prepare(&world, 0.0);
+            field.fill(&mut start, cols, rows);
+            let worst = end
+                .iter()
+                .zip(&start)
+                .map(|(a, b)| (a.density - b.density).abs())
+                .fold(0.0, f32::max);
+            assert!(worst < 1e-3, "density jumps {worst} at t={:.3}", world.time);
+        }
+        let after = world.stats();
+        events.budded += after.budded - before.budded;
+        events.merged += after.merged - before.merged;
+        events.split += after.split - before.split;
+        events.melted += after.melted - before.melted;
+    }
+    assert!(
+        events.budded > 0 && events.merged > 0 && events.split > 0 && events.melted > 0,
+        "{events:?}"
+    );
+}
+
 /// `cargo test --release -- --ignored --nocapture bench_fill`
 #[test]
 #[ignore = "benchmark"]
