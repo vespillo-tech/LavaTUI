@@ -35,6 +35,8 @@ pub mod fake;
 #[cfg(any(target_os = "linux", test))]
 pub mod mpris;
 #[cfg(target_os = "macos")]
+pub mod notify;
+#[cfg(target_os = "macos")]
 pub mod runner;
 #[cfg(any(windows, test))]
 pub mod smtc;
@@ -62,10 +64,6 @@ pub trait MediaSource: Send {
     fn capabilities(&self) -> Capabilities {
         Capabilities::ALL
     }
-
-    /// Something follows playback closely (synced lyrics on screen): poll
-    /// the player more often, so changes made in it show sooner.
-    fn follow_closely(&self, _on: bool) {}
 
     fn play_pause(&self) {
         self.send(Command::PlayPause);
@@ -115,7 +113,7 @@ pub fn detect() -> Box<dyn MediaSource> {
     #[cfg(target_os = "macos")]
     {
         Box::new(Polled::spawn(
-            spotify::Spotify::new(runner::Osascript::new(spotify::script())),
+            spotify::Spotify::new(runner::Osascript::new(spotify::script())).watching(),
             worker::Cadence::default(),
         ))
     }

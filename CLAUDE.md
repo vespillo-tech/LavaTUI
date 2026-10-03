@@ -354,8 +354,13 @@ the layout/visual contract.
                 from a player seen to ignore them),
                 `FakeSource` for tests; `worker.rs`'s `Baseline` pins the
                 position down over polls (each reading bounded by its
-                request and reply), `follow_closely` (synced lyrics on
-                screen) polls every 250 ms; `art.rs`: `ArtLoader` (cover fetch
+                request and reply); polls every 1 s (paused 2 s), and at
+                once when the player says it changed (`Backend::listen` →
+                `Nudge`, then a re-read 300 ms on; events ≥ 250 ms apart):
+                macOS `notify.rs` (a JXA `osascript` hearing Spotify's
+                distributed notification: they reach only a main-thread
+                run loop), MPRIS signals on the player path, SMTC
+                session / manager events; `art.rs`: `ArtLoader` (cover fetch
                 https-only on its thread, or `lavatui-thumb:` bytes a
                 backend stashed; disk cache in
                 `$XDG_CACHE_HOME/lavatui/art`, decoded to 128 px `Art`

@@ -229,8 +229,5 @@ impl Model {
         let delay = self.settings.lyrics.delay_ms;
         self.lyrics
             .sync(on, self.music.snapshot.as_ref(), delay, self.now);
-        // Words on screen: poll the player more often, so a pause or seek
-        // made in it shows sooner.
-        self.music.follow_closely(self.lyrics.synced().is_some());
     }
 }

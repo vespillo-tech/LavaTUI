@@ -1304,9 +1304,12 @@ intersect down to the quickest round trip. Spotify's reported position is
 exact (thousands of reads fit one line to ±4 ms), so the extrapolation
 stays within a few ms of it (measured: `live_timing_audit`, docs/
 architecture.md); before, the first reading of a song set it for the
-whole song, 60–100 ms off. While synced lyrics are on screen the player
-is polled every 250 ms instead of every second (`follow_closely`), so a
-pause, resume or seek made in the player shows within about ¼ s. Then
+whole song, 60–100 ms off. Between polls the position is predicted, so
+polling only has to catch what changes in the player itself: it's polled
+once a second (paused, every 2 s), and at once when the player says it
+changed (Spotify's `PlaybackStateChanged` notification on macOS, MPRIS
+`PropertiesChanged` / `Seeked` on Linux, the media session's events on
+Windows; docs/architecture.md has what each one covers). Then
 *lyrics timing* (`lyrics.delay_ms`, ±1 s, settings › music & lyrics)
 moves it by ear, for every player and for lines and words alike (the
 player's position, not what the ear hears: Bluetooth headphones play

@@ -171,14 +171,6 @@ impl Music {
         }
     }
 
-    /// Ask the player to be polled more often (or not): see
-    /// [`MediaSource::follow_closely`].
-    pub fn follow_closely(&self, on: bool) {
-        if let Some(source) = &self.source {
-            source.follow_closely(on);
-        }
-    }
-
     /// The freshest state (not just this frame's), for a key press.
     fn current(&self) -> Option<Snapshot> {
         self.source.as_ref().map(|s| s.snapshot())

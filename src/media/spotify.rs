@@ -33,7 +33,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use super::runner::{RunError, Runner};
-use super::worker::Backend;
+use super::worker::{Backend, Nudge};
 use super::{Capabilities, Command, Snapshot, Status, Track, Unavailable};
 
 const BUNDLE_ID: &str = "com.spotify.client";
@@ -61,7 +61,12 @@ pub struct Spotify<R> {
     /// Full reads left for the known track while its details are
     /// incomplete.
     rereads: u8,
+    /// Listen for the app's change notifications ([`watching`](Self::watching)).
+    watch: bool,
 }
+
+/// What the Spotify app posts when it plays, pauses or changes track.
+pub const NOTIFICATION: &str = "com.spotify.client.PlaybackStateChanged";
 
 /// A track that came back with details missing (Spotify still loading them
 /// as it changes track, a read that failed) is read in full again on this
@@ -77,11 +82,27 @@ impl<R: Runner> Spotify<R> {
             name: Arc::from("Spotify"),
             known: None,
             rereads: 0,
+            watch: false,
         }
+    }
+
+    /// Also listen for the app's change notifications ([`NOTIFICATION`],
+    /// through [`super::notify`]), polling at once on each.
+    pub fn watching(mut self) -> Self {
+        self.watch = true;
+        self
     }
 }
 
 impl<R: Runner> Backend for Spotify<R> {
+    fn listen(&mut self, nudge: Nudge) -> Option<Box<dyn Send>> {
+        if !self.watch {
+            return None;
+        }
+        let watcher = super::notify::watch(&[NOTIFICATION], nudge)?;
+        Some(Box::new(watcher))
+    }
+
     fn exchange(&mut self, commands: &[Command]) -> Snapshot {
         let reread = self.rereads > 0 && self.known.as_deref().is_some_and(incomplete);
         let named = match &self.known {
@@ -1168,9 +1189,22 @@ mod tests {
         });
 
         // The app's view, every 10 ms.
-        let source = Polled::spawn(Spotify::new(Osascript::new(script())), Cadence::default());
-        // As with synced lyrics on screen.
-        source.follow_closely(std::env::var_os("LAVATUI_TIMING_CLOSE").is_some());
+        // The app's source, with change events unless
+        // LAVATUI_TIMING_EVENTS=0 (polling alone, as before events).
+        let events = std::env::var("LAVATUI_TIMING_EVENTS").as_deref() != Ok("0");
+        let backend = Spotify::new(Osascript::new(script()));
+        let backend = if events { backend.watching() } else { backend };
+        let source = Polled::spawn(backend, Cadence::default());
+        // When Spotify's notifications arrive, for the report.
+        let (nudge, heard) = super::super::worker::Nudge::channel();
+        let _watcher = super::super::notify::watch(&[NOTIFICATION], nudge);
+        let noted = thread::spawn(move || {
+            let mut at = Vec::new();
+            while heard.recv().is_ok() {
+                at.push(ms(Instant::now()));
+            }
+            at
+        });
         let mut seen = Vec::new();
         while t0.elapsed() < run {
             let now = Instant::now();
@@ -1187,7 +1221,15 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         }
         drop(source);
+        drop(_watcher);
         truth.join().expect("truth poller");
+        let noted: Vec<f64> = noted.join().unwrap_or_default();
+        println!(
+            "events {}: {} notifications at {:.0?} ms",
+            if events { "on" } else { "off" },
+            noted.len(),
+            noted
+        );
         let reads: Vec<Read> = rx.try_iter().collect();
 
         // Steady stretches of the truth: same track, same state, and each
@@ -1313,9 +1355,17 @@ mod tests {
                 .filter(|l| l.0 == s.0)
                 .map(|l| l.2)
                 .fold(0.0f64, |a, b| if b.abs() > a.abs() { b } else { a });
+            // A notification near the change (it may come a little before
+            // the first read that shows it).
+            let note = noted
+                .iter()
+                .find(|&&n| n > s.0 - 1500.0 && n < s.0 + 3000.0)
+                .map_or("no notification".to_owned(), |n| {
+                    format!("notification {:+.0} ms", n - s.0)
+                });
             match settled {
                 Some((t, ..)) => println!(
-                    "  change at {:.0} ms ({}): shown within 50 ms after {:.0} ms; worst error before {worst:+.0} ms",
+                    "  change at {:.0} ms ({}): shown within 50 ms after {:.0} ms; worst error before {worst:+.0} ms; {note}",
                     s.0,
                     if s.2 { "playing" } else { "paused" },
                     t - s.0

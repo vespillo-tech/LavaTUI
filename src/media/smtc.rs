@@ -171,7 +171,9 @@ mod backend {
     use super::{
         Cover, UNIX_EPOCH_TICKS, app_name, choose, duration, position, status, to_ticks, track,
     };
-    use crate::media::worker::Backend;
+    use windows::Foundation::TypedEventHandler;
+
+    use crate::media::worker::{Backend, Nudge};
     use crate::media::{Capabilities, Command, Snapshot, Status, Unavailable};
 
     /// The SMTC backend. Initialises WinRT on the worker thread on first
@@ -181,6 +183,42 @@ mod backend {
         initialised: bool,
         manager: Option<Manager>,
         cover: Cover,
+        /// Where change events go ([`Backend::listen`]).
+        nudge: Option<Nudge>,
+        /// The manager's and the session's event handlers, while set.
+        events: Option<Events>,
+    }
+
+    /// Handlers on the session in use (play / pause, position, track) and
+    /// on the manager (players coming and going), each nudging the worker.
+    /// Removed when dropped (another session chosen, the manager lost).
+    struct Events {
+        manager: (Manager, i64),
+        session: Option<(String, Session, [i64; 3])>,
+    }
+
+    impl Drop for Events {
+        fn drop(&mut self) {
+            let _ = self.manager.0.RemoveSessionsChanged(self.manager.1);
+            if let Some((_, session, [a, b, c])) = self.session.take() {
+                let _ = session.RemovePlaybackInfoChanged(a);
+                let _ = session.RemoveTimelinePropertiesChanged(b);
+                let _ = session.RemoveMediaPropertiesChanged(c);
+            }
+        }
+    }
+
+    /// A handler that nudges.
+    fn nudging<S, A>(nudge: &Nudge) -> TypedEventHandler<S, A>
+    where
+        S: windows::core::RuntimeType + 'static,
+        A: windows::core::RuntimeType + 'static,
+    {
+        let nudge = nudge.clone();
+        TypedEventHandler::new(move |_, _| {
+            nudge.changed();
+            Ok(())
+        })
     }
 
     impl Smtc {
@@ -210,7 +248,9 @@ mod backend {
                     Snapshot::new(Status::Unavailable(Unavailable::NotRunning), Instant::now());
                 return Ok((snap, None));
             };
-            let name: Arc<str> = Arc::from(app_name(&session.SourceAppUserModelId()?.to_string()));
+            let id = session.SourceAppUserModelId()?.to_string();
+            self.follow(&manager, &id, &session);
+            let name: Arc<str> = Arc::from(app_name(&id));
             for command in commands {
                 // A command the app refuses doesn't spoil the read.
                 let _ = send(&session, command);
@@ -259,9 +299,58 @@ mod backend {
             };
             Ok((snap, Some(name)))
         }
+
+        /// Keep event handlers on `manager` and on `session` (app `id`),
+        /// moving them when another session is in use. Best effort: a
+        /// handler that can't be set leaves polling to catch the change.
+        fn follow(&mut self, manager: &Manager, id: &str, session: &Session) {
+            let Some(nudge) = &self.nudge else { return };
+            if self
+                .events
+                .as_ref()
+                .is_some_and(|e| &e.manager.0 != manager)
+            {
+                self.events = None;
+            }
+            if self.events.is_none() {
+                let Ok(token) = manager.SessionsChanged(&nudging(nudge)) else {
+                    return;
+                };
+                self.events = Some(Events {
+                    manager: (manager.clone(), token),
+                    session: None,
+                });
+            }
+            let Some(events) = &mut self.events else {
+                return;
+            };
+            if events.session.as_ref().is_some_and(|(at, ..)| at == id) {
+                return;
+            }
+            if let Some((_, old, [a, b, c])) = events.session.take() {
+                let _ = old.RemovePlaybackInfoChanged(a);
+                let _ = old.RemoveTimelinePropertiesChanged(b);
+                let _ = old.RemoveMediaPropertiesChanged(c);
+            }
+            let tokens = (
+                session.PlaybackInfoChanged(&nudging(nudge)),
+                session.TimelinePropertiesChanged(&nudging(nudge)),
+                session.MediaPropertiesChanged(&nudging(nudge)),
+            );
+            if let (Ok(a), Ok(b), Ok(c)) = tokens {
+                events.session = Some((id.to_owned(), session.clone(), [a, b, c]));
+            }
+        }
     }
 
     impl Backend for Smtc {
+        /// The session's own change events (set on the next exchange, on
+        /// the worker thread, and moved with the session in use).
+        fn listen(&mut self, nudge: Nudge) -> Option<Box<dyn Send>> {
+            self.nudge = Some(nudge);
+            None
+        }
+
         fn exchange(&mut self, commands: &[Command]) -> Snapshot {
             match self.try_exchange(commands) {
                 Ok((mut snap, name)) => {
@@ -269,6 +358,7 @@ mod backend {
                     snap
                 }
                 Err(err) => {
+                    self.events = None;
                     self.manager = None;
                     Snapshot::new(
                         Status::Unavailable(Unavailable::Error(format!(
