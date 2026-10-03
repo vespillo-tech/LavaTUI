@@ -347,7 +347,10 @@ the layout/visual contract.
                 `art::stash`); `capabilities()` says what each can do (read after
                 every exchange: MPRIS's `ModesCheck` withdraws shuffle/repeat
                 from a player seen to ignore them),
-                `FakeSource` for tests, `art.rs`: `ArtLoader` (cover fetch
+                `FakeSource` for tests; `worker.rs`'s `Baseline` pins the
+                position down over polls (each reading bounded by its
+                request and reply), `follow_closely` (synced lyrics on
+                screen) polls every 250 ms; `art.rs`: `ArtLoader` (cover fetch
                 https-only on its thread, or `lavatui-thumb:` bytes a
                 backend stashed; disk cache in
                 `$XDG_CACHE_HOME/lavatui/art`, decoded to 128 px `Art`
@@ -411,10 +414,14 @@ the layout/visual contract.
                 `graphics/sixel.rs`: pure encoder (median cut to 256).
                 `tools/inline_check.py` checks those bytes in a pty.
 - `lyrics/`   — synced lyrics (pure, no terminal): `lrc.rs` (forgiving
-                LRC parser: multi-stamp lines, `[offset:]`, gaps, word tags
-                stripped), `sync.rs` (`Syncer`: extrapolated `Playback` →
-                `Cursor` line/progress, 150 ms lead, jitter hold, seek
-                flag), `client.rs` (`Lrclib` over an `Http` trait: ureq in
+                LRC parser: multi-stamp lines, `[offset:]`, gaps, enhanced
+                word tags kept), `words.rs` (each line's words timed once
+                at parse: from word tags, else estimated by syllables,
+                punctuation and the song's pace, never into the next
+                line), `sync.rs` (`Syncer`: extrapolated `Playback` →
+                `Cursor` line/progress + word being sung, 150 ms line /
+                50 ms word lead, small step back holds still, seek flag,
+                `next_change` for frozen-frame wakeups), `client.rs` (`Lrclib` over an `Http` trait: ureq in
                 the app, `client::tests::Mock` in tests; `/api/get` then
                 `/api/search`), `cache.rs` (JSON per track, negative
                 results too, TTLs, stale used offline), `worker.rs`

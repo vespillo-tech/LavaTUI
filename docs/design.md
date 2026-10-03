@@ -1287,11 +1287,38 @@ them) and never cached; offline with a stale entry, the stale entry is
 shown. Each frame polls for the answer (`try_recv`).
 
 **Sync.** The position is the snapshot's, extrapolated to the frame
-(`position + (now − sampled_at)` while playing), plus a 150 ms lead, so
-lines light up as they're sung rather than just after. A new sample a
-little behind the extrapolation (< 400 ms back over a line start) keeps
-the line instead of flicking back; a jump of more than 1.5 s from where
-the position should be is a seek, followed at once without a fade.
+(`position + (now − sampled_at)` while playing). The media worker pins
+it down over polls (`media/worker.rs`, `Baseline`): a reading was taken
+somewhere between sending the request and getting the reply, so it bounds
+when playback was where it said, and readings of the same playback
+intersect down to the quickest round trip. Spotify's reported position is
+exact (thousands of reads fit one line to ±4 ms), so the extrapolation
+stays within a few ms of it (measured: `live_timing_audit`, docs/
+architecture.md); before, the first reading of a song set it for the
+whole song, 60–100 ms off. While synced lyrics are on screen the player
+is polled every 250 ms instead of every second (`follow_closely`), so a
+pause, resume or seek made in the player shows within about ¼ s. Lines
+light up 150 ms early (the eye reads a line ahead of the voice), words
+50 ms early (with the voice: a hair early reads as on time). A new
+reading a little behind (< 400 ms) holds the highlight still until
+playback catches up, so it never steps back a word or a line; a pause
+shows where it stopped; a jump of more than 1.5 s from where the
+position should be is a seek, followed at once without a fade.
+
+**Words** (`lyrics/words.rs`). Each line's words are timed once, when
+the lyrics arrive. Exact when the LRC has enhanced word tags
+(`<mm:ss.xx>` before each word, an end tag after the last), which is
+rare: none of 295 synced LRCLIB versions of 19 popular songs had them.
+Otherwise estimated, and it is an estimate: words get time by their
+syllables (vowel groups, a little more for long words; one per
+character in Chinese, Japanese and Korean, where each character is a
+word here), punctuation holds a word (a comma 0.5, a full stop 0.8
+syllables), and the line is sung over the time to the next line less a
+breath (12 %, at most 0.6 s), but no slower than 1.5× the song's own
+pace (its median seconds per syllable), so a line before a long break
+isn't drawn out across it. A line is never still being sung when the
+next one starts. Partly tagged lines keep their tags and estimate in
+between.
 
 **Never cut off** (lava-uqi). The line being sung always shows
 whole, wherever the widget is and however squeezed the screen: lines
@@ -1342,8 +1369,11 @@ the narrower ones on small lamps):
 ```
         Cooling at the top it drifts          ← two back (dim)
                  And falls                    ← one back (dim)
- Every blob that ever broke away comes home   ← current: bold `text`, whole,
-       again to the warm pool below              on the R (here 2) rows kept
+ Every blob that ever broke away comes home   ← current, whole, on the R
+       again to the warm pool below              (here 2) rows kept: sung
+                                                 words bold `text`, the one
+                                                 being sung `accent`, the
+                                                 rest `dim`
          Round and round it turns             ← one ahead (dim)
                  Slow rise                    ← two ahead
 ```
@@ -1353,14 +1383,23 @@ before it; when it takes fewer than R rows, the lines after it move up.
 
 **Look: no backing needed.** Role colours only, so it reads with or
 without the soft backing (none by default: the floating text's ink adapts
-to the wax, §4.6 "The backing"): the current
-line bold `text`, the others `dim`, lined up by the anchor (centred at
-the bottom). **Transitions**: a new line brightens from
-`dim` to `text` over 320 ms while the line it replaced dims back (truecolor
-and 256 blend; 16 colours switch at the half-way point); the rows step,
-they don't scroll (a terminal can't move text by less than a row). A
-**gap** (an empty LRC line, or the intro before the first line) is three
-dots `•  •  •` that light up one by one as it passes.
+to the wax, §4.6 "The backing"), lined up by the anchor (centred at the
+bottom). The current line is karaoke: the words sung so far bold `text`,
+the word being sung bold `accent`, the words still to come `dim` (not
+bold); once the line is sung, all of it bold `text`. The other lines are
+`dim`. With no colour (`NO_COLOR`) the word being sung is underlined
+too, so sung (bold), being sung (bold, underlined) and to come (plain)
+stay apart; in 16 colours `accent` is its own colour. On the lava a
+glyph that has to take the palette's light or dark ink over bright wax
+loses the accent there, but keeps its weight: the bold edge still shows
+how far the line has got. The highlight moves word by word, never back,
+with no fade (a word lasts a few hundred ms). **Transitions**: a new
+line comes in with its words `dim` and lights word by word, while the
+line it replaced dims back from bright over 320 ms (truecolor and 256
+blend; 16 colours switch at the half-way point); the rows step, they
+don't scroll (a terminal can't move text by less than a row). A **gap**
+(an empty LRC line, or the intro before the first line) is three dots
+`•  •  •` that light up one by one as it passes.
 
 **States**, each one calm dim sentence like music's: `♪ looking for
 lyrics…`, `♪ no lyrics on lrclib.net for this song` (where that doesn't
@@ -1372,8 +1411,9 @@ track's progress, the middle line `text`, the rest `dim`, never bold (it
 isn't a claim about what's being sung).
 
 **Chip:** `♪ current line` (≤ 32 cols, cut after a word) while playing synced lyrics, `♪`
-in a gap; none otherwise. **Frozen lamp:** the idle loop also wakes at the
-next line's start (and during a fade).
+in a gap; none otherwise. **Frozen lamp:** while playing, the idle loop
+also wakes at the next word, line end, line start or gap dot (and during
+a fade); paused, it doesn't.
 
 ---
 

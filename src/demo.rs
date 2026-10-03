@@ -39,7 +39,8 @@ enum Kind {
 }
 
 /// Title (letters and spaces only: it's matched in the lookup URL),
-/// artist, album, length in seconds, the cover's encoded bytes, the lyrics.
+/// artist, album, length in seconds, the cover's encoded bytes, the lyrics,
+/// and whether they time each word (enhanced LRC) or only lines.
 struct Song {
     title: &'static str,
     artist: &'static str,
@@ -48,6 +49,7 @@ struct Song {
     cover: &'static [u8],
     kind: Kind,
     words: &'static [&'static str],
+    word_times: bool,
 }
 
 const SONGS: &[Song] = &[
@@ -74,6 +76,7 @@ const SONGS: &[Song] = &[
             "What goes up will settle in",
             "And then it starts to rise again",
         ],
+        word_times: false,
     },
     Song {
         title: "Blob Merge",
@@ -93,6 +96,7 @@ const SONGS: &[Song] = &[
             "Merge, merge, a softer shape",
             "Nowhere else we would escape",
         ],
+        word_times: true,
     },
     Song {
         title: "Warm Light Falling",
@@ -112,6 +116,7 @@ const SONGS: &[Song] = &[
             "Warm light falling, warm light rising",
             "Watch it with your sleepy eyes",
         ],
+        word_times: false,
     },
     Song {
         title: "Long Cooldown",
@@ -121,6 +126,7 @@ const SONGS: &[Song] = &[
         cover: include_bytes!("../assets/demo/suspended-melt.jpg"),
         kind: Kind::Instrumental,
         words: &[],
+        word_times: false,
     },
     Song {
         title: "Bare Wax",
@@ -130,6 +136,7 @@ const SONGS: &[Song] = &[
         cover: include_bytes!("../assets/demo/waxwood-hymns.jpg"),
         kind: Kind::Missing,
         words: &[],
+        word_times: false,
     },
 ];
 
@@ -369,16 +376,32 @@ impl Http for Canned {
 }
 
 /// The song's words as LRC: a line every 4.5 s after an 8 s intro, the
-/// verses over and over, an empty line (a break) between them.
+/// verses over and over, an empty line (a break) between them. With
+/// `word_times`, each word tagged too (a lazy, even beat, the last word
+/// held), sung over the first 3.4 s of its line.
 fn lrc(song: &Song) -> String {
+    let stamp = |at: f64| {
+        let cs = (at * 100.0).round() as u64;
+        format!("{:02}:{:02}.{:02}", cs / 6000, cs / 100 % 60, cs % 100)
+    };
     let mut out = String::new();
     let mut at = 8.0;
     for line in song.words.iter().cycle() {
         if at > song.secs as f64 - 5.0 {
             break;
         }
-        let (m, s) = ((at / 60.0) as u64, at % 60.0);
-        out.push_str(&format!("[{m:02}:{s:05.2}]{line}\n"));
+        out.push_str(&format!("[{}]", stamp(at)));
+        if song.word_times && !line.is_empty() {
+            let words: Vec<&str> = line.split(' ').collect();
+            let beat = 2.6 / words.len() as f64;
+            for (i, word) in words.iter().enumerate() {
+                out.push_str(&format!("<{}>{word} ", stamp(at + i as f64 * beat)));
+            }
+            out.push_str(&format!("<{}>", stamp(at + 3.4)));
+        } else {
+            out.push_str(line);
+        }
+        out.push('\n');
         at += if line.is_empty() { 6.0 } else { 4.5 };
     }
     out
@@ -409,7 +432,23 @@ mod tests {
             let raw = client.fetch(&track).expect("fetch");
             let lyrics = raw.and_then(|r| r.lyrics());
             match song.kind {
-                Kind::Sung => assert!(matches!(lyrics, Some(Lyrics::Synced(_))), "{}", song.title),
+                Kind::Sung => {
+                    let Some(Lyrics::Synced(synced)) = lyrics else {
+                        panic!("{}", song.title)
+                    };
+                    // Both kinds of timing on show: words from the file,
+                    // estimated.
+                    let sung = synced.lines.iter().filter(|l| !l.is_gap());
+                    assert!(
+                        sung.clone().all(|l| l.exact == song.word_times),
+                        "{}",
+                        song.title
+                    );
+                    assert!(
+                        sung.clone()
+                            .all(|l| l.words.len() == l.text.split(' ').count())
+                    );
+                }
                 Kind::Instrumental => assert_eq!(lyrics, Some(Lyrics::Instrumental)),
                 Kind::Missing => assert_eq!(lyrics, None, "{}", song.title),
             }

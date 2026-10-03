@@ -189,17 +189,16 @@ impl LyricsState {
         })
     }
 
-    /// When what's shown next changes on its own: the end of a fade, or
-    /// the next line's start. For a frozen lamp's sleep.
+    /// When what's shown next changes on its own: the end of a fade, the
+    /// next word, line or gap dot (only while playing). For a frozen
+    /// lamp's sleep.
     pub fn wake(&self, now: Instant) -> Option<Instant> {
         if self.fade(now) < 1.0 {
             return Some(now);
         }
-        let synced = self.synced()?;
-        let cursor = self.cursor?;
-        let next = synced.lines.get(cursor.index.map_or(0, |i| i + 1))?;
-        let lead = next.at.saturating_sub(cursor.position);
-        Some(now + lead)
+        let cursor = self.cursor.filter(|c| c.playing)?;
+        let base = cursor.position.saturating_sub(self.syncer.lead);
+        Some(now + cursor.next_change?.saturating_sub(base))
     }
 }
 
@@ -222,5 +221,8 @@ impl Model {
     pub(super) fn sync_lyrics(&mut self) {
         let on = self.lyrics_on();
         self.lyrics.sync(on, self.music.snapshot.as_ref(), self.now);
+        // Words on screen: poll the player more often, so a pause or seek
+        // made in it shows sooner.
+        self.music.follow_closely(self.lyrics.synced().is_some());
     }
 }

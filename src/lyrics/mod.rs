@@ -19,6 +19,7 @@ pub mod cache;
 pub mod client;
 pub mod lrc;
 pub mod sync;
+pub mod words;
 pub mod worker;
 
 use std::time::{Duration, Instant};

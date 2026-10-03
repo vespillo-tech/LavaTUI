@@ -37,6 +37,18 @@ What changed in each version of LavaTUI, in plain words.
   lrclib.net" where space is tight). Songs that are instrumental say
   "instrumental", including ones where lrclib.net only has a note saying
   so.
+- Lyrics light up word by word, like karaoke: the words already sung are
+  bright, the word being sung is in the accent colour, and the rest of
+  the line waits in grey. Without colours, the word being sung is
+  underlined. Most lyrics only say when each line starts, so LavaTUI
+  guesses when each word comes from its syllables and the line's commas
+  and full stops. The guess is close but not exact. Lyrics that do time
+  every word are followed exactly.
+- Lyrics keep better time with Spotify: within a few milliseconds of
+  where the song really is, where before they could be up to a tenth of
+  a second early or late for a whole song. While lyrics are on screen,
+  LavaTUI checks Spotify four times a second, so a pause, skip or jump
+  you make in Spotify shows up within about a quarter of a second.
 
 ## 1.2.0 — 2026-10-02 — first public release
 

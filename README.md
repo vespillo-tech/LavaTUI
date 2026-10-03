@@ -302,8 +302,9 @@ The [settings file guide](docs/configuration.md) lists every setting.
 ## Music
 
 LavaTUI can show what you're playing: the song, the artist, the album
-cover and a progress bar. Press `a` to turn it on. Press `y` for lyrics
-and `o` for a large album cover.
+cover and a progress bar. Press `a` to turn it on. Press `y` for lyrics,
+which light up word by word as the song plays. Press `o` for a large
+album cover.
 
 ### Works with no setup
 

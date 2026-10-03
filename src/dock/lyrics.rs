@@ -1,5 +1,6 @@
-//! Lyrics: the playing track's words, the current line bright and bold,
-//! the lines around it dim, from LRCLIB (`src/lyrics/`, state in
+//! Lyrics: the playing track's words, the current line karaoke style
+//! (the words sung so far bold `text`, the one being sung bold `accent`,
+//! the rest `dim`), the lines around it dim, from LRCLIB (`src/lyrics/`, state in
 //! `app/model/lyrics.rs`). Off by default: placing it (`y`) is the opt-in
 //! to sending the track's title, artist, album and length to lrclib.net.
 //!
@@ -27,8 +28,10 @@
 //! before it; when it takes fewer rows than its form keeps, the lines
 //! after it move up. A line around it shows whole when it fits in the
 //! rows left, else on one row cut after a word with `…` (never mid-word,
-//! but for a single word wider than the form). A new line brightens over
-//! [`FADE`](crate::app::model) while the old one dims; a seek cuts. Gaps
+//! but for a single word wider than the form). Words light one by one as
+//! they're sung (times from `lyrics::words`: exact from word tags, else
+//! estimated); the line just left dims over [`FADE`](crate::app::model);
+//! a seek cuts. Gaps
 //! (and the intro) show three dots filling as it passes. Plain (untimed)
 //! lyrics scroll with the track's progress, unhighlighted.
 //! Everything else is one calm dim sentence: `♪ instrumental`, `♪ no
@@ -36,16 +39,20 @@
 //! doesn't fit), `♪ lyrics offline`, the player's state.
 //!
 //! No backing is assumed: the text is role colours over whatever is
-//! behind it (bold `text` current line, `dim` neighbours).
+//! behind it. Without colours the word being sung is underlined too.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Modifier, Style};
 
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
 use super::music::{fit, width, wrap};
 use super::{Anchor, ChipText, DockWidget, Look, Place, WidgetForm, align_x};
 use crate::app::{Fetch, Model};
 use crate::lyrics::Lyrics as Words;
+use crate::lyrics::lrc::Line;
+use crate::lyrics::sync::Cursor;
 use crate::media::Status;
 use crate::theme::{Ink, Role};
 
@@ -363,9 +370,43 @@ fn whole(text: &str, w: u16, most: u16) -> Vec<String> {
     rows
 }
 
+/// [`whole`]'s rows as byte ranges of `text` (one-space separated, as
+/// lyrics lines are), wrapped between words as [`wrap`] wraps them (a
+/// word wider than `w` alone on its row), the last of `most` holding the
+/// rest. Nothing allocated.
+fn rows(text: &str, w: u16, most: u16) -> impl Iterator<Item = (usize, usize)> + '_ {
+    let w = usize::from(w);
+    let mut most = most.max(1);
+    let mut at = 0;
+    std::iter::from_fn(move || {
+        if at >= text.len() {
+            return None;
+        }
+        let start = at;
+        let mut end = text.len();
+        if most > 1 {
+            most -= 1;
+            end = start;
+            let mut used = 0;
+            for word in text[start..].split(' ') {
+                let ww = word.width().min(w);
+                if end > start && used + 1 + ww > w {
+                    break;
+                }
+                used += ww + usize::from(end > start);
+                end += word.len() + usize::from(end > start);
+            }
+        }
+        at = end + 1;
+        Some((start, end))
+    })
+}
+
 /// The middle of [`Pen::around`]: the current line, or a gap's dots.
 enum Current<'t> {
     Line(&'t str, Style),
+    /// A synced line, word by word.
+    Karaoke(&'t Line, Cursor),
     Dots(f32),
 }
 
@@ -379,18 +420,86 @@ struct Pen<'a, 'b> {
 impl Pen<'_, '_> {
     /// `text` on row `dy`, cut to fit, lined up by the look.
     fn text(&mut self, dy: u16, text: &str, style: Style) {
-        if dy >= self.area.height {
+        self.row(dy, text, |_| style);
+    }
+
+    /// `text` on row `dy`, lined up by the look, each character in
+    /// `style(its byte offset)`, cut with `…` as [`fit`] cuts if too
+    /// wide. Drawn in runs of one style straight from `text`: nothing
+    /// allocated.
+    fn row(&mut self, dy: u16, text: &str, style: impl Fn(usize) -> Style) {
+        if dy >= self.area.height || self.area.width == 0 {
             return;
         }
-        let text = fit(text, self.area.width);
-        let x = self.area.x + align_x(self.align, self.area.width, width(&text));
-        self.buf.set_stringn(
-            x,
-            self.area.y + dy,
-            &text,
-            usize::from(self.area.width),
-            style,
-        );
+        let w = usize::from(self.area.width);
+        let to = if text.width() <= w {
+            text.len()
+        } else {
+            let mut to = 0;
+            let mut used = 0;
+            for (i, c) in text.char_indices() {
+                let cw = c.width().unwrap_or(0);
+                if used + cw + 1 > w {
+                    break;
+                }
+                used += cw;
+                to = i + c.len_utf8();
+            }
+            text[..to].trim_end().len()
+        };
+        let cut = to < text.len();
+        let drawn = text[..to].width() + usize::from(cut);
+        let mut x = self.area.x + align_x(self.align, self.area.width, drawn as u16);
+        let (y, right) = (self.area.y + dy, self.area.right());
+        let mut start = 0;
+        while start < to {
+            let run = style(start);
+            let end = text[start..to]
+                .char_indices()
+                .find(|&(i, _)| style(start + i) != run)
+                .map_or(to, |(i, _)| start + i);
+            let room = usize::from(right.saturating_sub(x));
+            x = self.buf.set_stringn(x, y, &text[start..end], room, run).0;
+            start = end;
+        }
+        if cut && x < right {
+            self.buf.set_stringn(x, y, "…", 1, style(to));
+        }
+    }
+
+    /// The current synced line from row `dy`, whole in at most `most`
+    /// rows, karaoke style: the words sung so far bold `text`, the one
+    /// being sung bold `accent` (underlined too where there are no
+    /// colours to tell it by), the rest `dim` (not bold). Returns the rows
+    /// used.
+    fn karaoke(&mut self, dy: u16, line: &Line, cursor: Cursor, most: u16) -> u16 {
+        let theme = &self.model.theme;
+        let sung = theme.text(Role::Text).add_modifier(Modifier::BOLD);
+        let mut now = theme.text(Role::Accent).add_modifier(Modifier::BOLD);
+        if !theme.has_color() {
+            now = now.add_modifier(Modifier::UNDERLINED);
+        }
+        let ahead = theme.text(Role::Dim);
+        let words = &line.words;
+        let style = |at: usize| {
+            // The word `at` is in (spaces between words: plain).
+            let i = words.partition_point(|w| w.end as usize <= at);
+            match words.get(i) {
+                Some(w) if w.start as usize <= at => match cursor.word {
+                    Some(c) if c == i => now,
+                    _ if i < cursor.sung => sung,
+                    _ => ahead,
+                },
+                _ => Style::new(),
+            }
+        };
+        let text = line.text.as_str();
+        let mut used = 0;
+        for (start, end) in rows(text, self.area.width, most) {
+            self.row(dy + used, &text[start..end], |at| style(start + at));
+            used += 1;
+        }
+        used
     }
 
     /// `dim` → `text` by `k` (0..=1), as a plain foreground.
@@ -403,7 +512,7 @@ impl Pen<'_, '_> {
         Style::new().fg(fg)
     }
 
-    /// Synced lyrics: the current line bold and bright from row `back`,
+    /// Synced lyrics: the current line word by word from row `back`,
     /// the lines around it dim (the one just left fading down).
     fn synced(&mut self, back: u16) {
         let model = self.model;
@@ -419,9 +528,7 @@ impl Pen<'_, '_> {
             Some(line.text.as_str())
         };
         let current = match cursor.current(synced).filter(|l| !l.is_gap()) {
-            Some(current) => {
-                Current::Line(&current.text, self.tint(k).add_modifier(Modifier::BOLD))
-            }
+            Some(current) => Current::Karaoke(current, cursor),
             // A gap, or the intro.
             None => Current::Dots(cursor.progress),
         };
@@ -456,6 +563,7 @@ impl Pen<'_, '_> {
                 }
                 parts.len() as u16
             }
+            Current::Karaoke(line, cursor) => self.karaoke(back, line, cursor, rows - back),
             Current::Dots(progress) => {
                 self.dots(back, progress);
                 1
@@ -546,6 +654,34 @@ mod tests {
             .iter()
             .map(|f| (f.size.width, f.size.height))
             .collect()
+    }
+
+    #[test]
+    fn karaoke_rows_wrap_as_wrap_does() {
+        let lines = SONG.iter().copied().chain([
+            "Supercalifragilisticexpialidocious is a word too wide",
+            "君の名は yeah 사랑해",
+        ]);
+        for text in lines.filter(|l| !l.is_empty()) {
+            for w in 8..60 {
+                let ours: Vec<&str> = rows(text, w, u16::MAX).map(|(a, b)| &text[a..b]).collect();
+                let theirs: Vec<String> = wrap(text, w)
+                    .into_iter()
+                    .map(|r| r.trim_end_matches('…').to_owned())
+                    .collect();
+                assert_eq!(ours.len(), theirs.len(), "{text:?} at {w}");
+                for (o, t) in ours.iter().zip(&theirs) {
+                    assert!(
+                        o.starts_with(t.as_str()),
+                        "{text:?} at {w}: {ours:?} vs {theirs:?}"
+                    );
+                }
+            }
+            // At most `most` rows, the last holding the rest.
+            let two: Vec<_> = rows(text, 10, 2).collect();
+            assert!(two.len() <= 2);
+            assert_eq!(two.last().unwrap().1, text.len());
+        }
     }
 
     #[test]

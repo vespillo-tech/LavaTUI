@@ -36,7 +36,7 @@ simulation, layout, clock, pomodoro, keymap and the app model.
 | `src/app/` | The main loop (`mod.rs`) and the model (`model/`). |
 | `src/config/` | `config.toml`: tolerant loading, safe saves that keep your comments. |
 | `src/media/` | Now playing: one `MediaSource` trait, a backend per platform, a fake for tests and `--demo`, and the album-art loader. |
-| `src/lyrics/` | LRCLIB client, cache, LRC parser and the line syncer. |
+| `src/lyrics/` | LRCLIB client, cache, LRC parser, word timing (`words.rs`) and the line / word syncer. |
 | `src/spotify_web/` | The optional Spotify Web API client (PKCE login, library, player). |
 | `src/graphics/` | Album covers as real pictures: kitty graphics, iTerm2 images and sixel, with a start-up check of what the terminal really supports. |
 
@@ -149,9 +149,44 @@ until the clock or timer changes.
 
 Music costs about nothing: 3.4 % of a core at 80×24 with the music card
 vs 3.4 % without (60 s each, solid). Spotify is asked once a second
-through one `osascript` process that stays up. Lyrics are one request per
-track, on their own thread, and cached. The cover's cells are worked out
-once per track and size, so they add nothing per frame.
+through one `osascript` process that stays up (about 3.5 ms of CPU a
+poll; four a second, ~1.4 % of a core, while synced lyrics are on
+screen). Lyrics are one request per track, on their own thread, and
+cached. The cover's cells are worked out once per track and size, so
+they add nothing per frame.
+
+**Lyrics timing** (lava-75z.25). Measured against the Spotify app on
+macOS 26 (Spotify 1.2, a heavily loaded machine, load average 70-300).
+Spotify's reported position is exact: 2,055 back-to-back reads over 90 s
+fit one line within ±4 ms, a read takes ~19 ms. So the truth is
+Spotify's own position, read every ~30 ms, and the error is what the app
+extrapolates minus that:
+
+| | median | 99th pct | worst |
+|---|---|---|---|
+| before (first reading of a song kept for the whole song) | −56 ms | +168 ms | 168 ms |
+| now (`Baseline`: readings bounded by request and reply, intersected) | −3 ms | 0 ms | 50 ms |
+
+(Six minutes each, side by side, with a pause, seeks and track skips in
+them.) Replaying those readings through `Baseline` with real pauses and
+seeks in them: polled every 250 ms (lyrics on screen) the 99th
+percentile is +47 ms, once a second +131 ms; what's left is the time to
+see a change, plus Spotify holding the position still 250-400 ms after a
+seek while it buffers (followed at once now) and the odd poll Spotify
+takes 0.7 s to answer. The lead on top (lines 150 ms, words 50 ms) is a
+choice, not a correction. Word times are exact only when the lyrics
+have enhanced-LRC word tags; LRCLIB almost never does (none of 295
+synced versions of 19 popular songs), so words are usually estimated
+(`src/lyrics/words.rs`, design.md §4.6 "Words").
+
+```sh
+# Read-only against the running Spotify app (plays nothing, changes nothing):
+LAVATUI_TIMING_SECS=360 LAVATUI_TIMING_CLOSE=1 LAVATUI_TIMING_CSV=/tmp/t.csv \
+  cargo test --release -- --ignored --nocapture live_timing_audit
+# The same readings replayed through the Baseline at a poll interval:
+LAVATUI_TIMING_CSV=/tmp/t.csv LAVATUI_REPLAY_MS=250 \
+  cargo test --release -- --ignored --nocapture baseline_replay
+```
 
 Both caches stay bounded (`src/disk_cache.rs`, run on the workers after
 each write; reads mark a file used): lyrics keep the 2000 most recently

@@ -443,7 +443,12 @@ fn float(
             Ink::Dark => dark,
         };
         let bold = from.fg != dim || from.modifier.contains(Modifier::BOLD);
-        paint(&mut buf[pos], from.symbol(), fg, bold, lamp, translucent);
+        // An underline (the lyrics' word being sung, without colours) stays.
+        let mut marks = from.modifier & Modifier::UNDERLINED;
+        if bold {
+            marks |= Modifier::BOLD;
+        }
+        paint(&mut buf[pos], from.symbol(), fg, marks, lamp, translucent);
     }
     INKS.with_borrow_mut(|m| m.extend(inks));
     // (16 colours: a bright wax colour as a background isn't always
@@ -515,18 +520,23 @@ fn under(cell: &Cell, lamp: &Theme) -> Color {
     }
 }
 
-/// Put a widget's `symbol` in `ink` into lamp cell `to`.
+/// Put a widget's `symbol` in `ink` into lamp cell `to`, with `marks` (bold,
+/// underline).
 ///
 /// With `translucent` (see-through cell backgrounds, opaque glyphs) a
 /// block glyph's other half is never the lamp's foreground pixel (wax),
 /// which would show darker than the wax around it: it's the lamp cell's
 /// background, what's behind the wax, as in [`crate::render::cell::half_block`].
 /// The wax gives up half a cell beside the stroke; the stroke stays whole.
-fn paint(to: &mut Cell, symbol: &str, ink: Color, bold: bool, lamp: &Theme, translucent: bool) {
-    let mut style = Style::new();
-    if bold {
-        style = style.add_modifier(Modifier::BOLD);
-    }
+fn paint(
+    to: &mut Cell,
+    symbol: &str,
+    ink: Color,
+    marks: Modifier,
+    lamp: &Theme,
+    translucent: bool,
+) {
+    let style = Style::new().add_modifier(marks);
     let lamp_pixels = halves(to.symbol(), to.fg, to.bg);
     match ink_halves(symbol) {
         // Block glyphs over block (or blank) lamp cells: per pixel. The
