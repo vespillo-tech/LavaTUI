@@ -34,6 +34,7 @@ const STREAM_SALT: u32 = 0x9e37;
 impl LampStyle for Matrix {
     const NAME: &'static str = "matrix";
     const GRID: Grid = Grid::CELL;
+    const TIMED: bool = true;
 
     fn draw(c: &Canvas, buf: &mut Buffer) {
         // Column by column, so each column's streams are placed once.

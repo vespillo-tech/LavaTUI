@@ -12,9 +12,11 @@ use super::error::{self, Error};
 use super::form;
 use super::http::{Body, Http, Method, Request, Response};
 use super::store::{TokenStore, Tokens};
+#[cfg(test)]
+use super::types::RawSearch;
 use super::types::{
-    Page, PlayerState, Playlist, RawPage, RawPlayer, RawPlaylist, RawPlaylistItem, RawSearch,
-    RawSnapshot, RawUriItem, Repeat, Track, Uris, User,
+    Page, PlayerState, Playlist, RawPage, RawPlayer, RawPlaylist, RawPlaylistItem, RawSnapshot,
+    RawUriItem, Repeat, Track, Uris, User,
 };
 use super::{ACCOUNTS_BASE, API_BASE, REDIRECT_URI};
 
@@ -38,6 +40,7 @@ const PLAYLIST_CHUNK: usize = 100;
 /// since Feb 2026, `track` before) and the paging.
 const URI_FIELDS: &str = "items(item(uri),track(uri)),next,total";
 /// Search's `limit` maximum for development-mode apps (Feb 2026).
+#[cfg(test)]
 pub const SEARCH_MAX: u32 = 10;
 
 pub struct Client<H> {
@@ -47,6 +50,10 @@ pub struct Client<H> {
     store: Box<dyn TokenStore>,
     /// The store has been read (or overwritten): [`Self::load`] is a no-op.
     loaded: bool,
+    /// Spotify said to wait until then (unix seconds): every API call
+    /// fails at once with [`Error::RateLimited`] until it's over, whoever
+    /// asks.
+    quiet_until: u64,
     /// Unix seconds.
     clock: Box<dyn Fn() -> u64 + Send>,
     sleep: Box<dyn Fn(Duration) + Send>,
@@ -63,6 +70,7 @@ struct TokenReply {
 
 impl<H: Http> Client<H> {
     /// A client for `client_id`, logged in if `store` holds its tokens.
+    #[cfg(test)]
     pub fn new(http: H, client_id: String, store: Box<dyn TokenStore>) -> Self {
         let mut client = Self::unloaded(http, client_id, store);
         client.load();
@@ -79,6 +87,7 @@ impl<H: Http> Client<H> {
             tokens: None,
             store,
             loaded: false,
+            quiet_until: 0,
             clock: Box::new(unix_now),
             sleep: Box::new(std::thread::sleep),
         }
@@ -110,11 +119,6 @@ impl<H: Http> Client<H> {
         self.clock = Box::new(clock);
         self.sleep = Box::new(sleep);
         self
-    }
-
-    #[cfg(test)]
-    pub fn http(&self) -> &H {
-        &self.http
     }
 
     pub fn is_logged_in(&self) -> bool {
@@ -219,11 +223,17 @@ impl<H: Http> Client<H> {
 
     /// One authorized API call: refreshes a stale token first; on 401
     /// refreshes and retries once; on 429 waits out a short `Retry-After`
-    /// once; retries a 5xx once. Returns the 2xx body.
+    /// once, and a longer one keeps every call off the network until it's
+    /// over; retries a 5xx once. Returns the 2xx body.
     fn call(&mut self, method: Method, path: &str, body: Body) -> Result<String, Error> {
         let url = format!("{API_BASE}{path}");
         let (mut refreshed, mut waited, mut retried) = (false, false, false);
         loop {
+            let now = (self.clock)();
+            if now < self.quiet_until {
+                let retry_after = Duration::from_secs(self.quiet_until - now);
+                return Err(Error::RateLimited { retry_after });
+            }
             let tokens = self.tokens.as_ref().ok_or(Error::NotLoggedIn)?;
             if (self.clock)() + EXPIRY_MARGIN >= tokens.expires_at {
                 self.refresh()?;
@@ -250,7 +260,10 @@ impl<H: Http> Client<H> {
                         (self.sleep)(wait);
                         waited = true;
                     }
-                    wait => return Err(Error::RateLimited { retry_after: wait }),
+                    wait => {
+                        self.quiet_until = now + wait.as_secs().max(1);
+                        return Err(Error::RateLimited { retry_after: wait });
+                    }
                 },
                 500 | 502 | 503 | 504 if !retried => {
                     (self.sleep)(SERVER_ERROR_PAUSE);
@@ -291,6 +304,7 @@ impl<H: Http> Client<H> {
     }
 
     /// Creates a playlist owned by the user (`POST /me/playlists`).
+    #[cfg(test)]
     pub fn create_playlist(&mut self, name: &str, public: bool) -> Result<Playlist, Error> {
         let body = serde_json::json!({ "name": name, "public": public }).to_string();
         let raw: RawPlaylist =
@@ -368,6 +382,7 @@ impl<H: Http> Client<H> {
     }
 
     /// Track search; `limit` is clamped to 1..=10 (the development-mode cap).
+    #[cfg(test)]
     pub fn search_tracks(
         &mut self,
         query: &str,
@@ -394,6 +409,7 @@ impl<H: Http> Client<H> {
     /// Tracks by an artist, for "more like this". `GET /artists/{id}/
     /// top-tracks` is gone for development-mode apps (Feb 2026), so this is
     /// a field-filtered search.
+    #[cfg(test)]
     pub fn artist_tracks(&mut self, artist: &str) -> Result<Vec<Track>, Error> {
         let query = format!("artist:\"{}\"", artist.replace('"', ""));
         Ok(self.search_tracks(&query, SEARCH_MAX, 0)?.items)

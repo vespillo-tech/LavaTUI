@@ -1094,8 +1094,8 @@ fn minimal_chip_tells_focus_from_break() {
         find("minimal pomodoro focus"),
         find("minimal pomodoro break"),
     );
-    let mut seen = 0;
-    for cols in (12..=300).step_by(12) {
+    let seen = std::sync::atomic::AtomicUsize::new(0);
+    by_column((12..=300).step_by(12), |cols| {
         for rows in (5..=90).step_by(5) {
             let (mf, bf) = scene(cols, rows, 7, focus);
             let (mb, bb) = scene(cols, rows, 7, rest);
@@ -1103,7 +1103,7 @@ fn minimal_chip_tells_focus_from_break() {
             if mf.layout.chips.is_none() {
                 continue;
             }
-            seen += 1;
+            seen.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let (tf, tb) = (text(&bf), text(&bb));
             assert!(
                 tf.contains("▸ 25:00") && !tf.contains("break"),
@@ -1111,7 +1111,8 @@ fn minimal_chip_tells_focus_from_break() {
             );
             assert!(tb.contains("▸ break 5:00"), "{cols}x{rows}\n{tb}");
         }
-    }
+    });
+    let seen = seen.into_inner();
     assert!(seen > 100, "chips seen: {seen}");
 }
 
@@ -1222,7 +1223,7 @@ fn hint_keys_resolve_through_the_keymap() {
 /// at a size the model wasn't laid out for (mid-resize).
 #[test]
 fn every_state_draws_at_every_size() {
-    for cols in (1..=130).step_by(7) {
+    by_column((1..=130).step_by(7), |cols| {
         for rows in (1..=45).step_by(4) {
             for (name, setup) in scenarios() {
                 let (m, buf) = scene(cols, rows, 7, setup);
@@ -1231,7 +1232,20 @@ fn every_state_draws_at_every_size() {
                 let _ = draw(&m, cols / 2 + 1, rows + 3);
             }
         }
-    }
+    });
+}
+
+/// `check(cols)` for each of `cols`, spread over every core (thread `t`
+/// takes every `n`th, so each gets its share of the big, slow sizes).
+pub(super) fn by_column(cols: impl Iterator<Item = u16>, check: impl Fn(u16) + Sync) {
+    let cols: Vec<u16> = cols.collect();
+    let n = std::thread::available_parallelism().map_or(1, |n| n.get());
+    std::thread::scope(|scope| {
+        for t in 0..n {
+            let (cols, check) = (&cols, &check);
+            scope.spawn(move || cols.iter().skip(t).step_by(n).for_each(|&c| check(c)));
+        }
+    });
 }
 
 /// lava-ebq.3, lava-ebq.21, §9: `theme.transparent` leaves the background

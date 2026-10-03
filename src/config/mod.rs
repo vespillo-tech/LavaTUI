@@ -551,7 +551,8 @@ pub struct Session {
     pub max_frames: Option<u64>,
     /// Use this config file instead of the XDG one.
     pub config_path: Option<PathBuf>,
-    /// `--demo`: the made-up player, cover and lyrics (`crate::demo`).
+    /// `--demo`: the made-up player, covers, lyrics and account
+    /// (`crate::demo`); no settings file unless `config_path` names one.
     pub demo: bool,
 }
 

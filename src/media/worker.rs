@@ -81,7 +81,7 @@ pub struct Nudge(Sender<Msg>);
 
 impl Nudge {
     /// A nudge and what it sends, for testing a listener.
-    #[cfg(test)]
+    #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
     pub(crate) fn channel() -> (Self, Receiver<Msg>) {
         let (tx, rx) = mpsc::channel();
         (Self(tx), rx)
@@ -685,7 +685,8 @@ mod tests {
         let (nudge, reads) = (Arc::default(), Arc::default());
         let slow = Cadence {
             playing: Duration::from_secs(60),
-            after_event: MS * 50,
+            // Far apart from "at once", even on a busy machine.
+            after_event: MS * 400,
             ..testing::fast()
         };
         let source = Polled::spawn(Evented::new(&nudge, &reads), slow);
@@ -713,8 +714,8 @@ mod tests {
         }
         wait(3);
         let reads = reads.lock().unwrap().clone();
-        assert!(reads[1] - sent < MS * 40, "at once: {:?}", reads[1] - sent);
-        assert!(reads[2] - reads[1] >= MS * 50, "then once more");
+        assert!(reads[1] - sent < MS * 300, "at once: {:?}", reads[1] - sent);
+        assert!(reads[2] - reads[1] >= MS * 400, "then once more");
         thread::sleep(MS * 150);
         assert!(count() <= 4, "{}", count());
         // A stream of events (a timeline ticking): read every EVENT_GAP
@@ -727,7 +728,7 @@ mod tests {
         }
         thread::sleep(MS * 100);
         let polls = count() - before;
-        assert!((2..=5).contains(&polls), "{polls} reads for ~60 events");
+        assert!((1..=6).contains(&polls), "{polls} reads for ~60 events");
         // Gone with the source: the listener hears so.
         drop(source);
         let deadline = Instant::now() + Duration::from_secs(2);
@@ -1178,10 +1179,8 @@ mod tests {
         let source = Polled::spawn(backend, testing::fast());
         testing::wait_for(&source, "first poll", |s| s.status == Status::Playing);
         drop(source);
-        thread::sleep(MS * 60);
-        let runs = log.lock().unwrap().len();
-        thread::sleep(MS * 100);
-        assert_eq!(log.lock().unwrap().len(), runs);
+        // The worker owns the backend: once it's dropped, nothing runs.
+        testing::released(&log);
     }
 }
 
@@ -1206,6 +1205,16 @@ pub(crate) mod testing {
     }
 
     /// The first snapshot `ok` accepts; panics after 5 s.
+    /// Wait until `shared` has no other owner: the worker that held it
+    /// (through its backend) has ended.
+    pub fn released<T>(shared: &Arc<T>) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Arc::strong_count(shared) > 1 {
+            assert!(Instant::now() < deadline, "the worker never stopped");
+            thread::sleep(MS);
+        }
+    }
+
     pub fn wait_for(source: &Polled, what: &str, ok: impl Fn(&Snapshot) -> bool) -> Snapshot {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {

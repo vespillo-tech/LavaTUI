@@ -22,6 +22,8 @@ struct Inner {
     snapshot: Snapshot,
     playlist: Vec<Arc<Track>>,
     index: usize,
+    /// Tests only: `--demo` runs for hours.
+    #[cfg(test)]
     sent: Vec<Command>,
     capabilities: Capabilities,
     /// Playlists it can play, by URI (`PlayUri` / `PlayInContext`).
@@ -46,6 +48,7 @@ impl FakeSource {
                 snapshot,
                 playlist,
                 index,
+                #[cfg(test)]
                 sent: Vec::new(),
                 capabilities: Capabilities::ALL,
                 contexts: HashMap::new(),
@@ -64,6 +67,7 @@ impl FakeSource {
     }
 
     /// Something to look at: three tracks, the first playing.
+    #[cfg(test)]
     pub fn demo(now: Instant) -> Self {
         let track = |n: u32, name: &str, artist: &str, album: &str, secs: u64| Track {
             id: format!("fake:track:{n}"),
@@ -95,17 +99,20 @@ impl FakeSource {
     }
 
     /// Replace the whole state (e.g. to show an unavailable reason).
+    #[cfg(test)]
     pub fn set(&self, snapshot: Snapshot) {
         self.lock().snapshot = snapshot;
     }
 
     /// Act like a player without some controls (e.g. Spotify's
     /// AppleScript, which can't shuffle).
+    #[cfg(test)]
     pub fn set_capabilities(&self, capabilities: Capabilities) {
         self.lock().capabilities = capabilities;
     }
 
     /// Every command sent so far, in order.
+    #[cfg(test)]
     pub fn sent(&self) -> Vec<Command> {
         self.lock().sent.clone()
     }
@@ -120,6 +127,7 @@ impl FakeSource {
     /// Apply `command` as of `now`.
     pub fn send_at(&self, command: Command, now: Instant) {
         let mut inner = self.lock();
+        #[cfg(test)]
         inner.sent.push(command.clone());
         if !inner.snapshot.status.is_available() {
             return;

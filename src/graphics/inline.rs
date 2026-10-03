@@ -134,7 +134,7 @@ impl Inline {
                     usize::from(wish.key.cols) * usize::from(cell.0),
                     usize::from(wish.key.rows) * usize::from(cell.1),
                 );
-                let (bg, crisp) = (wish.bg, wish.key.blocks.is_some());
+                let (bg, crisp) = (wish.bg, wish.key.grid.is_some());
                 let started = std::thread::Builder::new()
                     .name("lavatui-sixel".into())
                     .spawn(move || {
@@ -319,7 +319,7 @@ mod tests {
             source: "https://i.example/a".into(),
             cols,
             rows,
-            blocks: None,
+            grid: None,
         }
     }
 

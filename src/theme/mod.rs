@@ -196,7 +196,7 @@ const TRUECOLOR_QUANT: u8 = 4;
 
 /// A palette at a colour depth. Cheap to build; rebuild it when either
 /// changes.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Theme {
     palette: &'static Palette,
     depth: ColorDepth,
@@ -212,7 +212,7 @@ pub struct Theme {
 }
 
 /// A role's colour taken from a [`Paint`] instead of the palette.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct Repaint {
     rgb: Rgb,
     fallback: Color,

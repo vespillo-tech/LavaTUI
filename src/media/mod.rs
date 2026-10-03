@@ -31,14 +31,17 @@
 
 pub mod art;
 pub mod fake;
-// The pure parts of the Linux and Windows backends are tested everywhere.
+// The pure parts of the Linux and Windows backends are tested everywhere
+// (elsewhere the rest of each is unused).
 #[cfg(any(target_os = "linux", test))]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub mod mpris;
 #[cfg(target_os = "macos")]
 pub mod notify;
 #[cfg(target_os = "macos")]
 pub mod runner;
 #[cfg(any(windows, test))]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub mod smtc;
 #[cfg(target_os = "macos")]
 pub mod spotify;
@@ -65,41 +68,29 @@ pub trait MediaSource: Send {
         Capabilities::ALL
     }
 
+    #[cfg(test)]
     fn play_pause(&self) {
         self.send(Command::PlayPause);
     }
+    #[cfg(test)]
     fn next(&self) {
         self.send(Command::Next);
     }
-    fn previous(&self) {
-        self.send(Command::Previous);
-    }
-    fn seek(&self, to: Duration) {
-        self.send(Command::Seek(to));
-    }
+    #[cfg(test)]
     fn set_shuffle(&self, on: bool) {
         self.send(Command::SetShuffle(on));
     }
-    fn set_repeat(&self, on: bool) {
-        self.send(Command::SetRepeat(on));
-    }
-    /// Volume 0..=100 (larger values are clamped).
+    /// Volume 0..=100 (larger values are clamped). The MPRIS live tests'.
+    #[cfg(all(test, target_os = "linux"))]
     fn set_volume(&self, volume: u8) {
         self.send(Command::SetVolume(volume.min(100)));
     }
     /// Play a URI the player understands (`spotify:track:…`, an album or
     /// playlist URI, …). Malformed URIs are ignored; ones the player
     /// doesn't know do nothing.
+    #[cfg(test)]
     fn play_uri(&self, uri: &str) {
         if let Some(command) = Command::play_uri(uri) {
-            self.send(command);
-        }
-    }
-    /// Play `track` inside `context` (its playlist or album), so the
-    /// player carries on through the rest of it. Players that can't fall
-    /// back to the track alone.
-    fn play_in_context(&self, track: &str, context: &str) {
-        if let Some(command) = Command::play_in_context(track, context) {
             self.send(command);
         }
     }
@@ -220,6 +211,7 @@ impl Command {
     }
 
     /// The URI this plays (the track, for one in a context).
+    #[cfg(test)]
     pub fn uri(&self) -> Option<&str> {
         match self {
             Self::PlayUri(uri) | Self::PlayInContext { track: uri, .. } => Some(uri),
@@ -254,15 +246,19 @@ const UNNAMED_PLAYER: &str = "The player";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Unavailable {
     /// No backend for this platform yet.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))] // macOS: no osascript
     Unsupported,
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))] // only macOS can tell
     NotInstalled,
     /// Installed but not open (or no player at all). We never launch one.
     NotRunning,
     /// The OS refused us control of the player (on macOS: the Automation
     /// permission, AppleScript error -1743).
+    #[cfg_attr(windows, allow(dead_code))]
     PermissionDenied,
     /// The player didn't answer in time (busy, starting up, or macOS is
     /// waiting on a permission prompt).
+    #[cfg_attr(windows, allow(dead_code))]
     NotResponding,
     /// Anything else, with the underlying message.
     Error(String),

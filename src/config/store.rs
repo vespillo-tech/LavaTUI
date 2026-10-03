@@ -96,6 +96,19 @@ impl Store {
         }
     }
 
+    /// The store for this run: `--config`'s file, else the default one;
+    /// `--demo` without `--config` gets none at all (nothing read, nothing
+    /// saved), so a demo never touches the user's own settings.
+    pub fn for_session(session: &super::Session) -> Self {
+        if session.demo && session.config_path.is_none() {
+            return Self {
+                path: None,
+                ..Self::new(None)
+            };
+        }
+        Self::new(session.config_path.clone())
+    }
+
     pub fn load(&mut self) -> Loaded {
         self.notes.clear();
         self.replace_invalid = false;
@@ -573,6 +586,29 @@ mod tests {
         let loaded = Store::new(Some(dir.join("config.toml"))).load();
         assert_eq!(loaded.settings, Settings::default());
         assert!(loaded.problem.is_none());
+    }
+
+    #[test]
+    fn the_demo_keeps_away_from_the_users_settings() {
+        let demo = super::super::Session {
+            demo: true,
+            ..Default::default()
+        };
+        let mut store = Store::for_session(&demo);
+        assert_eq!(store.path, None, "no file: nothing read or saved");
+        let loaded = store.load();
+        assert_eq!(loaded.settings, Settings::default());
+        let mut changed = Settings::default();
+        changed.lamp.heat = 1;
+        assert_eq!(store.save(&changed), Ok(()));
+
+        // A demo with --config uses that file (screenshots, the GIF).
+        let dir = TempDir::new("demo-config");
+        let scratch = super::super::Session {
+            config_path: Some(dir.join("x.toml")),
+            ..demo
+        };
+        assert_eq!(Store::for_session(&scratch).path, scratch.config_path);
     }
 
     #[test]

@@ -8,9 +8,10 @@
 //! crops it square and shrinks it to [`ART_PX`]² ([`Art`]): small enough to
 //! scale to any cell size every frame for free. When pixels are wanted
 //! ([`ArtLoader::set_hires`]: kitty, iTerm2 or sixel images) it also keeps a
-//! sharper copy, up to [`HIRES_PX`]² and ready to send: PNG, base64, and
-//! the cover as pixel art at each of [`PIXEL_ART`] (the cover quality's
-//! small, medium and big pixels).
+//! sharper copy, up to [`HIRES_PX`]² and ready to send: PNG, base64. Pixel
+//! art (the cover quality's small, medium and big pixels) is made from the
+//! small copy when it's wanted, as many blocks as the text cells show
+//! ([`Art::pixel_art`]).
 //!
 //! Cache: `$XDG_CACHE_HOME/lavatui/art`, else the platform cache dir; one
 //! file per URL (named by its SHA-256). A cover read from it is marked
@@ -43,9 +44,6 @@ pub const ART_PX: u32 = 128;
 /// (Spotify's covers are 640): sharp up to a ~40-column cover on a
 /// 10-pixel-wide cell, and ~200-300 KB to send.
 pub const HIRES_PX: u32 = 400;
-/// Pixel-art copies made with the sharp one: this many square blocks
-/// across (the cover quality's small, medium and big pixels).
-pub const PIXEL_ART: [u16; 3] = [32, 16, 10];
 /// The cover cache's files' extension.
 pub const CACHE_EXT: &str = "img";
 /// Covers kept on disk: a Spotify cover is ~60 KB (~15 MB for 256), the
@@ -111,12 +109,12 @@ fn stashed_in(stash: &Stash, url: &str) -> Option<Arc<[u8]>> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Art {
     pixels: Vec<Rgb>,
+    /// The average colour, worked out once (drawn behind the picture
+    /// every frame).
+    mean: Rgb,
     /// Up to [`HIRES_PX`]² as PNG, base64: what the kitty and iTerm2
     /// protocols send (and what a sixel picture is made from).
     pub hires: Option<Arc<String>>,
-    /// With `hires`: the cover in [`PIXEL_ART`] blocks across, each block
-    /// a flat square, ready to send the same way.
-    pub pixel_art: Vec<(u16, Arc<String>)>,
 }
 
 impl Art {
@@ -132,11 +130,7 @@ impl Art {
         let square = image.crop_imm((w - side) / 2, (h - side) / 2, side, side);
         let small = square.thumbnail_exact(ART_PX, ART_PX).to_rgb8();
         let pixels = small.pixels().map(|p| Rgb(p[0], p[1], p[2])).collect();
-        let mut art = Self {
-            pixels,
-            hires: None,
-            pixel_art: Vec::new(),
-        };
+        let mut art = Self::from_pixels(pixels);
         if hires {
             let n = side.min(HIRES_PX);
             let sharp = if n == side {
@@ -147,77 +141,64 @@ impl Art {
                     .to_rgb8()
             };
             art.hires = encode(&sharp);
-            art.pixel_art = PIXEL_ART
-                .iter()
-                .filter_map(|&n| Some((n, encode(&art.blocks(n))?)))
-                .collect();
         }
         Ok(art)
     }
 
-    /// The cover as `n` × `n` flat square blocks (each the mean of what it
-    /// covers), drawn about [`HIRES_PX`] pixels square so the terminal's
-    /// own scaling keeps the edges crisp.
-    fn blocks(&self, n: u16) -> image::RgbImage {
-        let px = self.scaled(n, n);
-        let n = u32::from(n);
-        let f = HIRES_PX.div_ceil(n);
-        image::RgbImage::from_fn(n * f, n * f, |x, y| {
-            let Rgb(r, g, b) = px[((y / f) * n + x / f) as usize];
+    /// The cover as pixel art, `across` × `down` flat blocks (each the
+    /// mean of what it covers, as in text cells), ready to send: PNG,
+    /// base64, about [`HIRES_PX`] pixels on its longer side so the
+    /// terminal's own scaling keeps the edges crisp. About a millisecond:
+    /// made once per cover and size, and kept by the caller.
+    pub fn pixel_art(&self, (across, down): (u16, u16)) -> Option<Arc<String>> {
+        let (nx, ny) = (across.max(1), down.max(1));
+        let px = self.scaled(nx, ny);
+        let (nx, ny) = (u32::from(nx), u32::from(ny));
+        let f = HIRES_PX.div_ceil(nx.max(ny));
+        let image = image::RgbImage::from_fn(nx * f, ny * f, |x, y| {
+            let Rgb(r, g, b) = px[((y / f) * nx + x / f) as usize];
             image::Rgb([r, g, b])
-        })
-    }
-
-    /// The picture to send for `blocks` (`None`: the sharp copy; else the
-    /// pixel art that many blocks across), if it was made.
-    pub fn png(&self, blocks: Option<u16>) -> Option<Arc<String>> {
-        match blocks {
-            None => self.hires.clone(),
-            Some(n) => self
-                .pixel_art
-                .iter()
-                .find(|(m, _)| *m == n)
-                .map(|(_, png)| png.clone()),
-        }
+        });
+        encode(&image)
     }
 
     /// A flat colour, for tests.
     #[cfg(test)]
     pub fn solid(c: Rgb) -> Self {
-        Self {
-            pixels: vec![c; (ART_PX * ART_PX) as usize],
-            hires: None,
-            pixel_art: Vec::new(),
-        }
+        Self::from_pixels(vec![c; (ART_PX * ART_PX) as usize])
     }
 
     /// Pixel (`x`, `y`) of the square source from `f`, for tests.
     #[cfg(test)]
     pub fn from_fn(f: impl Fn(u32, u32) -> Rgb) -> Self {
-        Self {
-            pixels: (0..ART_PX * ART_PX)
+        Self::from_pixels(
+            (0..ART_PX * ART_PX)
                 .map(|i| f(i % ART_PX, i / ART_PX))
                 .collect(),
-            hires: None,
-            pixel_art: Vec::new(),
-        }
+        )
     }
 
-    /// With a sharp copy (`b64`, standing in for a PNG) and pixel art
-    /// (`b64` + its blocks across), for tests.
+    /// With a sharp copy (`b64`, standing in for a PNG), for tests.
     #[cfg(test)]
     pub fn with_hires(mut self, b64: &str) -> Self {
         self.hires = Some(Arc::new(b64.to_owned()));
-        self.pixel_art = PIXEL_ART
-            .iter()
-            .map(|&n| (n, Arc::new(format!("{b64}{n}"))))
-            .collect();
         self
+    }
+
+    /// `ART_PX`² pixels, row by row, and no sharp copy.
+    fn from_pixels(pixels: Vec<Rgb>) -> Self {
+        let mut art = Self {
+            pixels,
+            mean: Rgb::default(),
+            hires: None,
+        };
+        art.mean = art.scaled(1, 1)[0];
+        art
     }
 
     /// The cover's average colour.
     pub fn mean(&self) -> Rgb {
-        self.scaled(1, 1)[0]
+        self.mean
     }
 
     /// The cover at `w` × `h` pixels, row by row, each the average of the
@@ -620,6 +601,7 @@ mod tests {
         for (w, h) in [(1, 1), (3, 7), (64, 64), (100, 50)] {
             assert_eq!(art.scaled(w, h).len(), usize::from(w * h));
         }
+        assert_eq!(art.mean(), art.scaled(1, 1)[0], "worked out once");
         let Rgb(r, g, b) = art.mean();
         assert!((127..=128).contains(&r) && g == 0 && (127..=128).contains(&b));
         assert!(Art::decode(b"not an image", false).is_err());
@@ -641,37 +623,30 @@ mod tests {
         assert_eq!(decode(120, 300), (120, 120), "never enlarged");
     }
 
-    /// The pixel-art copies: flat square blocks, `n` across, about as big
-    /// as the sharp copy; only made with it.
+    /// Pixel art: flat blocks, as many as asked for across and down,
+    /// about as big as the sharp copy.
     #[test]
-    fn pixel_art_copies_are_flat_blocks() {
+    fn pixel_art_is_flat_blocks() {
         use base64::Engine;
-        assert!(
-            Art::decode(&png(200, 100), false)
-                .unwrap()
-                .pixel_art
-                .is_empty()
-        );
-        let art = Art::decode(&png(200, 100), true).unwrap();
-        assert_eq!(art.png(None), art.hires);
-        for n in PIXEL_ART {
-            let b64 = art.png(Some(n)).expect("made with the sharp copy");
+        let art = Art::decode(&png(200, 100), false).unwrap();
+        for (nx, ny) in [(32, 32), (12, 11), (5, 5)] {
+            let b64 = art.pixel_art((nx, ny)).unwrap();
             let bytes = base64::engine::general_purpose::STANDARD
                 .decode(b64.as_bytes())
                 .unwrap();
             let img = image::load_from_memory_with_format(&bytes, ImageFormat::Png)
                 .unwrap()
                 .to_rgb8();
-            let f = img.width() / u32::from(n);
+            let f = img.width() / u32::from(nx);
             assert_eq!(
                 (img.width(), img.height()),
-                (f * u32::from(n), f * u32::from(n))
+                (f * u32::from(nx), f * u32::from(ny))
             );
             assert!(img.width() >= HIRES_PX);
             // Every block one colour: half red, half blue, a blend in the
-            // middle column only where n is odd.
-            for by in 0..u32::from(n) {
-                for bx in 0..u32::from(n) {
+            // middle column only where nx is odd.
+            for by in 0..u32::from(ny) {
+                for bx in 0..u32::from(nx) {
                     let c = img.get_pixel(bx * f, by * f);
                     assert!((0..f).all(|d| img.get_pixel(bx * f + d, by * f + f - 1 - d) == c));
                 }
@@ -679,7 +654,6 @@ mod tests {
             assert_eq!(img.get_pixel(0, 0).0, [255, 0, 0]);
             assert_eq!(img.get_pixel(img.width() - 1, 0).0, [0, 0, 255]);
         }
-        assert_eq!(art.png(Some(5)), None, "only the ones made");
     }
 
     /// Serves one PNG, counting requests; fails after `fail_after`.

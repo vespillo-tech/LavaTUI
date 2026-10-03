@@ -516,8 +516,6 @@ mod tests {
     use super::super::worker::{Polled, testing};
     use super::*;
 
-    const MS: Duration = Duration::from_millis(1);
-
     /// Recorded from Spotify 1.2 (macOS 26), playing.
     const PLAYING: &str = "lavatui1\u{1e}playing\u{1e}240497\u{1e}0\u{1e}1\u{1e}100\u{1e}\
         spotify:track:0DZXVpUtPUom1VO6h5a0SU\u{1e}303440\u{1e}\
@@ -986,10 +984,9 @@ mod tests {
         let source = Polled::spawn(Spotify::new(runner.clone()), testing::fast());
         testing::wait_for(&source, "first poll", |s| s.status == Status::Playing);
         drop(source);
-        thread::sleep(MS * 60);
-        let runs = runner.0.lock().unwrap().requests.len();
-        thread::sleep(MS * 100);
-        assert_eq!(runner.0.lock().unwrap().requests.len(), runs);
+        // The worker owns the backend (and its runner): once that's
+        // dropped, nothing runs.
+        testing::released(&runner.0);
     }
 
     /// A real runner with all the time it needs: starting osascript and

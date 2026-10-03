@@ -455,6 +455,27 @@ fn frozen_sleeps_until_the_clock_changes() {
     assert!(!m.quality.degraded());
 }
 
+/// lava-jop: a frozen lamp's frames say when the wax hasn't moved (its
+/// cells can be kept).
+#[test]
+fn a_frozen_lamp_knows_when_the_wax_is_still() {
+    let (mut m, t0) = model("frozen-still");
+    let ms = |n| t0 + Duration::from_millis(n);
+    tick(&mut m, ms(16));
+    assert!(!m.field_same, "running");
+    m.update(Action::Freeze, ms(16));
+    tick(&mut m, ms(32));
+    tick(&mut m, ms(48));
+    assert!(m.field_same);
+    // A new pattern only starts once the wax moves again.
+    m.update(Action::Reseed, ms(48));
+    tick(&mut m, ms(64));
+    assert!(m.field_same);
+    m.update(Action::Freeze, ms(64));
+    tick(&mut m, ms(80));
+    assert!(!m.field_same, "thawed");
+}
+
 /// lava-ebq.3: slow frames drop the grid, then the frame rate (§7).
 #[test]
 fn slow_frames_degrade_quality() {
@@ -1358,20 +1379,36 @@ mod music {
             String::from_utf8(out).unwrap()
         };
         assert!(sent(&mut m).contains(";QUJD\x1b\\"), "the sharp picture");
-        for (detail, png) in [
-            (Detail::SmallPixels, "QUJD32"),
-            (Detail::MediumPixels, "QUJD16"),
-            (Detail::BigPixels, "QUJD10"),
+        let art = Art::solid(Rgb(200, 120, 40));
+        let mut grids = Vec::new();
+        for (detail, level) in [
+            (Detail::SmallPixels, 0),
+            (Detail::MediumPixels, 1),
+            (Detail::BigPixels, 2),
         ] {
             m.settings.art.detail = detail;
             let out = sent(&mut m);
-            assert!(
-                out.contains(&format!(";{png}\x1b\\")),
-                "{detail:?}: {out:?}"
-            );
+            // lava-jop: the blocks its text cells show, so nothing moves
+            // when the picture takes over.
+            let r = crate::dock::cover_at(&m.layout).unwrap();
+            let text = crate::dock::picture::TextMode::Pixels(level);
+            let grid = crate::dock::picture::pixel_grid(text, r.width, r.height, false).unwrap();
+            // The chunks' payloads, joined.
+            let payload: String = out
+                .split("\x1b_G")
+                .filter_map(|c| c.split_once(';')?.1.split_once("\x1b\\"))
+                .map(|(data, _)| data)
+                .collect();
+            let png = art.pixel_art(grid).unwrap();
+            assert_eq!(payload, *png, "{detail:?}");
             assert!(sent(&mut m).contains("a=d,d=I"), "the old one goes");
             assert!(sent(&mut m).is_empty(), "and nothing more");
+            grids.push(grid);
         }
+        assert!(
+            grids[0].0 > grids[1].0 && grids[1].0 > grids[2].0,
+            "{grids:?}"
+        );
         // While it's on its way: the same grain in text cells.
         m.settings.art.detail = Detail::MediumPixels;
         tick(&mut m, t0);

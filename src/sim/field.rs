@@ -100,7 +100,7 @@ pub struct Sample {
     pub temp: f32,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct Kernel {
     x: f32,
     y: f32,
@@ -119,7 +119,7 @@ struct Kernel {
 
 /// One blob's pose for this frame, before it is turned into kernels for a
 /// particular sample resolution.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct BlobSnap {
     x: f64,
     pub(super) y: f64,
@@ -137,8 +137,8 @@ pub(super) struct BlobSnap {
 
 /// A frame's snapshot of the wax, ready to sample. Keep one around and call
 /// [`Field::prepare`] each frame: it reuses its buffers, so steady-state
-/// sampling never allocates.
-#[derive(Debug, Default)]
+/// sampling never allocates. Equal fields draw the same lamp.
+#[derive(Debug, Default, PartialEq)]
 pub struct Field {
     pub(super) blobs: Vec<BlobSnap>,
     view_width: f32,
@@ -601,7 +601,7 @@ struct Pixel {
 
 /// One satellite of a blob's main bump, in units of the blob's radius
 /// (before stretch).
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 struct Lobe {
     dx: f64,
     dy: f64,

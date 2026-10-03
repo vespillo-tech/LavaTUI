@@ -66,6 +66,7 @@ impl Track {
     }
 
     /// True if it can be liked or added to a playlist (not a local file).
+    #[cfg(test)]
     pub fn is_spotify(&self) -> bool {
         !self.is_local && self.id.is_some()
     }
@@ -288,6 +289,7 @@ pub(super) struct RawUriItem {
     track: Option<RawUri>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 pub(super) struct RawSearch {
     pub tracks: Option<RawPage<RawTrack>>,

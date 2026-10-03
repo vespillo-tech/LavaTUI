@@ -130,6 +130,10 @@ pub struct Model {
     world: World,
     sim_clock: FixedStep,
     pub field: Field,
+    /// While frozen: the field the frame before was drawn from, and
+    /// whether this one is the same (the lamp's kept cells are good).
+    last_field: Field,
+    pub field_same: bool,
     speed: SimSpeed,
     /// The speed multiplier in use; eases toward `speed`.
     speed_factor: f64,
@@ -262,6 +266,8 @@ impl Model {
             world,
             sim_clock,
             field: Field::default(),
+            last_field: Field::default(),
+            field_same: false,
             speed,
             speed_factor: speed.factor(),
             frozen: false,
@@ -576,7 +582,16 @@ impl Model {
                 self.world.step(self.sim_clock.dt_secs());
             }
         }
-        self.field.prepare(&self.world, self.sim_clock.alpha());
+        if self.frozen {
+            // Nothing moves the wax but a reseed or a warming drag: frames
+            // for music or lyrics can keep the lamp's cells (§7).
+            std::mem::swap(&mut self.field, &mut self.last_field);
+            self.field.prepare(&self.world, self.sim_clock.alpha());
+            self.field_same = self.field == self.last_field;
+        } else {
+            self.field.prepare(&self.world, self.sim_clock.alpha());
+            self.field_same = false;
+        }
     }
 
     /// Recompute the layout for `area` from the current state.
@@ -651,7 +666,12 @@ impl Model {
         if self.save_at.take().is_none() {
             return;
         }
-        let out = config::to_persist(&self.settings, &self.file, &self.overridden);
+        let mut out = config::to_persist(&self.settings, &self.file, &self.overridden);
+        if self.library.demo {
+            // The demo's Spotify page drives a made-up account: what it
+            // changes there (Client ID, login store) is never written down.
+            out.spotify.clone_from(&self.file.spotify);
+        }
         if let Some(saver) = &mut self.saver {
             saver.submit(out);
             return;

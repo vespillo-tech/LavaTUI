@@ -99,6 +99,7 @@ fn lamp_with(
         options: LampOptions {
             reduced: false,
             translucent,
+            ..LampOptions::default()
         },
     }
     .render(area, &mut buf, state);

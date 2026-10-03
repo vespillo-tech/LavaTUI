@@ -175,6 +175,10 @@ sized pty sessions and summarizes frame intervals/spike locations; see
 `docs/perf/frame-trace.md` for the trace columns and measurement limits.
 `tools/trace_frames.py --summarize /tmp/ghostty-frames.csv` prints native
 terminal interval percentiles and every >2-period gap with its measured stage.
+`tools/ghostty_native.py` (macOS) runs the binary in real native Ghostty
+windows (traces + optional screen recording counted for frames Ghostty
+actually showed; `--ghostty-arg=--custom-shader=` to compare without
+shaders); keep the window in front while it runs.
 `docs/screenshots/capture.py` does exactly this (pyte + Pillow) and
 regenerates the README screenshots; rerun it after visible changes, and
 look at every image. Music shots use `--demo`; never commit real album
@@ -205,12 +209,20 @@ the layout/visual contract.
                 `--palette`, `--color`, `--seed`, `--config`, hidden
                 `--frames`, `--trace`, `--panic-after`, `--demo`) →
                 `config::Session` (session-only overrides).
-- `demo.rs`   — `--demo`: invented songs (`FakeSource`), abstract covers
-                drawn as PNG and `art::stash`ed, invented synced lyrics
+- `demo.rs`   — `--demo`: invented songs (`FakeSource`), an original
+                cover per album (`assets/demo/`, `art::stash`ed), invented synced lyrics
                 from a canned LRCLIB (`Canned`, no cache); `Model::new`
                 injects them (`Music::connect_with`,
-                `LyricsState::start_with`) and keeps the Spotify library
-                off. For screenshots and the README GIF.
+                `LyricsState::start_with`). The Spotify library is a
+                made-up account (`account`: a `FakeWeb`, logged in, a few
+                invented playlists; `Library::connect_with`, `Library::demo`
+                keeps its login out of the config); the `FakeSource` plays
+                its playlists (`with_contexts`). No network, keyring or
+                Client ID; without `--config` no settings file either
+                (`Store::for_session`: nothing read or saved), and a save
+                with `--config` keeps the file's `[spotify]` (the demo's
+                Spotify page plays with the made-up account). For
+                screenshots and the README GIF.
 - `config/`   — `Settings`: the persisted TOML surface of design §9 (serde,
                 every field defaulted, `sanitized()` clamps). `Session` layers
                 CLI flags on top; `to_persist` puts the file's values back for
@@ -265,10 +277,17 @@ the layout/visual contract.
                 one reusable byte buffer, wrapped in DEC 2026 synchronized
                 updates (passthrough on legacy non-ANSI Windows consoles);
                 panic/error cleanup also ends synchronization and shows the cursor.
-                `--trace <path>` / `LAVATUI_TRACE` records frame CSV in memory
+                Its `AppBackend` wraps crossterm's and answers ratatui's
+                per-frame `size()` with one `TIOCGWINSZ` on stdout (Unix;
+                crossterm would open `/dev/tty` each time), else crossterm.
+                `wake.rs`: the frame wait (blocking, then a bounded precise
+                finish, see Conventions). `trace.rs`: `--trace <path>` /
+                `LAVATUI_TRACE` records frame CSV in memory
                 and writes it on normal/error exit (not panic). Fps: 10 unfocused; frozen
                 frames sleep until the clock / pomodoro readout changes
                 (`idle_until`); `frame_drawn` feeds adaptive quality.
+                Frozen, `tick` compares each prepared field with the last
+                (`Model::field_same`), so the lamp's kept cells are reused.
 - `cells.rs`  — `display.cells = "auto"` → `Cells`: `Translucent` when the
                 terminal shows cell backgrounds see-through with opaque glyphs
                 (Ghostty with `background-opacity` < 1 +
@@ -348,8 +367,12 @@ the layout/visual contract.
                 `fallback` deliberately isn't (see its doc).
 - `render/`   — render pipeline. `LampView { field, style, theme, time,
                 options }` is a `StatefulWidget` (`LampOptions`: `reduced`
-                grid for adaptive quality; state
-                `LampState` = reused scratch buffers); it samples the field
+                grid for adaptive quality, `translucent`, and `keep` /
+                `same_field` while frozen; state
+                `LampState` = reused scratch buffers, and while frozen the
+                last frame's cells with what they were drawn from, drawn
+                again while nothing changes: music or lyrics redrawing over
+                a frozen lamp don't re-render it); it samples the field
                 at the style's `Grid` (half-block 1×2, braille 2×4, …; >400k
                 samples → coarse fill + bilinear upsample; a switch to or
                 from the reduced grid crossfades over 12 frames), then calls
@@ -358,7 +381,8 @@ the layout/visual contract.
                 blended RGB into xterm indices, Bayer-dithering dark tints the
                 cube lacks (`Theme::dithering`/`Theme::dither`).
                 A style is a unit struct implementing `LampStyle` (`NAME`,
-                `GRID` consts + `draw`), one per file in `render/styles/`,
+                `GRID` consts + `draw`; `TIMED = true` if it moves with
+                `Canvas::time` by itself: matrix, synthwave), one per file in `render/styles/`,
                 listed in `styles::ALL` as `StyleEntry::of::<S>()` (cycle
                 order; `StyleId` looks up by name; `styles::ALIASES` maps
                 old names, e.g. `glass` → `chrome`). `canvas.rs`: `Canvas`
@@ -378,11 +402,15 @@ the layout/visual contract.
                 `smoothstep`; in `styles/mod.rs`: `is_edge`, `quantise`,
                 `stepped_heat` (16 wax steps), `hash`. Snapshots:
                 `render/snapshots/` (`UPDATE_SNAPSHOTS=1 cargo test` to rewrite, then review).
+                `composite.rs` (tests): how a terminal composites half
+                blocks, opaque or with see-through cell backgrounds.
 - `clock/`    — clock faces (`Face` trait + `FACES` registry: blocks, segment,
                 analog, binary, words, text; each lists fixed-size `Form`s and
                 `fit()` picks the largest that fits) and the pomodoro state
                 machine (`Pomodoro`, pure, `Instant` passed in) +
-                `PomodoroWidget`. Faces leave spaces transparent.
+                `PomodoroWidget` (`pomodoro_view.rs`: the readout, 3 rows
+                down to the chip). Faces leave spaces transparent;
+                `clock.seconds = false` drops every seconds form.
 - `dock/`     — the widget dock (design §4.6): `DockWidget` trait (`name`,
                 `default_place`, `forms(model, place)` → fixed-size
                 `WidgetForm`s most preferred first, with `Needs` (huge /
@@ -396,12 +424,20 @@ the layout/visual contract.
                 music 2/1/0, lyrics and cover 2/1/0 with lines / a picture)
                 decides shrink, drop and chip order. `cover.rs`: the
                 album-cover widget (`o`, `O` cycles detail) and `[art]`
-                (`ArtSettings`: `detail` auto|pixels|sextant|quadrant|
-                halfblock, `size` small|medium|large|fill, `inline` = the
+                (`ArtSettings`: `detail` auto|sharp|small-pixels|
+                medium-pixels|big-pixels, older names as serde aliases,
+                `size` small|medium|large|fill, `inline` = the
                 music card's small cover while the cover widget is off);
-                `resolve(detail, Caps, depth) -> Drawn`; `draw_cover` is
-                shared with the music card. `picture.rs`: covers in text
-                cells (2-colour best split per cell, cached per track/size).
+                `resolve(detail, Caps, depth) -> Drawn` (`Grain`: sharp or
+                a pixel-art level); `draw_cover` is
+                shared with the music card; `picture_key` is the picture
+                in pixels it waits for. `picture.rs`: covers in text
+                cells (sharp: 2-colour best split per cell; pixel art:
+                flat blocks, `PIXEL_ART` about 32/16/10 across,
+                `block_side`; `pixel_grid` = the blocks across and down,
+                which the picture in pixels gets too, `Art::pixel_art`,
+                made on change and kept on `Music`), cached by source,
+                size, mode, depth and `translucent`.
                 Widgets are stateless views of the `Model`. Seconds never
                 on the lava; date forms need tall.
 - `media/`    — now playing (platform-neutral; backends behind `cfg`):
@@ -416,7 +452,10 @@ the layout/visual contract.
                 `art::stash`); `capabilities()` says what each can do (read after
                 every exchange: MPRIS's `ModesCheck` withdraws shuffle/repeat
                 from a player seen to ignore them),
-                `FakeSource` for tests; `worker.rs`'s `Baseline` pins the
+                `FakeSource` for tests and `--demo` (what was sent is kept
+                only in tests); `runner.rs`: `Osascript`, the long-lived
+                script process the Spotify backend asks one request at a
+                time; `worker.rs`'s `Baseline` pins the
                 position down over polls (each reading bounded by its
                 request and reply); polls every 1 s (paused 2 s), and at
                 once when the player says it changed (`Backend::listen` →
@@ -433,14 +472,18 @@ the layout/visual contract.
                 backend stashed; disk cache in
                 `$XDG_CACHE_HOME/lavatui/art`, decoded to 128 px `Art`
                 (+ `hires`: a ≤ 400 px PNG as base64 for kitty, when
-                `set_hires`),
-                `scaled(w, h)` box filter). The app holds a source only
+                `set_hires`; its `mean` worked out once),
+                `scaled(w, h)` box filter, `pixel_art(grid)`). The app holds a source only
                 while the music, lyrics or cover widget is placed (`media_on`): `app/model/music.rs`
                 (`Music`: source, cover loader, latest snapshot, the `A`
                 player-keys mode; `sync` once a frame and after keys;
                 `connect_with` injects a fake in tests). `spotify_web/`:
                 Web API client (worker thread; `Web` trait, `fake::FakeWeb`
-                + `fake::demo()` account for tests); its Client ID
+                for tests and `--demo` (requests recorded only in tests),
+                + `fake::demo()` account for tests; a long `Retry-After`
+                keeps every call off the network until it's over,
+                `Client::quiet_until`; `Error::retry_after` says when
+                asking again may help); its Client ID
                 is `Settings::spotify_client_id` (`[spotify] client_id`,
                 else `LAVATUI_SPOTIFY_CLIENT_ID`). `app/model/library.rs`
                 (`Library`): the client only while music is placed and a
@@ -450,7 +493,16 @@ the layout/visual contract.
                 (`Overlay::Library(ListView)`: playlists → tracks, add-to;
                 drawn by `ui/library.rs` on `picker::place` geometry), and
                 shuffle/repeat through the Web API player when allowed
-                (`patch_modes` → `Music::web_modes`). The saved login is
+                (`patch_modes` → `Music::web_modes`). Failed account and
+                page reads wait (`RETRY`, or Spotify's `Retry-After`); a
+                track page carries its opening and offset (`Want::Tracks`),
+                so a reply for an earlier opening changes nothing. The add
+                picker checks for duplicates first: `Request::PlaylistUris`
+                pages read ahead (`READ_AHEAD_PAGES`) into `Contents` per
+                playlist `snapshot_id` (a hiccup retried, the app's own add
+                kept), `Adding` / `Stage` (checking → "add it again?"),
+                given up after `CHECK_STALL` (not while the playlists
+                reload): the song is added anyway. The saved login is
                 never read at start on macOS (a Keychain read can prompt,
                 lava-1xk.38): `Web::locked` / `unlock` on the first library
                 key or the Spotify setup, after `KEYCHAIN_HEADS_UP`; the key
@@ -516,6 +568,10 @@ the layout/visual contract.
                 `clear`. `app/model/caches.rs` (`SavedFiles`): the
                 settings row `saved lyrics & covers` measures / clears
                 them on its own thread (no folders under `cfg(test)`).
+- `diag.rs`   — opt-in media diagnostics: `LAVATUI_MEDIA_LOG=<file>`;
+                `diag::note(|| line)` from any thread (a channel to a
+                writer thread; off: one atomic load), `diag::tag` hashes
+                ids so no song names land in the log.
 - `ui/`       — the only terminal-facing code. `layout.rs`: the pure
                 `layout(area, &LayoutInput) -> Layout` of design §1 (the lamp
                 rect; `panel` = `Stack` of side widgets in the best of
@@ -566,6 +622,7 @@ the layout/visual contract.
                 plus 12×5..300×90 × 35 lava/side/anchor mixes (no
                 overlap/overflow, lamp always there, lava limits, right chip)
                 + mockup-size checks + layout snapshots in `ui/snapshots/`.
+                The sweeps run on every core (`render_tests::by_column`).
 
 crossterm is used via ratatui's re-export (`ratatui::crossterm`) so the two
 never drift apart; there is no direct crossterm dependency.
@@ -575,7 +632,9 @@ never drift apart; there is no direct crossterm dependency.
 - **A render style**: `render/styles/<name>.rs` with `pub struct X;` and
   `impl LampStyle for X { const NAME; const GRID; fn draw(c, buf) }`;
   draw with `c.draw_half_blocks` (half-block pixels) or `c.for_each_cell`
-  (+ `cell::braille_dots` / `mark`), colours only via `c.theme`. Then
+  (+ `cell::braille_dots` / `mark`), colours only via `c.theme`. Moves
+  with `c.time` by itself? `const TIMED: bool = true` (a frozen lamp
+  then draws it afresh; a test checks the flag). Then
   `mod <name>;` and one `StyleEntry::of::<<name>::X>()` line in
   `styles::ALL`. The style tests (every style at every depth, snapshots,
   stays-in-area, time-purity) pick it up; run

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::library::{CHECK_STALL, KEYCHAIN_HEADS_UP, PENDING_FOR};
+use super::library::{CHECK_STALL, KEYCHAIN_HEADS_UP, PENDING_FOR, RETRY};
 use super::*;
 use crate::media::{Capabilities, Command, FakeSource, Snapshot, Status as Play, Track};
 use crate::spotify_web::fake::{FakeWeb, demo, track as web_track};
@@ -387,6 +387,88 @@ fn a_context_that_blocks_toggles_hides_them_but_keeps_the_login() {
     tick(&mut m, t0);
     assert!(toast(&m).contains("won't change"), "{}", toast(&m));
     assert_eq!(m.library.player.allowed, Some(true));
+}
+
+fn count(account: &FakeWeb, what: impl Fn(&Request) -> bool) -> usize {
+    account.state().requests.iter().filter(|r| what(r)).count()
+}
+
+/// lava-jop: a rate-limited account lookup waits as long as Spotify says
+/// before asking again (it used to ask every frame).
+#[test]
+fn a_rate_limited_account_lookup_waits_before_asking_again() {
+    let account = demo();
+    let wait = Duration::from_secs(60);
+    account.state().fail = Some(Error::RateLimited { retry_after: wait });
+    let (mut m, t0, _) = rig("me-rate-limited", &account);
+    let me = |a: &FakeWeb| count(a, |r| *r == Request::Me);
+    settle(&mut m, t0 + wait - Duration::from_secs(1));
+    assert_eq!(me(&account), 1);
+    settle(&mut m, t0 + wait);
+    assert_eq!(me(&account), 2);
+    assert!(m.library.me.is_some());
+}
+
+/// lava-jop: a playlist page that failed isn't asked for again every
+/// frame while the cursor sits at the end.
+#[test]
+fn a_failed_playlist_page_waits_before_asking_again() {
+    let account = demo();
+    let (mut m, t0, _) = rig("page-rate-limited", &account);
+    key(&mut m, t0, P::Playlists);
+    settle(&mut m, t0);
+    m.update(Action::Keep, t0);
+    settle(&mut m, t0);
+    let wait = Duration::from_secs(30);
+    account.state().fail = Some(Error::RateLimited { retry_after: wait });
+    let pages = |a: &FakeWeb| count(a, |r| matches!(r, Request::PlaylistTracks { .. }));
+    m.update(Action::Edge(true), t0);
+    settle(&mut m, t0);
+    let failed = pages(&account);
+    assert_eq!(failed, 2, "the first page, then the one that failed");
+    settle(&mut m, t0 + wait - Duration::from_secs(1));
+    m.update(Action::Edge(true), t0 + wait - Duration::from_secs(1));
+    assert_eq!(pages(&account), failed, "not every frame");
+    settle(&mut m, t0 + wait);
+    assert_eq!(pages(&account), failed + 1);
+    assert_eq!(m.library.open.as_ref().unwrap().tracks.items.len(), 60);
+}
+
+/// lava-jop (Codex review #7): a page asked for by an earlier opening of
+/// the same playlist changes nothing in the new one.
+#[test]
+fn a_page_for_an_earlier_opening_is_left_alone() {
+    let account = demo();
+    let (mut m, t0, _) = rig("stale-page", &account);
+    key(&mut m, t0, P::Playlists);
+    settle(&mut m, t0);
+    account.state().hold = true;
+    m.update(Action::Keep, t0);
+    m.update(Action::Back, t0);
+    m.update(Action::Keep, t0);
+    // The first opening's page lands while the second waits for its own.
+    account.release_one();
+    tick(&mut m, t0);
+    let open = m.library.open.as_ref().unwrap();
+    assert!(open.tracks.loading && !open.tracks.loaded);
+    assert!(open.tracks.items.is_empty());
+    account.release();
+    for _ in 0..5 {
+        tick(&mut m, t0);
+        m.update(Action::Edge(true), t0);
+    }
+    let open = m.library.open.as_ref().unwrap();
+    assert_eq!(open.tracks.items.len(), 60);
+    let offsets: Vec<u32> = account
+        .state()
+        .requests
+        .iter()
+        .filter_map(|r| match r {
+            Request::PlaylistTracks { offset, .. } => Some(*offset),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(offsets, [0, 0, 50], "each page of the new opening once");
 }
 
 #[test]
@@ -950,7 +1032,7 @@ fn windows_spotify_never_matches_a_state_from_before_the_track_changed() {
     assert_eq!(m.music.web_caps, Capabilities::NONE);
     // Once Spotify answers for this track, it is.
     settle(&mut m, t0);
-    assert_eq!(m.playing_uri().as_deref(), Some(PLAYING));
+    assert_eq!(m.playing_uri(), Some(PLAYING));
 }
 
 #[test]
@@ -1537,6 +1619,65 @@ fn a_failed_check_still_adds_and_says_so() {
     assert_eq!(account.state().tracks["mix"].len(), 61);
 }
 
+/// lava-jop: a hiccup (no network) reading a playlist is asked again a
+/// little later, not given up on for the session.
+#[test]
+fn a_check_that_failed_for_a_moment_is_asked_again() {
+    let account = demo();
+    account.state().fail_uris = Some(Error::Offline("no network".into()));
+    let (mut m, t0) = add_picker("check-hiccup", &account);
+    assert_eq!(m.list_row(ListKind::AddTo, 0).unwrap().detail, "60");
+    let failed = reads(&account);
+    account.state().fail_uris = None;
+    settle(&mut m, t0 + RETRY - Duration::from_millis(1));
+    assert_eq!(reads(&account), failed, "not every frame");
+    settle(&mut m, t0 + RETRY);
+    assert_eq!(m.list_row(ListKind::AddTo, 0).unwrap().detail, "✓ 60");
+    m.update(Action::Keep, t0 + RETRY);
+    assert_eq!(stage(&m), Some(super::Stage::Confirm));
+}
+
+/// lava-jop: an add to a playlist whose check failed doesn't carry the
+/// failure over to the playlist's new snapshot: it's read again.
+#[test]
+fn an_add_after_a_failed_check_reads_the_playlist_again() {
+    let account = demo();
+    account.state().fail_uris = Some(Error::Forbidden("no".into()));
+    let (mut m, t0) = add_picker("check-failed-add", &account);
+    m.update(Action::Keep, t0);
+    settle(&mut m, t0);
+    assert_eq!(
+        toast(&m),
+        "added to Lamplight Mix · couldn't check it first"
+    );
+    account.state().fail_uris = None;
+    let before = reads(&account);
+    key(&mut m, t0, P::AddToPlaylist);
+    settle(&mut m, t0);
+    assert!(reads(&account) > before, "read again");
+    assert_eq!(m.list_row(ListKind::AddTo, 0).unwrap().detail, "✓ 61");
+}
+
+/// lava-jop: the stall clock waits while the playlists are read again:
+/// what's known of the chosen one still decides.
+#[test]
+fn a_check_waiting_on_the_playlists_is_not_stalled() {
+    let account = demo();
+    let (mut m, t0) = add_picker("check-reload", &account);
+    m.update(Action::Close, t0);
+    account.state().hold = true;
+    key(&mut m, t0, P::AddToPlaylist);
+    assert!(m.library.playlists.loading);
+    m.update(Action::Keep, t0);
+    assert!(matches!(stage(&m), Some(super::Stage::Checking { .. })));
+    let late = t0 + CHECK_STALL * 2;
+    settle(&mut m, late);
+    assert_eq!(adds(&account), 0, "not added unchecked");
+    account.release();
+    settle(&mut m, late);
+    assert_eq!(stage(&m), Some(super::Stage::Confirm));
+}
+
 #[test]
 fn a_stalled_check_adds_anyway_and_enter_need_not_wait() {
     let account = demo();
@@ -1707,6 +1848,30 @@ fn the_demo_is_logged_in_to_a_made_up_account() {
     assert_eq!(m.settings.spotify.logged_in, saved);
 }
 
+#[test]
+fn the_demo_never_saves_spotify_settings() {
+    let (mut m, t0) = demo_model("demo-saves");
+    let path = temp_config("demo-saves");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "[spotify]\nlogged_in = true\n").unwrap();
+    m.store = Some(Store::new(Some(path.clone())));
+    m.file = m.store.as_mut().unwrap().load().settings;
+    // What the demo's Spotify page can change, plus one ordinary setting.
+    m.settings.spotify.client_id = "0123456789abcdef0123456789abcdef".into();
+    m.settings.spotify.store = crate::config::LoginStore::File;
+    m.settings.spotify.logged_in = false;
+    m.settings.lamp.heat = 1;
+    m.changed(t0);
+    m.save();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("logged_in = true"), "{text}");
+    assert!(
+        !text.contains("client_id") && !text.contains("store"),
+        "{text}"
+    );
+    assert!(text.contains("heat = 1"), "the rest is saved: {text}");
+}
+
 /// [`demo_model`] with the demo's player and account kept to look at.
 fn demo_rig(name: &str) -> (Model, Instant, FakeSource, FakeWeb) {
     let (mut m, t0) = demo_model(name);
@@ -1794,7 +1959,7 @@ fn the_demo_plays_from_the_browser_and_likes() {
     key(&mut m, t0, P::Like);
     settle(&mut m, t0);
     assert_eq!(m.liked(), Some(true));
-    let uri = m.playing_uri().unwrap();
+    let uri = m.playing_uri().unwrap().to_owned();
     assert!(account.state().liked.contains(&uri));
     key(&mut m, t0, P::Like);
     settle(&mut m, t0);

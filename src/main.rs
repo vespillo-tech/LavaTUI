@@ -12,14 +12,9 @@ mod dock;
 mod glyphs;
 mod graphics;
 mod lyrics;
-// Partly used so far: the music widget (lava-75z.2) reads it; play_uri&co are
-// for the library UI (lava-75z.5).
-#[allow(dead_code, unused_imports)]
 mod media;
 mod render;
 mod sim;
-// Not wired into the UI yet (lava-75z.5 does that).
-#[allow(dead_code)]
 mod spotify_web;
 mod theme;
 mod thread_qos;
@@ -88,4 +83,22 @@ fn main() -> ExitCode {
 fn fail(message: &str) -> ExitCode {
     eprintln!("lavatui: {message}");
     ExitCode::FAILURE
+}
+
+#[cfg(test)]
+mod tests {
+    /// The project part of the agent instructions is one text in two
+    /// files (each tool reads its own); the issue-tracker notes above it
+    /// are generated per tool and may differ.
+    #[test]
+    fn claude_md_and_agents_md_share_the_project_section() {
+        let project = |file: &'static str| {
+            let at = file.find("## Project: LavaTUI").expect("project section");
+            file[at..].replace("\r\n", "\n")
+        };
+        assert!(
+            project(include_str!("../CLAUDE.md")) == project(include_str!("../AGENTS.md")),
+            "CLAUDE.md and AGENTS.md differ from `## Project: LavaTUI` on: copy one over the other"
+        );
+    }
 }

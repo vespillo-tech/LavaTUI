@@ -12,7 +12,9 @@
 //! 10 big), a whole number of columns wide, at least two
 //! ([`block_side`]), so every
 //! block is the same size give or take one; each size's blocks are always
-//! bigger than the one before's, however small the cover.
+//! bigger than the one before's, however small the cover. A picture in
+//! pixels (kitty, iTerm2, sixel) has the same blocks ([`pixel_grid`]), so
+//! nothing moves when it takes over from the text cells.
 //!
 //! Quadrants and sextants split each cell's pixels in the two groups whose
 //! means lose the least (every split is tried: 8 or 32), one mean the
@@ -36,9 +38,14 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
-use crate::media::art::{Art, PIXEL_ART};
+use crate::media::art::Art;
 use crate::render::{quadrant, sextant};
 use crate::theme::{NEAR, Rgb, Theme};
+
+/// Pixel art's blocks across, about (the cover quality's small, medium
+/// and big pixels); fewer where the cover is too small for blocks of two
+/// columns.
+pub const PIXEL_ART: [u16; 3] = [32, 16, 10];
 
 /// How a cover is drawn in text cells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -71,6 +78,24 @@ pub fn block_side(mode: TextMode, cols: u16, translucent: bool) -> Option<usize>
     })
 }
 
+/// Pixel art in `mode` on a cover `cols × rows`: its blocks across and
+/// down. The text cells and the picture in pixels both use these. `None`
+/// for the sharp modes.
+pub fn pixel_grid(mode: TextMode, cols: u16, rows: u16, translucent: bool) -> Option<(u16, u16)> {
+    let side = block_side(mode, cols, translucent)?;
+    let (nx, ny) = grid((cols, rows), (side, translucent));
+    Some((nx as u16, ny as u16))
+}
+
+/// Blocks across and down on `cols × rows` cells for blocks `side`
+/// columns × `side` half rows (whole rows where `translucent`).
+fn grid((cols, rows): (u16, u16), (side, translucent): (usize, bool)) -> (usize, usize) {
+    let unit = if translucent { 2 } else { 1 };
+    let down = 2 * usize::from(rows) / unit;
+    let count = |len: usize, side: usize| ((len + side / 2) / side).max(1);
+    (count(usize::from(cols), side), count(down, side / unit))
+}
+
 /// One cell of a picture: the glyph, its ink and its background.
 type PictureCell = (char, Color, Color);
 
@@ -100,8 +125,7 @@ pub fn draw(
     if area.is_empty() || !theme.shows_images() {
         return;
     }
-    let key = (
-        source.to_owned(),
+    let rest = (
         area.width,
         area.height,
         mode,
@@ -109,9 +133,15 @@ pub fn draw(
         translucent,
     );
     CACHE.with_borrow_mut(|cache| {
-        if cache.key.as_ref() != Some(&key) {
+        // Compared before anything is copied: most frames it's the same.
+        let same = cache
+            .key
+            .as_ref()
+            .is_some_and(|(s, w, h, m, d, t)| s == source && (*w, *h, *m, *d, *t) == rest);
+        if !same {
             cache.cells = cells(art, area.width, area.height, (mode, translucent), theme);
-            cache.key = Some(key);
+            let (w, h, m, d, t) = rest;
+            cache.key = Some((source.to_owned(), w, h, m, d, t));
         }
         let w = usize::from(area.width);
         for (i, &(ch, fg, bg)) in cache.cells.iter().enumerate() {
@@ -196,8 +226,7 @@ fn blocks(
     // Down, in half rows, or in rows where a cell can show one colour.
     let unit = if translucent { 2 } else { 1 };
     let down = 2 * h / unit;
-    let count = |len: usize, side: usize| ((len + side / 2) / side).max(1);
-    let (nx, ny) = (count(w, side), count(down, side / unit));
+    let (nx, ny) = grid((cols, rows), (side, translucent));
     let px = art.scaled(nx as u16, ny as u16);
     let at = |x: usize, y: usize| px[(y * ny / down) * nx + x * nx / w];
     let mut out = Vec::with_capacity(w * h);
@@ -373,6 +402,44 @@ mod tests {
             "{sextant} {quadrant} {medium}"
         );
         assert!(small > medium && medium > big, "{small} {medium} {big}");
+    }
+
+    /// lava-jop: the text cells show exactly `pixel_grid`'s blocks, the
+    /// ones a picture in pixels is made with.
+    #[test]
+    fn text_cells_show_the_pixel_grid() {
+        let t = theme(ColorDepth::TrueColor);
+        // A different colour in every block, across and down.
+        let art = Art::from_fn(|x, y| Rgb((x * 2) as u8, (y * 2) as u8, 0));
+        let runs = |colors: &[Color]| 1 + colors.windows(2).filter(|p| p[0] != p[1]).count();
+        for translucent in [false, true] {
+            for cols in [10, 16, 24, 34, 64] {
+                let rows = cols / 2;
+                for level in 0..3 {
+                    let mode = TextMode::Pixels(level);
+                    let (nx, ny) = pixel_grid(mode, cols, rows, translucent).unwrap();
+                    let cells = cells(&art, cols, rows, (mode, translucent), &t);
+                    let top: Vec<Color> = cells[..usize::from(cols)].iter().map(|c| c.1).collect();
+                    // Down the first column, in half rows (whole rows where
+                    // every cell is one colour).
+                    let left: Vec<Color> = cells
+                        .chunks(usize::from(cols))
+                        .flat_map(|row| {
+                            let (ch, fg, bg) = row[0];
+                            let bottom = if ch == '▀' { bg } else { fg };
+                            if translucent {
+                                vec![fg]
+                            } else {
+                                vec![fg, bottom]
+                            }
+                        })
+                        .collect();
+                    let at = format!("{cols}x{rows} level {level} {translucent}");
+                    assert_eq!(runs(&top), usize::from(nx), "{at}");
+                    assert_eq!(runs(&left), usize::from(ny), "{at}");
+                }
+            }
+        }
     }
 
     /// Pixel art: about 32, 16 and 10 blocks across, whole columns, each
