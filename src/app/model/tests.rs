@@ -789,6 +789,19 @@ mod music {
     }
 
     #[test]
+    fn without_a_fake_no_real_player_is_reached() {
+        // lava-hek: no `connect_with`, so `Music::default`'s `media::detect`.
+        let (mut m, t0) = model("music-no-fake");
+        m.update(Action::Place("music"), t0);
+        tick(&mut m, t0);
+        let snapshot = m.music.snapshot.as_ref().expect("connected");
+        assert_eq!(
+            snapshot.status,
+            crate::media::Status::Unavailable(crate::media::Unavailable::NotRunning)
+        );
+    }
+
+    #[test]
     fn connects_while_placed_and_lets_go_when_off() {
         // This test requires a cover, regardless of the test runner's
         // TERM / NO_COLOR environment.

@@ -112,11 +112,31 @@ pub trait MediaSource: Send {
     }
 }
 
+/// How many times a test reached [`platform`]: always 0 (lava-hek).
+#[cfg(test)]
+static PLATFORM_STARTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// The media source for this platform: Spotify and Apple Music
 /// (AppleScript) on macOS, MPRIS on Linux, SMTC on Windows; elsewhere a source that is always
 /// `Unavailable(Unsupported)`. Starts the backend's worker thread; cheap to
 /// call, never blocks.
+///
+/// Under `cfg(test)` no real player is ever reached (lava-hek): a test
+/// that places the music, lyrics or cover widget without injecting a fake
+/// (`Music::connect_with`) gets a source that says no player is open, the
+/// same on every OS. The live tests (`#[ignore]`) build their backends
+/// directly.
 pub fn detect() -> Box<dyn MediaSource> {
+    if cfg!(test) {
+        return Box::new(Polled::unavailable(Unavailable::NotRunning));
+    }
+    platform()
+}
+
+/// The real backend [`detect`] starts outside tests.
+fn platform() -> Box<dyn MediaSource> {
+    #[cfg(test)]
+    PLATFORM_STARTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     #[cfg(target_os = "macos")]
     {
         Box::new(Polled::spawn(
@@ -501,6 +521,22 @@ mod tests {
             volume: 50,
             ..Snapshot::new(Status::Playing, now)
         }
+    }
+
+    #[test]
+    fn tests_never_start_a_real_player_backend() {
+        let source = detect();
+        assert_eq!(
+            source.snapshot().status,
+            Status::Unavailable(Unavailable::NotRunning)
+        );
+        assert_eq!(source.capabilities(), Capabilities::NONE);
+        source.send(Command::PlayPause); // goes nowhere
+        assert_eq!(
+            PLATFORM_STARTS.load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "a test reached the real media backend"
+        );
     }
 
     #[test]
