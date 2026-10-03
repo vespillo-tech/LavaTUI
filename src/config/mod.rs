@@ -135,6 +135,9 @@ pub struct Lyrics {
     /// Lyrics timing, in ms: positive shows them later, negative sooner
     /// (by ear: Bluetooth headphones play late). Lines and words alike.
     pub delay_ms: i32,
+    /// Word by word: `on`, `timed` (only lyrics that time each word) or
+    /// `off` (the whole line at once).
+    pub karaoke: crate::lyrics::Karaoke,
 }
 
 /// `lyrics.delay_ms`'s range, and the step the settings screen moves it by.
@@ -619,6 +622,22 @@ mod tests {
         assert!(Settings::parse("").unwrap().settings.input.mouse);
         let off = Settings::parse("[input]\nmouse = false\n").unwrap();
         assert!(!off.settings.input.mouse, "an explicit value is kept");
+    }
+
+    #[test]
+    fn word_by_word_reads_names_and_yes_no() {
+        use crate::lyrics::Karaoke;
+        let k = |text: &str| Settings::parse(text).unwrap().settings.lyrics.karaoke;
+        assert_eq!(k("[lyrics]\nkaraoke = \"timed\"\n"), Karaoke::Timed);
+        assert_eq!(k("[lyrics]\nkaraoke = \"off\"\n"), Karaoke::Off);
+        assert_eq!(k("[lyrics]\nkaraoke = false\n"), Karaoke::Off);
+        assert_eq!(k("[lyrics]\nkaraoke = true\n"), Karaoke::On);
+        assert_eq!(k(""), Karaoke::On);
+        let bad = Settings::parse("[lyrics]\nkaraoke = \"loud\"\n").unwrap();
+        assert_eq!(bad.ignored, ["lyrics.karaoke"]);
+        assert_eq!(bad.settings.lyrics.karaoke, Karaoke::On);
+        let text = toml::to_string(&Settings::default()).unwrap();
+        assert!(text.contains("karaoke = \"on\""), "{text}");
     }
 
     #[test]

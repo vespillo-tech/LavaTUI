@@ -420,7 +420,11 @@ the layout/visual contract.
                 position down over polls (each reading bounded by its
                 request and reply); polls every 1 s (paused 2 s), and at
                 once when the player says it changed (`Backend::listen` →
-                `Nudge`, then a re-read 300 ms on; events ≥ 250 ms apart):
+                `Nudge`; event polls ≥ 250 ms apart, one re-read 300 ms
+                after a burst's last, more while readings disagree (a
+                track held still before it plays, up to 3); reads asked
+                for before a command's
+                re-read aren't published, `settle_until`):
                 macOS `notify.rs` (a JXA `osascript` hearing Spotify's
                 distributed notification: they reach only a main-thread
                 run loop), MPRIS signals on the player path, SMTC
@@ -494,7 +498,9 @@ the layout/visual contract.
                 line), `sync.rs` (`Syncer`: extrapolated `Playback` →
                 `Cursor` line/progress + word being sung, 150 ms line /
                 50 ms word lead, small step back holds still, seek flag,
-                `next_change` for frozen-frame wakeups), `client.rs` (`Lrclib` over an `Http` trait: ureq in
+                `next_change` for frozen-frame wakeups; `Karaoke`:
+                `lyrics.karaoke` on / timed / off, word by word or the
+                whole line), `client.rs` (`Lrclib` over an `Http` trait: ureq in
                 the app, `client::tests::Mock` in tests; `/api/get` then
                 `/api/search`), `cache.rs` (JSON per track, negative
                 results too, TTLs, stale used offline), `worker.rs`

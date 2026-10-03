@@ -53,9 +53,9 @@
 
   ▸ spotify
     lyrics         off
+    word by word    on
     lyrics timing
     cover picture
-    cover size  medium
 
  ‹ not set up ›
 ── controls ──

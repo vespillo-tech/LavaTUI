@@ -56,6 +56,10 @@ pub trait Backend: Send + 'static {
     }
 }
 
+/// Re-reads after an event while readings still disagree (a track that
+/// starts a moment after it's announced settles within these).
+const FOLLOWUPS: u8 = 3;
+
 /// Polls brought on by change events are at least this far apart.
 const EVENT_GAP: Duration = Duration::from_millis(250);
 
@@ -184,6 +188,13 @@ impl Baseline {
         }
     }
 
+    /// Playing, on a window only one reading has set: where playback is
+    /// isn't confirmed yet (a track just started, a seek: Spotify holds
+    /// the new position still for a moment before it runs).
+    fn unsettled(&self) -> bool {
+        self.window.is_some() && !self.agreed
+    }
+
     /// Put `fresh` (asked for at `sent`) where the window says, after
     /// `previous` (what was published). Also keeps `previous`'s
     /// `Arc<Track>` when the track is the same, so the UI can tell "new
@@ -275,6 +286,7 @@ impl Polled {
             cadence,
             misses: 0,
             baseline: Baseline::new(Instant::now()),
+            settle_until: None,
         };
         let spawned = thread::Builder::new()
             .name("lavatui-media".into())
@@ -351,18 +363,31 @@ struct Worker<B> {
     /// Failed polls in a row (see [`GRACE`]).
     misses: u32,
     baseline: Baseline,
+    /// Reads asked for before this are stale (a command's effect not in
+    /// them yet) and aren't published: a change event the command itself
+    /// set off (Spotify announces our pause) can't undo it on screen.
+    settle_until: Option<Instant>,
 }
 
 impl<B: Backend> Worker<B> {
     fn run(mut self, nudge: Nudge) {
         // Kept until the worker ends; dropping it stops the listening.
         let _listening = self.backend.listen(nudge);
-        let mut next_poll = Instant::now();
-        // The last poll an event brought on, and an event held back.
+        // The next poll by the cadence; the last poll an event brought on;
+        // an event waiting for its poll (EVENT_GAP after that one); the
+        // re-read after_event after the last event of a burst.
+        let mut scheduled = Instant::now();
         let mut evented: Option<Instant> = None;
         let mut held = false;
+        let mut reread: Option<Instant> = None;
+        // Re-reads left while readings after an event disagree.
+        let mut followups = 0;
         loop {
-            let wait = next_poll.saturating_duration_since(Instant::now());
+            let gap = evented.filter(|_| held).map(|at| at + EVENT_GAP);
+            let due = [Some(scheduled), gap, reread].into_iter().flatten().min();
+            let wait = due.map_or(Duration::ZERO, |d| {
+                d.saturating_duration_since(Instant::now())
+            });
             let (batch, changed, stop) = match self.commands.recv_timeout(wait) {
                 Ok(first) => split(std::iter::once(first).chain(self.commands.try_iter())),
                 Err(RecvTimeoutError::Timeout) => (Vec::new(), false, false),
@@ -372,24 +397,41 @@ impl<B: Backend> Worker<B> {
                 return;
             }
             let now = Instant::now();
-            // An event polls at once, then once more after_event later;
-            // more events within EVENT_GAP of it (a player whose timeline
-            // ticks) are held back and folded into one poll at the gap.
-            let fresh = changed && batch.is_empty();
-            if fresh && evented.is_some_and(|at| now < at + EVENT_GAP) {
-                next_poll = next_poll.min(evented.map_or(now, |at| at + EVENT_GAP));
+            // An event polls at once; more within EVENT_GAP of that (a
+            // player whose timeline ticks) wait for one poll at the gap.
+            // The last of a burst gets a re-read after_event later (each
+            // event moves it), for a player that tells before its state
+            // reads the new way.
+            if changed {
+                reread = Some(now + self.cadence.after_event);
+                followups = FOLLOWUPS;
+            }
+            let event = changed && batch.is_empty();
+            if event && evented.is_some_and(|at| now < at + EVENT_GAP) {
                 held = true;
                 continue;
             }
-            if mem::take(&mut held) || fresh {
+            if event || (held && gap.is_some_and(|g| now >= g)) {
                 crate::diag::note(|| "player: change event".to_owned());
                 evented = Some(now);
+                held = false;
             }
-            let mut wait = self.turn(batch);
-            if fresh {
-                wait = wait.min(self.cadence.after_event);
+            let rereading = reread.is_some_and(|at| now >= at);
+            if rereading {
+                reread = None;
             }
-            next_poll = Instant::now() + wait;
+            scheduled = Instant::now() + self.turn(batch);
+            // After an event, until two readings agree on where playback
+            // is (a new track that starts a moment after it's announced),
+            // read again soon rather than at the cadence.
+            if (rereading || event)
+                && reread.is_none()
+                && followups > 0
+                && self.baseline.unsettled()
+            {
+                followups -= 1;
+                reread = Some(Instant::now() + self.cadence.after_event);
+            }
         }
     }
 
@@ -423,9 +465,16 @@ impl<B: Backend> Worker<B> {
         let mut wait = self.cadence.after(&fresh.status);
         if !batch.is_empty() {
             wait = wait.min(self.cadence.after_command);
+            self.settle_until = Some(sent + self.cadence.after_command);
         }
-        // Stale until the player catches up (see the module docs).
-        let settling = !batch.is_empty() && fresh.status.is_available();
+        // Stale until the player catches up (see the module docs): the
+        // command's own read, and any read asked for before its re-read.
+        let early = self.settle_until.filter(|&until| sent < until);
+        let settling = (!batch.is_empty() || early.is_some()) && fresh.status.is_available();
+        if let Some(until) = early.filter(|_| batch.is_empty()) {
+            // Keep the command's re-read where it was.
+            wait = wait.min(until.saturating_duration_since(Instant::now()));
+        }
         let capabilities = self.backend.capabilities();
         let mut state = lock(&self.state);
         state.capabilities = capabilities;
@@ -544,6 +593,7 @@ mod tests {
             cadence: Cadence::default(),
             misses: 0,
             baseline: Baseline::new(Instant::now()),
+            settle_until: None,
         };
         (handle, worker, log)
     }
@@ -567,18 +617,67 @@ mod tests {
     }
 
     /// A backend that hands its [`Nudge`] to the test and counts reads.
-    struct Evented(Arc<Mutex<Option<Nudge>>>, Arc<Mutex<Vec<Instant>>>);
+    /// Playing in real time from when it's made (or, with a `stall`
+    /// after its first read, held still until then, as Spotify holds a
+    /// track that has just started).
+    struct Evented(
+        Arc<Mutex<Option<Nudge>>>,
+        Arc<Mutex<Vec<Instant>>>,
+        Instant,
+        Option<Duration>,
+    );
+
+    impl Evented {
+        fn new(nudge: &Arc<Mutex<Option<Nudge>>>, reads: &Arc<Mutex<Vec<Instant>>>) -> Self {
+            Self(Arc::clone(nudge), Arc::clone(reads), Instant::now(), None)
+        }
+    }
 
     impl Backend for Evented {
         fn exchange(&mut self, _: &[Command]) -> Snapshot {
-            self.1.lock().unwrap().push(Instant::now());
-            playing("a", MS, Instant::now())
+            let now = Instant::now();
+            let mut reads = self.1.lock().unwrap();
+            reads.push(now);
+            let from = match self.3 {
+                Some(stall) => reads[0] + stall,
+                None => self.2,
+            };
+            playing("a", now.saturating_duration_since(from), now)
         }
 
         fn listen(&mut self, nudge: Nudge) -> Option<Box<dyn Send>> {
             *self.0.lock().unwrap() = Some(nudge);
             None
         }
+    }
+
+    #[test]
+    fn after_an_event_it_reads_again_until_readings_agree() {
+        // A track announced, then held at 0 for 250 ms before it plays.
+        let (nudge, reads) = (Arc::default(), Arc::default());
+        let mut backend = Evented::new(&nudge, &reads);
+        backend.3 = Some(MS * 250);
+        let slow = Cadence {
+            playing: Duration::from_secs(60),
+            after_event: MS * 100,
+            ..testing::fast()
+        };
+        let source = Polled::spawn(backend, slow);
+        let nudge = loop {
+            if let Some(n) = nudge.lock().unwrap().clone() {
+                break n;
+            }
+            thread::sleep(MS);
+        };
+        assert!(nudge.changed());
+        thread::sleep(MS * 700);
+        let n = reads.lock().unwrap().len();
+        // The first read, the event's, then re-reads until two agree
+        // (~100 ms apart, a few at most), not one more at the cadence.
+        assert!((4..=6).contains(&n), "{n} reads");
+        let at = source.snapshot().position_at(Instant::now());
+        let truth = Instant::now().saturating_duration_since(reads.lock().unwrap()[0] + MS * 250);
+        assert!(at.abs_diff(truth) < MS * 30, "{at:?} vs {truth:?}");
     }
 
     #[test]
@@ -589,7 +688,7 @@ mod tests {
             after_event: MS * 50,
             ..testing::fast()
         };
-        let source = Polled::spawn(Evented(Arc::clone(&nudge), Arc::clone(&reads)), slow);
+        let source = Polled::spawn(Evented::new(&nudge, &reads), slow);
         let count = || reads.lock().unwrap().len();
         let wait = |n: usize| {
             let deadline = Instant::now() + Duration::from_secs(5);
@@ -752,9 +851,38 @@ mod tests {
         worker.turn(batch);
         let snap = handle.snapshot();
         assert_eq!((snap.status, snap.shuffle), (Status::Paused, true));
+        // The follow-up read, once the command has had time to settle.
+        thread::sleep(Cadence::default().after_command);
         worker.turn(Vec::new());
         let snap = handle.snapshot();
         assert_eq!((snap.status, snap.shuffle), (Status::Paused, false));
+    }
+
+    #[test]
+    fn a_read_before_a_command_settles_does_not_undo_it() {
+        // Spotify announces our own pause at once, but reads "playing" for
+        // ~200 ms more: the read that announcement brings on is stale.
+        let paused_after = Instant::now() + Cadence::default().after_command;
+        let (handle, mut worker, _) = worker(move |_| {
+            let mut snap = playing("a", MS * 5000, Instant::now());
+            if Instant::now() >= paused_after {
+                snap.status = Status::Paused;
+            }
+            snap
+        });
+        worker.turn(Vec::new());
+        handle.play_pause();
+        worker.turn(drain(&worker));
+        // The change event's poll, right away: not published.
+        let wait = worker.turn(Vec::new());
+        assert_eq!(handle.snapshot().status, Status::Paused, "not undone");
+        assert!(
+            wait <= Cadence::default().after_command,
+            "the re-read keeps its time"
+        );
+        thread::sleep(Cadence::default().after_command);
+        worker.turn(Vec::new());
+        assert_eq!(handle.snapshot().status, Status::Paused, "confirmed");
     }
 
     #[test]

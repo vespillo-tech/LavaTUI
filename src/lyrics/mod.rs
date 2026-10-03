@@ -28,6 +28,67 @@ pub use lrc::Synced;
 pub use sync::Syncer;
 pub use worker::LyricsService;
 
+/// Whether the current line lights up word by word (`lyrics.karaoke`).
+/// Word times are exact only when the lyrics have them (enhanced LRC,
+/// rare); otherwise they're estimated ([`words`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Karaoke {
+    /// Every synced line, word by word.
+    #[default]
+    On,
+    /// Only lines whose lyrics time each word.
+    Timed,
+    /// The whole line at once (line timing as ever).
+    Off,
+}
+
+impl Karaoke {
+    pub const ALL: [Self; 3] = [Self::On, Self::Timed, Self::Off];
+
+    /// Whether `line` is shown word by word.
+    pub fn shows(self, line: &lrc::Line) -> bool {
+        match self {
+            Self::On => true,
+            Self::Timed => line.exact,
+            Self::Off => false,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::On => "on",
+            Self::Timed => "timed",
+            Self::Off => "off",
+        }
+    }
+}
+
+impl serde::Serialize for Karaoke {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(self.name())
+    }
+}
+
+/// `"on"`, `"timed"`, `"off"`, or `true` / `false` (on / off).
+impl<'de> serde::Deserialize<'de> for Karaoke {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(serde::Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Bool(bool),
+            Name(String),
+        }
+        match Raw::deserialize(d)? {
+            Raw::Bool(true) => Ok(Self::On),
+            Raw::Bool(false) => Ok(Self::Off),
+            Raw::Name(name) => Self::ALL
+                .into_iter()
+                .find(|k| k.name() == name)
+                .ok_or_else(|| serde::de::Error::custom("on, timed or off")),
+        }
+    }
+}
+
 /// What the media source knows about the playing track: the lookup key.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Track {

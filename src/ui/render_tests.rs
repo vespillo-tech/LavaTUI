@@ -608,6 +608,63 @@ fn karaoke(m: &Model, buf: &Buffer, starts: &str) -> String {
     panic!("no row starts with {starts:?}");
 }
 
+/// Every row of `buf` as text.
+fn screen_text(buf: &Buffer) -> String {
+    (0..buf.area.height)
+        .map(|y| {
+            (0..buf.area.width)
+                .map(|x| buf[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn performance_info_reads_out_the_lyrics_timing() {
+    const TAGGED: &str = "[00:05.00]<00:05.00>Wax <00:05.40>rises <00:06.20>slowly \
+        <00:07.00>up <00:07.30>to <00:07.60>the <00:07.80>light<00:08.60>\\n[00:10.00]Cooling";
+    let (mut m, t) = model(160, 40, 7);
+    lyrics_lrc(&mut m, t, 1, 6, TAGGED);
+    m.update(Action::DebugHud, t);
+    m.toast = None;
+    let buf = draw(&m, 160, 40);
+    let text = screen_text(&buf);
+    assert!(text.contains("♪ 0:06.0 (read 0.0 s ago)"), "{text}");
+    assert!(
+        text.contains("line 1/2 0:05.0 sung 0:08.6 next 0:10.0"),
+        "{text}"
+    );
+    assert!(text.contains("word 2/7 from the file"), "{text}");
+    // Off with the performance info.
+    m.update(Action::DebugHud, t);
+    m.toast = None;
+    let text = screen_text(&draw(&m, 160, 40));
+    assert!(!text.contains("♪ 0:06"), "{text}");
+}
+
+#[test]
+fn word_by_word_off_lights_the_whole_line() {
+    use crate::lyrics::Karaoke;
+    const TAGGED: &str = "[00:05.00]<00:05.00>Wax <00:05.40>rises <00:06.20>slowly \
+        <00:07.00>up <00:07.30>to <00:07.60>the <00:07.80>light<00:08.60>\\n[00:10.00]Cooling";
+    let shown = |mode: Karaoke, lrc: &str, secs: u64| {
+        let (mut m, t) = model(160, 40, 7);
+        m.settings.lyrics.karaoke = mode;
+        lyrics_lrc(&mut m, t, 1, secs, lrc);
+        let buf = draw(&m, 160, 40);
+        karaoke(&m, &buf, "Wax rises")
+    };
+    // Off: the whole current line bold, mid-word or not.
+    assert!(shown(Karaoke::Off, TAGGED, 6).ends_with("TTT TTTTT TTTTTT TT TT TTT TTTTT"));
+    // Only when the lyrics time words: these do, word by word…
+    assert!(shown(Karaoke::Timed, TAGGED, 6).ends_with("TTT AAAAA dddddd dd dd ddd ddddd"));
+    // …the line-timed song doesn't: the whole line.
+    let line_timed = shown(Karaoke::Timed, LRC, 7);
+    let marks = line_timed.lines().nth(1).unwrap();
+    assert!(marks.chars().all(|c| c == 'T' || c == ' '), "{line_timed}");
+}
+
 #[test]
 fn lyrics_highlight_the_word_being_sung() {
     // Word tags from the source: exact.
