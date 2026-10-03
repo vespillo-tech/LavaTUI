@@ -617,7 +617,14 @@ Inset by the side margin (§1.3) on each side.
   becomes `‖` and the text says `frozen`.
 * **Centre:** empty, unless debug HUD (`d`) is on: `60 fps · 2.1 ms · 412k
   px` in `dim` (the whole readout turns `wax_hot` while adaptive quality
-  is active or the frame takes > 80 % of its budget, §7).
+  is active or the frame takes > 80 % of its budget, §7). While synced
+  lyrics play, the toast row above it (when no toast or guide is there)
+  reads out their timing in `dim`, cut to whole words: `♪ 1:23.4 (read
+  0.4 s ago) · line 12/48 1:21.0 sung 1:24.2 next 1:25.5 · word 3/8
+  estimated · timing +0 ms` (the position after *lyrics timing*, how old
+  the player's last reading is, the line's start / sung-by / next times,
+  the word and whether its time is the file's or estimated), so what's
+  seen can be told exactly.
 * **Right:** hints in `dim`, each formatted `key label` with the key in
   `text`. The full list in display order is `s style  c clock  p colours
   m lamp only  Space timer  , settings  ? help`: familiar key names
@@ -1333,11 +1340,17 @@ Otherwise estimated, and it is an estimate: words get time by their
 syllables (vowel groups, a little more for long words; one per
 character in Chinese, Japanese and Korean, where each character is a
 word here), punctuation holds a word (a comma 0.5, a full stop 0.8
-syllables), and the line is sung over the time to the next line less a
-breath (12 %, at most 0.6 s), but no slower than 1.5× the song's own
-pace (its median seconds per syllable), so a line before a long break
-isn't drawn out across it. A line is never still being sung when the
-next one starts. Partly tagged lines keep their tags and estimate in
+syllables), and the line is sung at the song's own quick pace (the
+seconds per syllable of its quicker lines, the 35th percentile, which
+run on into the next with little rest), or over the time to the next
+line less a breath (12 %, at most 0.6 s) if that's shorter. Singers
+mostly sing a line and then rest; spreading the words over the whole gap
+(as v1.2's first karaoke did, up to 1.5× the median pace) put the
+highlight 2+ words behind the voice on 28 % of lines (lava-75z.30,
+modelled on the 43 songs of a real lyrics cache), now 2 %. A singer who
+draws a line out finds the highlight a little ahead instead (2+ words on
+7 % of lines), which reads as reading ahead, not as lag. A line is never
+still being sung when the next one starts. Partly tagged lines keep their tags and estimate in
 between.
 
 **Never cut off** (lava-uqi). The line being sung always shows

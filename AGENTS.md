@@ -420,7 +420,9 @@ the layout/visual contract.
                 position down over polls (each reading bounded by its
                 request and reply); polls every 1 s (paused 2 s), and at
                 once when the player says it changed (`Backend::listen` →
-                `Nudge`, then a re-read 300 ms on; events ≥ 250 ms apart):
+                `Nudge`; event polls ≥ 250 ms apart, one re-read 300 ms
+                after a burst's last; reads asked for before a command's
+                re-read aren't published, `settle_until`):
                 macOS `notify.rs` (a JXA `osascript` hearing Spotify's
                 distributed notification: they reach only a main-thread
                 run loop), MPRIS signals on the player path, SMTC

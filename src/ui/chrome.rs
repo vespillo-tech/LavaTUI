@@ -271,6 +271,22 @@ pub fn draw_toast(buf: &mut Buffer, r: Rect, text: &str, toast: &Toast, model: &
     buf.set_string(r.x, r.y, text, style);
 }
 
+/// The lyrics' timing readout ([`Model::lyrics_readout`]) in the toast
+/// row `r` while the performance info is on and no toast is showing:
+/// centred, cut to whole words, dim.
+pub fn draw_lyrics_readout(buf: &mut Buffer, r: Rect, model: &Model) {
+    let Some(text) = model.lyrics_readout() else {
+        return;
+    };
+    let Some(text) = fit_words(&text, usize::from(r.width).saturating_sub(2)) else {
+        return;
+    };
+    let w = text.chars().count() as u16;
+    let x = r.x + r.width.saturating_sub(w) / 2;
+    let style = model.theme.text(Role::Dim).bg(super::background(model));
+    buf.set_string(x, r.y, &text, style);
+}
+
 /// `text` cut down to whole words (and no dangling `·`) within `width`.
 pub fn fit_words(text: &str, width: usize) -> Option<String> {
     let mut words: Vec<&str> = text.split(' ').collect();

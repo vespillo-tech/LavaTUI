@@ -165,13 +165,9 @@ impl LyricsState {
             });
         }
 
-        let shift = Duration::from_millis(u64::from(delay_ms.unsigned_abs()));
+        self.syncer.delay_ms = delay_ms;
         let playback = Playback {
-            position: if delay_ms >= 0 {
-                snap.position.saturating_sub(shift)
-            } else {
-                snap.position + shift
-            },
+            position: snap.position,
             sampled_at: snap.sampled_at,
             playing: snap.status == Status::Playing,
         };
@@ -217,7 +213,65 @@ fn sizing(lyrics: &Lyrics) -> dock::LyricsSizing {
     }
 }
 
+/// `m:ss.s`.
+fn clock(d: Duration) -> String {
+    let t = d.as_secs_f64();
+    format!("{}:{:04.1}", (t / 60.0) as u64, t % 60.0)
+}
+
 impl Model {
+    /// The lyrics' timing in numbers, for the performance info (`d`) while
+    /// synced lyrics play, so what's seen can be told exactly: where the
+    /// player is (after lyrics timing), how old its last reading is, the
+    /// line's start, sung-by and next times, the word, and whether word
+    /// times are the file's or estimated.
+    /// `♪ 1:23.4 (read 0.4 s ago) · line 12/48 1:21.0 sung 1:24.2 next 1:25.5 · word 3/8 estimated · timing +0 ms`
+    pub fn lyrics_readout(&self) -> Option<String> {
+        let synced = self.lyrics.synced()?;
+        let cursor = self.lyrics.cursor?;
+        let snap = self.music.snapshot.as_ref()?;
+        let syncer = &self.lyrics.syncer;
+        let at = cursor.position.saturating_sub(syncer.lead);
+        let age = self.now.saturating_duration_since(snap.sampled_at);
+        let mut out = format!("♪ {} (read {:.1} s ago)", clock(at), age.as_secs_f64());
+        match cursor.index.and_then(|i| Some((i, synced.lines.get(i)?))) {
+            Some((i, line)) => {
+                let next = synced
+                    .lines
+                    .get(i + 1)
+                    .map_or(String::new(), |n| format!(" next {}", clock(n.at)));
+                out += &format!(
+                    " · line {}/{} {} sung {}{next}",
+                    i + 1,
+                    synced.lines.len(),
+                    clock(line.at),
+                    clock(line.end)
+                );
+                if !line.words.is_empty() {
+                    let word = cursor.word.map_or_else(
+                        || {
+                            if cursor.sung == 0 {
+                                "-".to_owned()
+                            } else {
+                                "done".to_owned()
+                            }
+                        },
+                        |w| (w + 1).to_string(),
+                    );
+                    let how = if line.exact {
+                        "from the file"
+                    } else {
+                        "estimated"
+                    };
+                    out += &format!(" · word {word}/{} {how}", line.words.len());
+                }
+            }
+            None => out += " · before the first line",
+        }
+        out += &format!(" · timing {:+} ms", syncer.delay_ms);
+        Some(out)
+    }
+
     /// Whether the lyrics widget is placed (lookups are on).
     pub fn lyrics_on(&self) -> bool {
         self.settings.dock.place(&dock::Lyrics) != Place::Off

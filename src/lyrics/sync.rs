@@ -73,6 +73,10 @@ pub struct Syncer {
     pub lead: Duration,
     /// How early words light up ([`WORD_LEAD`]).
     pub word_lead: Duration,
+    /// The lyrics timing setting: this many ms later than the player's
+    /// position (sooner if negative), applied to the extrapolated
+    /// position, so it holds from the first moment of a song.
+    pub delay_ms: i32,
     last: Option<Last>,
 }
 
@@ -95,6 +99,7 @@ impl Syncer {
         Self {
             lead,
             word_lead,
+            delay_ms: 0,
             last: None,
         }
     }
@@ -111,7 +116,13 @@ impl Syncer {
         playback: &Playback,
         now: Instant,
     ) -> Cursor {
+        let shift = Duration::from_millis(u64::from(self.delay_ms.unsigned_abs()));
         let mut base = playback.position_at(now);
+        base = if self.delay_ms >= 0 {
+            base.saturating_sub(shift)
+        } else {
+            base + shift
+        };
         let seeked = self.last.is_some_and(|last| {
             let expected = if last.playing {
                 last.position + now.saturating_duration_since(last.at)
@@ -321,6 +332,28 @@ mod tests {
         let on = s.cursor(&l, None, &c.playing(9.9, 1.15), c.t(1.4));
         assert_eq!(on.index, Some(1));
         assert!(on.position > ahead.position);
+    }
+
+    #[test]
+    fn the_timing_setting_moves_the_extrapolated_position() {
+        let l = lyrics();
+        let c = clock();
+        // A reading at 0.1 s, the very start of a song; lyrics 0.5 s later.
+        let p = c.playing(0.1, 0.0);
+        let mut s = Syncer::new(Duration::ZERO, Duration::ZERO);
+        s.delay_ms = 500;
+        // 5.4 s on, the player is at 5.5 s: the lyrics show 5.0 s.
+        let cur = s.cursor(&l, None, &p, c.t(5.4));
+        assert_eq!(cur.position, secs(5.0));
+        assert_eq!(cur.index, Some(0), "line one starts at 5 s");
+        // Sooner: 0.5 s ahead of the player.
+        let mut s = Syncer::new(Duration::ZERO, Duration::ZERO);
+        s.delay_ms = -500;
+        assert_eq!(s.cursor(&l, None, &p, c.t(4.4)).position, secs(5.0));
+        // Never before the song's start.
+        let mut s = Syncer::new(Duration::ZERO, Duration::ZERO);
+        s.delay_ms = 1000;
+        assert_eq!(s.cursor(&l, None, &p, c.t(0.2)).position, Duration::ZERO);
     }
 
     #[test]

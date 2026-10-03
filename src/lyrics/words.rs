@@ -13,11 +13,16 @@
 //!   here (the unit the highlight moves by).
 //! - **Pauses**: punctuation after a word holds it a little longer (a
 //!   comma less than a full stop).
-//! - **Sung length**: the time to the next line, less a short breath
-//!   ([`TAIL`]), but never more than [`STRETCH`] times what the song's own
-//!   pace ([`pace`]) gives the line's weight, so a line before a long
-//!   instrumental break isn't drawn out over the break. A line is never
-//!   still being sung when the next one starts.
+//! - **Sung length**: what the song's own quick pace ([`pace`]: its
+//!   quicker lines' seconds per unit of weight) gives the line's weight,
+//!   or the time to the next line less a short breath ([`TAIL`]) if
+//!   that's shorter. Singers mostly sing a line and then rest, so a line
+//!   isn't spread over its whole gap: spreading it made the highlight
+//!   trail the voice by 2+ words on 28 % of lines (lava-75z.30, measured
+//!   on the songs in a real cache), now 2 %; a singer who does draw a
+//!   line out finds the highlight a little ahead instead (2+ words on
+//!   7 %), which reads as reading ahead rather than as lag. A line is
+//!   never still being sung when the next one starts.
 //!
 //! Partly tagged lines keep their tags and estimate between them.
 
@@ -46,15 +51,15 @@ pub struct Tag {
 const TAIL_SHARE: f32 = 0.12;
 /// …at most this long.
 const TAIL: f32 = 0.6;
-/// A line is sung over at most this many times its weight at the song's
-/// pace.
-const STRETCH: f32 = 1.5;
 /// The song's pace (seconds per unit of weight) is kept within these.
 const PACE: (f32, f32) = (0.12, 0.9);
 /// The pace when a song has too few lines to tell.
 const DEFAULT_PACE: f32 = 0.35;
 /// Lines longer than this (to the next) don't count towards the pace.
 const PACE_SPAN: f32 = 12.0;
+/// Which of a song's lines (by seconds per unit of weight, quickest
+/// first) set its pace: the quicker ones, sung with little rest after.
+const PACE_RANK: f32 = 0.35;
 
 /// A word's place in the line's text, and how long it takes to sing.
 #[derive(Clone, Copy, Debug)]
@@ -205,8 +210,9 @@ pub struct Timing<'a> {
     pub tags: &'a [Tag],
 }
 
-/// The song's pace: seconds per unit of weight on a typical line, from
-/// lines that run straight into the next.
+/// The song's pace: seconds per unit of weight as it's sung, from its
+/// quicker lines (the [`PACE_RANK`] one), which run on into the next with
+/// little rest.
 pub fn pace(lines: &[Timing]) -> f32 {
     let mut paces: Vec<f32> = lines
         .iter()
@@ -220,7 +226,8 @@ pub fn pace(lines: &[Timing]) -> f32 {
         return DEFAULT_PACE;
     }
     paces.sort_by(f32::total_cmp);
-    paces[paces.len() / 2].clamp(PACE.0, PACE.1)
+    let at = ((paces.len() - 1) as f32 * PACE_RANK).round() as usize;
+    paces[at].clamp(PACE.0, PACE.1)
 }
 
 /// The line's words with their start times, when the singing ends, and
@@ -251,7 +258,7 @@ pub fn time(line: &Timing, pace: f32) -> (Vec<Word>, Duration, bool) {
     let tail = |room: f32| (room * TAIL_SHARE).min(TAIL);
     let weights: Vec<f32> = toks.iter().map(|t| t.weight).collect();
     // The end: tagged, else the last tag plus the rest at the song's pace,
-    // stretched to fill the room (less a breath) up to `STRETCH`.
+    // sooner if the room (less a breath) is shorter.
     let last_known = (0..toks.len())
         .rev()
         .find(|&i| known[i].is_some())
@@ -260,7 +267,7 @@ pub fn time(line: &Timing, pace: f32) -> (Vec<Word>, Duration, bool) {
         let from = known[last_known].unwrap_or(0.0);
         let rest = total(&toks[last_known..]);
         match room {
-            Some(room) => (room - tail(room)).min(from + rest * pace * STRETCH),
+            Some(room) => (room - tail(room)).min(from + rest * pace),
             None => from + rest * pace,
         }
     });
@@ -521,6 +528,36 @@ mod tests {
         let l = line("aa bb cc dd", 0.0, Some(4.0), &tags);
         let (words, end, _) = time(&l, 0.4);
         check(&words, end, &l);
+    }
+
+    #[test]
+    fn pace_comes_from_the_quicker_lines() {
+        // Same words; most lines run on (2 s), some rest after (5 s, 9 s).
+        let spans = [2.0, 2.0, 2.0, 2.0, 2.0, 5.0, 5.0, 9.0, 9.0];
+        let mut at = 0.0;
+        let lines: Vec<Timing> = spans
+            .iter()
+            .map(|&span| {
+                let l = line("one two three four", at, Some(at + span), &[]);
+                at += span;
+                l
+            })
+            .collect();
+        let p = pace(&lines);
+        assert!((0.4..0.6).contains(&p), "the 2 s lines' pace: {p}");
+    }
+
+    #[test]
+    fn a_line_followed_by_a_rest_is_sung_at_the_songs_pace() {
+        // Sung in ~2 s, then 6 s of rest before the next line: the
+        // highlight is through the line by about 2 s, not dragging its
+        // words across the rest (which put it words behind the voice).
+        let l = line("one two three four", 10.0, Some(18.0), &[]);
+        let (words, end, _) = time(&l, 0.5);
+        check(&words, end, &l);
+        let sung = (end - l.at).as_secs_f32();
+        assert!((1.8..2.4).contains(&sung), "{sung}");
+        assert!(words[3].at - l.at < secs(2.0), "{words:?}");
     }
 
     #[test]
