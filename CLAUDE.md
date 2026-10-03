@@ -141,8 +141,8 @@ the layout/visual contract.
                 `--palette`, `--color`, `--seed`, `--config`, hidden
                 `--frames`, `--trace`, `--panic-after`, `--demo`) →
                 `config::Session` (session-only overrides).
-- `demo.rs`   — `--demo`: invented songs (`FakeSource`), abstract covers
-                drawn as PNG and `art::stash`ed, invented synced lyrics
+- `demo.rs`   — `--demo`: invented songs (`FakeSource`), an original
+                cover per album (`assets/demo/`, `art::stash`ed), invented synced lyrics
                 from a canned LRCLIB (`Canned`, no cache); `Model::new`
                 injects them (`Music::connect_with`,
                 `LyricsState::start_with`). The Spotify library is a

@@ -1,8 +1,9 @@
 //! `--demo` (hidden): a made-up player for screenshots and the README
 //! demo, so no real song, cover or lyric ever lands in a committed image.
 //!
-//! Five invented tracks by invented artists, sharing one original cover
-//! embedded here (handed to the art worker through [`art::stash`], so nothing
+//! Five invented tracks by invented artists, with an original cover per
+//! album embedded here (Heat Rises: `suspended-melt.jpg`, Lamplight:
+//! `waxwood-hymns.jpg`; handed to the art worker through [`art::stash`], so nothing
 //! is downloaded) and, for three of them, invented synced lyrics served by
 //! a canned LRCLIB ([`Canned`]: nothing goes to lrclib.net and nothing is
 //! cached). The last two show the lyrics widget's fallbacks: LRCLIB marks
@@ -98,7 +99,7 @@ const SONGS: &[Song] = &[
         artist: "Wax and Wane",
         album: "Lamplight",
         secs: 402,
-        cover: include_bytes!("../assets/demo/suspended-melt.jpg"),
+        cover: include_bytes!("../assets/demo/waxwood-hymns.jpg"),
         kind: Kind::Sung,
         words: &[
             "Late at night the room is blue",
@@ -126,14 +127,14 @@ const SONGS: &[Song] = &[
         artist: "Wax and Wane",
         album: "Lamplight",
         secs: 196,
-        cover: include_bytes!("../assets/demo/suspended-melt.jpg"),
+        cover: include_bytes!("../assets/demo/waxwood-hymns.jpg"),
         kind: Kind::Missing,
         words: &[],
     },
 ];
 
-/// Songs only the made-up account has, after [`SONGS`] (the same cover,
-/// no lyrics): title, artist, album, length in seconds.
+/// Songs only the made-up account has, after [`SONGS`] (their album's
+/// cover, else Heat Rises'; no lyrics): title, artist, album, length in seconds.
 const MORE: &[(&str, &str, &str, u64)] = &[
     ("Lamp Left On", "Wax and Wane", "Lamplight", 233),
     ("Amber Drift", "The Paraffins", "Heat Rises", 205),
@@ -164,7 +165,13 @@ const PLAYLISTS: &[(&str, &str, bool, &[&str])] = &[
         "Slow Sunday",
         ME,
         false,
-        &["Lamp Left On", "Convection", "Blob Merge", "Tidal Wax"],
+        &[
+            "Lamp Left On",
+            "Convection",
+            "Blob Merge",
+            "Tidal Wax",
+            "Long Cooldown",
+        ],
     ),
     (
         "Pomodoro Focus",
@@ -176,6 +183,7 @@ const PLAYLISTS: &[(&str, &str, bool, &[&str])] = &[
             "Little Blob, Big Room",
             "Tidal Wax",
             "Lamp Left On",
+            "Bare Wax",
         ],
     ),
     (
@@ -234,9 +242,13 @@ fn index(title: &str) -> usize {
         .unwrap_or_else(|| panic!("no demo song {title:?}"))
 }
 
-/// Every song as the player has it (the same cover for all).
+/// Every song as the player has it: its album's cover where a demo song
+/// is on that album, else the first song's.
 fn player_tracks() -> Vec<Track> {
-    let cover = art::stash(SONGS[0].cover.to_vec()).unwrap_or_default();
+    let cover = |album: &str| {
+        let song = SONGS.iter().find(|s| s.album == album).unwrap_or(&SONGS[0]);
+        art::stash(song.cover.to_vec()).unwrap_or_default()
+    };
     tunes()
         .enumerate()
         .map(|(n, tune)| Track {
@@ -246,7 +258,7 @@ fn player_tracks() -> Vec<Track> {
             artist: tune.artist.into(),
             album: tune.album.into(),
             duration: Duration::from_secs(tune.secs),
-            artwork_url: cover.clone(),
+            artwork_url: cover(tune.album),
         })
         .collect()
 }
@@ -409,6 +421,20 @@ mod tests {
             duration: None,
         };
         assert_eq!(client.fetch(&other), Ok(None));
+    }
+
+    #[test]
+    fn each_album_has_its_own_cover() {
+        let tracks = player_tracks();
+        let cover = |name: &str| {
+            let track = tracks.iter().find(|t| t.name == name).expect(name);
+            track.artwork_url.clone()
+        };
+        assert_eq!(cover("Slow Rise"), cover("Blob Merge"));
+        assert_eq!(cover("Warm Light Falling"), cover("Bare Wax"));
+        assert_eq!(cover("Warm Light Falling"), cover("Convection"));
+        assert_ne!(cover("Slow Rise"), cover("Warm Light Falling"));
+        assert_eq!(cover("Slow Rise"), cover("Tidal Wax"), "other albums");
     }
 
     #[test]
