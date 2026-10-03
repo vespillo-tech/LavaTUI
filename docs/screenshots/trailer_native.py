@@ -23,7 +23,10 @@ of every cut.
     /tmp/v/bin/python docs/screenshots/trailer_native.py record B --output /tmp/native-b
     /tmp/v/bin/python docs/screenshots/trailer_native.py record C --output /tmp/native-c
     /tmp/v/bin/python docs/screenshots/trailer_native.py film /tmp/native-b B
-    /tmp/v/bin/python docs/screenshots/trailer_native.py small /tmp/native-b B --width 660
+    # The README's demo.gif: take C, its frames at 800 px, 128 colours a part
+    /tmp/v/bin/python docs/screenshots/trailer_native.py film /tmp/native-c C800 --width 800
+    /tmp/v/bin/python docs/screenshots/trailer_native.py small /tmp/native-c C800 --width 800 \\
+        --colours 128 --out docs/screenshots/demo.gif
 
 `record` opens a Ghostty window and needs it in front, hands off, for
 about five minutes (`--takes` and `--secs` for a short pilot). The full
@@ -486,11 +489,13 @@ def main():
     f.add_argument("--width", type=int, default=900)
     f.add_argument("--mp4-only", action="store_true", help="just the 60 fps MP4 (e.g. a README video)")
     f.add_argument("--crf", type=int, default=16, help="x264 quality (lower is better and bigger)")
-    sm = sub.add_parser("small", help="a smaller GIF of a film's frames (B: 660, C: 560 fit 5 MB)")
+    sm = sub.add_parser("small", help="a GIF of a film's frames, sized to a budget "
+                        "(the README's demo.gif: C at --width 800 --colours 128, about 10.6 MB)")
     sm.add_argument("output", type=Path)
     sm.add_argument("label")
     sm.add_argument("--width", type=int, required=True)
     sm.add_argument("--colours", type=int, default=64)
+    sm.add_argument("--out", type=Path, help="where to write it (default <output>/<label>-<width>.gif)")
     a = p.parse_args()
     if a.cmd == "record":
         if any(c.isspace() for c in str(a.output.resolve())):
@@ -498,7 +503,7 @@ def main():
         record(a.variant, a.output.resolve(), a.takes, a.secs)
     elif a.cmd == "small":
         out = a.output.resolve()
-        small_gif(out / f"{a.label}-frames", out / f"{a.label}-{a.width}.gif", a.width, a.colours)
+        small_gif(out / f"{a.label}-frames", a.out or out / f"{a.label}-{a.width}.gif", a.width, a.colours)
     else:
         film(a.output.resolve(), a.label, a.width, a.mp4_only, a.crf)
 
