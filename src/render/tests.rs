@@ -619,3 +619,84 @@ fn background_cells_look_the_same_with_no_ink_along_the_top() {
         }
     }
 }
+
+/// Frame sequences of a blob joining the top layer and of one landing on
+/// the pool, at 120x36 in solid and braille, as ANSI for pyte:
+/// `JOIN_OUT=/dir cargo test --release -- --ignored --nocapture join_frames`
+#[test]
+#[ignore = "frame capture"]
+fn join_frames() {
+    use crate::sim::Phase;
+    use ratatui::backend::{Backend, CrosstermBackend};
+    use std::collections::BTreeMap;
+    let out = PathBuf::from(std::env::var("JOIN_OUT").expect("JOIN_OUT"));
+    let (cols, rows) = (120u16, 36u16);
+    let aspect = f64::from(cols) / (2.0 * f64::from(rows));
+    let dt = 1.0 / 120.0;
+    let fresh = || {
+        let mut world = World::new(11, aspect);
+        world.set_top_wax(true);
+        world.prewarm(1200, dt);
+        world
+    };
+    // Pass 1: when (steps) and where the first big join and landing start.
+    let mut world = fresh();
+    let mut phases: BTreeMap<u64, Phase> = BTreeMap::new();
+    let (mut join, mut land) = (None, None);
+    for step in 0..120 * 900 {
+        world.step(dt);
+        for b in world.blobs() {
+            let was = phases.insert(b.id, b.phase);
+            let started = was == Some(Phase::Free) && matches!(b.phase, Phase::Melting { .. });
+            if started && b.radius > 0.09 && b.at_top() && join.is_none() {
+                join = Some((step, b.x));
+            }
+            if started && b.radius > 0.07 && !b.at_top() && land.is_none() && step > 120 * 20 {
+                land = Some((step, b.x));
+            }
+        }
+        if join.is_some() && land.is_some() {
+            break;
+        }
+    }
+    let mut meta = String::new();
+    for (kind, event) in [("join", join), ("land", land)] {
+        let (at, x) = event.expect(kind);
+        let _ = writeln!(meta, "{kind} {:.3} {}", x / aspect + 0.5, at);
+        for style in ["solid", "braille"] {
+            let id = StyleId::by_name(style).unwrap();
+            let theme = theme(ColorDepth::TrueColor);
+            let mut world = fresh();
+            let start = at - 120 * 4;
+            for _ in 0..start {
+                world.step(dt);
+            }
+            let mut field = Field::default();
+            let mut state = LampState::default();
+            let area = Rect::new(0, 0, cols, rows);
+            for frame in 0..30 {
+                field.prepare(&world, 1.0);
+                let mut buf = Buffer::empty(area);
+                LampView {
+                    field: &field,
+                    style: id.style(),
+                    theme: &theme,
+                    time: 0.0,
+                    options: LampOptions::default(),
+                }
+                .render(area, &mut buf, &mut state);
+                let mut bytes = Vec::<u8>::new();
+                let mut backend = CrosstermBackend::new(&mut bytes);
+                backend
+                    .draw(Buffer::empty(area).diff(&buf).into_iter())
+                    .unwrap();
+                Backend::flush(&mut backend).unwrap();
+                std::fs::write(out.join(format!("{kind}-{style}-{frame:02}.ans")), bytes).unwrap();
+                for _ in 0..60 {
+                    world.step(dt);
+                }
+            }
+        }
+    }
+    std::fs::write(out.join("meta.txt"), meta).unwrap();
+}

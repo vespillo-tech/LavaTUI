@@ -120,11 +120,15 @@ logged_in = false        # kept up to date by the app: a login is saved
 
 Real lava lamps often have a thin layer of wax resting under the top.
 `top_wax = true` (settings › look › *wax at the top*) adds one: a thin,
-slightly uneven layer of the coolest wax colour. Some of the blobs that
-rise all the way melt into it (a big one gives it a little wax and
-sinks again), and now and then it grows a drop that lets go and sinks.
-It takes its wax from the pool and gives it back, so the lamp holds the
-same amount of wax. Turning it on or off fades it in or out over a
+slightly uneven layer of the coolest wax colour. A blob that rises to it
+and has cooled a little can stick (small, still-warm ones bump it and
+turn back; about a third of the blobs that reach the top stick). It
+flattens against the layer and seeps in over a few seconds, slower than
+at the hot pool; a big one gives part of itself and the rest pulls away
+and sinks. Where wax joined, the layer bulges, briefly warmer, then
+sags into a hanging teardrop that snaps off and falls, or spreads out
+and evens. It takes its wax from the pool and gives it back, so the
+lamp holds the same amount of wax. Turning it on or off fades it in or out over a
 second or two. It's drawn at least 1.5 and at most 5 sample pixels deep,
 so it stays a thin layer at any window size. Off by default.
 

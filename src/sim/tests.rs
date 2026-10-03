@@ -519,13 +519,15 @@ fn steps_join_up_through_every_event() {
         world.set_top_wax(top);
         world.prewarm(600, DT);
         if top {
-            // A thick layer drips soon; just under it, a small blob melts
-            // in whole and a big one gives it some wax.
-            world.cap_area = 0.8 * CAP_FULL * world.wall_width;
-            world.drip_timer = 0.0;
-            for (x, radius) in [(0.1, 0.03), (-0.25, 0.1)] {
-                world.next_id = (world.next_id..).find(|&id| joins_cap(id)).unwrap();
-                world.add(x, 0.95 - radius, radius, 0.9);
+            // Just under the layer, two blobs start melting into it: one
+            // all of it, the other (too big for it) a share before it
+            // pulls away; the bulges they leave sag into drops.
+            world.cap_area = CAP_KEEP * world.wall_width;
+            for (x, radius, share) in [(0.2, 0.06, f64::INFINITY), (-0.2, 0.16, 0.4)] {
+                world.add(x, 0.97 - radius, radius, 0.56);
+                let blob = world.blobs.last_mut().unwrap();
+                let left = share * blob.area();
+                (blob.phase, blob.end) = (Phase::Melting { left }, End::Top);
             }
             world.wax_target = world.wax_area();
         }
@@ -557,14 +559,14 @@ fn steps_join_up_through_every_event() {
         events.melted += after.melted - before.melted;
         events.dripped += after.dripped - before.dripped;
         events.capped += after.capped - before.capped;
-        events.kissed += after.kissed - before.kissed;
+        events.pinched += after.pinched - before.pinched;
     }
     assert!(
         events.budded > 0 && events.merged > 0 && events.split > 0 && events.melted > 0,
         "{events:?}"
     );
     assert!(
-        events.dripped > 0 && events.capped > 0 && events.kissed > 0,
+        events.dripped > 0 && events.capped > 0 && events.pinched > 0,
         "{events:?}"
     );
 }
@@ -814,7 +816,7 @@ fn top_wax_eases_in_and_out_conserving_wax() {
     world.prewarm(600, DT);
     // (A pool at its least has none to spare: the layer then fills as
     // blobs melt back into it.)
-    world.pool_area += 2.0 * CAP_KEEP * world.wall_width;
+    world.pool_area += 5.0 * CAP_KEEP * world.wall_width;
     world.wax_target = world.wax_area();
     let wax = world.wax_area();
     let mut last = world.cap_depth();
@@ -847,7 +849,12 @@ fn top_wax_eases_in_and_out_conserving_wax() {
     assert_eq!(world.cap_depth(), 0.0);
     run(&mut world, 6.0);
     assert_eq!(world.cap_area, 0.0, "all back in the pool");
-    assert!(world.blobs.iter().all(|b| !b.phase.at_top()));
+    assert!(
+        world
+            .blobs
+            .iter()
+            .all(|b| !b.at_top() || b.phase == Phase::Free)
+    );
     assert!(
         biggest_step < 0.02 * CAP_KEEP,
         "depth stepped by {biggest_step}"
@@ -878,34 +885,76 @@ fn top_wax_takes_wax_and_drips_staying_thin() {
         // Narrowing the lamp thickens it for a moment.
         assert!(deepest < 1.6 * CAP_FULL, "seed {seed}: {deepest}");
         assert!(world.cap_depth() <= 1.01 * CAP_FULL, "seed {seed}");
-        (events.dripped, events.kissed) =
-            (events.dripped + stats.dripped, events.kissed + stats.kissed);
+        (events.dripped, events.pinched) = (
+            events.dripped + stats.dripped,
+            events.pinched + stats.pinched,
+        );
         assert_close(world.wax_area(), FILL * 0.5 * aspect, 0.02);
         assert_sane(&world);
     }
     // About one of each a minute (fewer in a narrow lamp, whose blobs
     // seldom reach the top).
-    assert!(events.dripped >= 12 && events.kissed >= 12, "{events:?}");
+    assert!(events.dripped >= 12 && events.pinched >= 12, "{events:?}");
 }
 
-/// A small blob that reaches the layer melts into it whole (when it
-/// joins at all), and the layer keeps the wax.
+/// Pressed against the top layer, a big blob that has cooled sticks; a
+/// small, still-warm one doesn't (it touches and turns back).
 #[test]
-fn small_blob_melts_into_the_top_layer() {
-    let mut world = World::bare(1.0);
+fn cool_heavy_blobs_stick_and_small_warm_ones_turn_back() {
+    let world = World::new(3, 1.0);
+    let typical = world.typical_radius();
+    let mut blob = world.blobs[0].clone();
+    let mut rate = |radius: f64, temp: f64| {
+        (blob.radius, blob.temp) = (radius, temp);
+        stick_rate(&blob, typical)
+    };
+    assert_eq!(rate(1.5 * typical, 0.5), STICK_RATE);
+    assert_eq!(rate(0.3 * typical, 0.5), 0.0, "small");
+    assert_eq!(rate(1.5 * typical, 0.7), 0.0, "warm");
+    assert!(rate(typical, 0.57) < rate(1.5 * typical, 0.55));
+}
+
+/// A blob melting into the top layer seeps in slowly and leaves a warm
+/// bulge where it joined, which cools, spreads and evens out (or sags
+/// into a drop); the layer keeps the wax.
+#[test]
+fn melting_into_the_top_layer_leaves_a_warm_bulge_that_evens_out() {
+    let mut world = World::new(3, 1.0);
+    world.blobs.clear();
+    world.pool_area = world.wax_target;
+    world.spawn_timer = 1e9;
     world.set_top_wax(true);
-    world.pool_area *= 2.0;
-    world.wax_target = world.wax_area();
     world.run(120 * 3);
-    let id = (0..).find(|&id| joins_cap(id)).unwrap();
-    let blob = world.add(0.0, 0.85, 0.04, 0.95);
-    world.blobs.last_mut().unwrap().id = id;
+    world.drip_timer = 1e9;
+    let id = world.add(-0.2, 0.9, 0.06, 0.6);
+    let blob = world.blobs.last_mut().unwrap();
+    (blob.phase, blob.end) = (Phase::MELTING, End::Top);
+    world.wax_target = world.wax_area();
     let wax = world.wax_area();
-    let cap = world.cap_area;
+    let cap = world.cap_total();
+    world.run(120 * 2);
+    let blob = world
+        .blobs
+        .iter()
+        .find(|b| b.id == id)
+        .expect("still seeping in after 2 s");
+    assert!(blob.radius < 0.06 && blob.radius > 0.03, "{}", blob.radius);
+    let warm = world.lumps[0].shape;
+    assert!(
+        warm.temp > CAP_TEMP + 0.1,
+        "the bulge is warm: {}",
+        warm.temp
+    );
     world.run(120 * 30);
-    assert_eq!(world.stats().capped, 1, "{:?}", world.blobs);
-    assert!(world.blobs.iter().all(|b| b.id != blob && b.id != id));
-    assert!(world.cap_area > cap, "{} vs {cap}", world.cap_area);
+    assert!(world.blobs.iter().all(|b| b.id != id), "melted in");
+    assert_eq!(world.stats().capped, 1);
+    assert!(
+        world
+            .lumps
+            .iter()
+            .all(|l| l.shape.temp < warm.temp && l.shape.width > warm.width)
+    );
+    assert!(world.cap_total() > cap, "{} vs {cap}", world.cap_total());
     assert_close(world.wax_area(), wax, 1e-9);
 }
 
@@ -935,10 +984,46 @@ fn top_wax_report() {
         let mut world = World::new(seed, aspect);
         world.set_top_wax(true);
         let mut depths = Vec::new();
+        let (mut touched, mut joined) = (
+            std::collections::BTreeSet::new(),
+            std::collections::BTreeSet::new(),
+        );
+        let mut sag_drops = 0;
         for _ in 0..600 {
-            world.run(120);
+            for _ in 0..120 {
+                let drops_before: Vec<u64> = (world.blobs.iter())
+                    .filter(|b| b.at_top() && matches!(b.phase, Phase::Budding { .. }))
+                    .map(|b| b.id)
+                    .collect();
+                world.step(DT);
+                for b in &world.blobs {
+                    let top = b.y + b.radius * b.stretch;
+                    if b.phase == Phase::Free
+                        && top > world.cap_under(b.x) - CAP_TOUCH
+                        && b.cooldown <= 0.0
+                        && b.vy > -0.005
+                    {
+                        touched.insert(b.id);
+                    }
+                    if b.at_top() && matches!(b.phase, Phase::Melting { .. }) {
+                        joined.insert(b.id);
+                    }
+                    if b.at_top()
+                        && matches!(b.phase, Phase::Budding { .. })
+                        && !drops_before.contains(&b.id)
+                        && world.lumps.iter().any(|l| l.follow == b.id)
+                    {
+                        sag_drops += 1;
+                    }
+                }
+            }
             depths.push(world.cap_mean_depth());
         }
+        println!(
+            "touched {} joined {} sag drops {sag_drops}",
+            touched.len(),
+            joined.len()
+        );
         let lo = depths.iter().copied().fold(f64::MAX, f64::min);
         let hi = depths.iter().copied().fold(0.0, f64::max);
         let mean = depths.iter().sum::<f64>() / depths.len() as f64;

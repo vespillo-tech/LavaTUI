@@ -242,11 +242,15 @@ the layout/visual contract.
                 a straight-walled tank whose walls ease to a new width.
                 Pool on the heater buds blobs; heat/buoyancy/drag/cohesion,
                 merge + split, melt back into the pool; wax area conserved.
-                Optional top layer (`lamp.top_wax`, `set_top_wax`):
-                `cap_area` fed by the pool up to `CAP_KEEP`, blobs that
-                touch it melt in or give a share (`Phase::Capping`), drips
-                hang from it (`Phase::Dripping`); `Blob::top` says which
-                end a skirt joins; `cap_on` eases toggles.
+                Optional top layer (`lamp.top_wax`, `set_top_wax`): the
+                pool mirrored. Budding / melting happen at a blob's `End`
+                (`Bottom` pool, `Top` layer) through the same code with
+                per-end parameters (cold: slow, viscous melt-in; drops
+                hang as teardrops). `cap_area` fed by the pool up to
+                `CAP_KEEP`; `stick_rate` (temperature × size) picks who
+                sticks; a big blob melts in `Melting { left }` then pulls
+                away; melted wax goes to warm `Lump`s that spread, cool,
+                even out and `sag` into drops; `cap_on` eases toggles.
                 Nothing the field draws may snap between frames: a merge or
                 split leaves `Ghost`s (the old blobs, fading out, carried by
                 the blob that replaced them) while the new blob's `weight`

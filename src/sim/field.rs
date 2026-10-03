@@ -34,10 +34,11 @@
 //! with its size, and lobe detail follows the grid the lamp is shown at,
 //! not the one it is sampled at.
 
+use super::blob::End;
 use super::rng::hash;
 use super::{
-    Blob, CAP_LUMP, CAP_TEMP, MELTED_RADIUS, World, ambient_temp, cap_underside, pool_ceiling,
-    pool_surface,
+    Blob, CAP_LUMP, CAP_TEMP, LumpShape, MELTED_RADIUS, World, ambient_temp, cap_underside,
+    pool_ceiling, pool_surface,
 };
 
 /// Density at a wax surface. Inside is `>= SURFACE`; a lone blob peaks at
@@ -74,7 +75,9 @@ pub const MIN_POOL_PIXELS: f32 = 2.0;
 /// one), and its soft surface is this thick (half, lamp heights).
 pub const MIN_CAP_PIXELS: f64 = 1.5;
 pub const MAX_CAP_PIXELS: f64 = 5.0;
-const CAP_BAND: f32 = 0.02;
+/// Its soft surface is the pool's, so a blob nearing it fuses with it the
+/// same way.
+const CAP_BAND: f32 = POOL_BAND;
 /// A blob fades out over its last `FADE_RADIUS × MELTED_RADIUS` of
 /// radius before it melts away (and a bud fades in over its first).
 const FADE_RADIUS: f64 = 1.0;
@@ -144,9 +147,11 @@ pub struct Field {
     /// Width of the container's floor, under the pool.
     floor: f64,
     time: f64,
-    /// How far the top layer is shown (0 … 1, eased), and its mean depth.
+    /// How far the top layer is shown (0 … 1, eased), its mean depth,
+    /// and its bulges.
     cap: f64,
     cap_depth: f64,
+    lumps: Vec<LumpShape>,
 }
 
 impl Field {
@@ -163,6 +168,9 @@ impl Field {
         let cap = smooth(cap_on);
         let cap_depth =
             world.prev_cap_depth + (world.cap_mean_depth() - world.prev_cap_depth) * alpha;
+        let mut lumps = std::mem::take(&mut self.lumps);
+        lumps.clear();
+        lumps.extend(world.lumps.iter().map(|l| l.prev.lerp(l.shape, alpha)));
         let snap = |blob: &Blob| {
             let pose = blob.prev.lerp(blob.pose(), alpha);
             let taper = pose.taper;
@@ -182,8 +190,9 @@ impl Field {
             // upside down.
             let skirt = (pose.attach > 0.0).then(|| {
                 let width = r * (SKIRT.0 + (SKIRT.1 - SKIRT.0) * grown);
-                let (height, y) = if blob.top {
-                    let under = cap_underside(cap * cap_depth, pose.x, time);
+                let (height, y) = if blob.end == End::Top {
+                    let under = cap_underside(cap * cap_depth, pose.x, time)
+                        - cap * lump_depth(&lumps, pose.x);
                     let top = pose.y + r * pose.stretch;
                     let height = (0.5 * (under - top) + 0.5 * width).max(0.6 * width);
                     (height, under.min(0.5 * (under + top)))
@@ -219,6 +228,7 @@ impl Field {
         let ghosts = world.ghosts.iter().map(|g| &g.blob);
         self.blobs
             .extend(world.blobs.iter().chain(ghosts).map(snap));
+        self.lumps = lumps;
         self.blobs.retain(|b| b.weight > 0.0);
         self.view_width = world.view_width as f32;
         self.wall_width = world.wall_width;
@@ -264,8 +274,8 @@ impl Field {
                 self.pool_surface_at(x, px, self.pool_lift(px)) - y,
             );
             if self.cap > 0.0 {
-                let under = cap_underside(self.cap_drawn(px), f64::from(x), self.time);
-                add_cap(&mut acc, y - under as f32, self.cap as f32);
+                let (under, temp) = self.cap_at(self.cap_drawn(px), f64::from(x));
+                add_cap(&mut acc, y - under as f32, self.cap as f32, temp as f32);
             }
         }
         finish(&mut acc, ambient_temp(f64::from(y)) as f32);
@@ -294,6 +304,27 @@ impl Field {
     fn cap_drawn(&self, px: Pixel) -> f64 {
         let h = f64::from(px.height);
         self.cap * self.cap_depth.clamp(MIN_CAP_PIXELS * h, MAX_CAP_PIXELS * h)
+    }
+
+    /// The top layer's drawn underside at `x`, `depth` deep on average,
+    /// bulges and all, and its temperature there: the layer's own, warmer
+    /// where wax has just melted in.
+    #[inline]
+    fn cap_at(&self, depth: f64, x: f64) -> (f64, f64) {
+        let plain = 1.0 - cap_underside(depth, x, self.time);
+        let (mut bulge, mut heat) = (0.0, 0.0);
+        for lump in &self.lumps {
+            let d = self.cap * lump.depth(x);
+            bulge += d;
+            heat += d * lump.temp;
+        }
+        let total = plain + bulge;
+        let temp = if total > 0.0 {
+            (plain * CAP_TEMP + heat) / total
+        } else {
+            CAP_TEMP
+        };
+        (1.0 - total, temp)
     }
 
     /// The pool's drawn surface at `x`: lifted by `lift` (see
@@ -413,29 +444,46 @@ impl Field {
             }
         }
 
-        // Top layer: only the rows its underside can reach.
         if self.cap > 0.0 {
-            let depth = self.cap_drawn(px);
-            let shown = self.cap as f32;
-            let reach = (depth * (1.0 + CAP_LUMP)) as f32 + CAP_BAND;
-            if let Some((_, j1)) = span(0.0, reach / px_h, rows) {
-                for i in 0..cols {
-                    let x = x_at(i);
-                    if !self.in_container(f64::from(x)) {
-                        continue;
-                    }
-                    let under = cap_underside(depth, f64::from(x), self.time) as f32;
-                    for j in 0..=j1 {
-                        add_cap(&mut out[j * cols + i], y_at(j) - under, shown);
-                    }
-                }
-            }
+            self.fill_cap(out, (cols, rows), px, (left, px_w, px_h));
         }
 
         for (j, row) in out.chunks_exact_mut(cols).enumerate() {
             let liquid = ambient_temp(f64::from(y_at(j))) as f32;
             for s in row {
                 finish(s, liquid);
+            }
+        }
+    }
+
+    /// The top layer's part of [`Field::fill_detailed`]: only the rows its
+    /// underside can reach. Kept out of line, so the fill loop is the same
+    /// code with no top layer.
+    #[inline(never)]
+    fn fill_cap(
+        &self,
+        out: &mut [Sample],
+        (cols, rows): (usize, usize),
+        px: Pixel,
+        (left, px_w, px_h): (f32, f32, f32),
+    ) {
+        let depth = self.cap_drawn(px);
+        let shown = self.cap as f32;
+        let bulge: f64 = self.lumps.iter().map(|l| l.peak()).sum();
+        let reach = (depth * (1.0 + CAP_LUMP) + self.cap * bulge) as f32 + CAP_BAND;
+        let Some((_, j1)) = span(0.0, reach / px_h, rows) else {
+            return;
+        };
+        for i in 0..cols {
+            let x = left + (i as f32 + 0.5) * px_w;
+            if !self.in_container(f64::from(x)) {
+                continue;
+            }
+            let (under, temp) = self.cap_at(depth, f64::from(x));
+            let (under, temp) = (under as f32, temp as f32);
+            for j in 0..=j1 {
+                let y = 1.0 - (j as f32 + 0.5) * px_h;
+                add_cap(&mut out[j * cols + i], y - under, shown, temp);
             }
         }
     }
@@ -508,13 +556,20 @@ fn add_pool(s: &mut Sample, depth: f32) {
     s.temp += w * temp;
 }
 
-/// `height` = how far above the top layer's underside (negative below);
-/// `shown` = how far it has eased in (its soft surface fades with it).
+/// How far the top layer's bulges hang below it at `x`.
 #[inline]
-fn add_cap(s: &mut Sample, height: f32, shown: f32) {
+fn lump_depth(lumps: &[LumpShape], x: f64) -> f64 {
+    lumps.iter().map(|l| l.depth(x)).sum()
+}
+
+/// `height` = how far above the top layer's underside (negative below);
+/// `shown` = how far it has eased in (its soft surface fades with it);
+/// `temp` its temperature there.
+#[inline]
+fn add_cap(s: &mut Sample, height: f32, shown: f32, temp: f32) {
     let w = shown * smooth01(height / CAP_BAND * 0.5 + 0.5);
     s.density += w;
-    s.temp += w * CAP_TEMP as f32;
+    s.temp += w * temp;
 }
 
 /// [`smooth01`] in `f64`.

@@ -15,7 +15,7 @@
 
 use std::ops::RangeInclusive;
 
-use super::{Phase, World};
+use super::{End, Phase, World};
 
 /// Heat levels, and the one a fresh lamp (and the `0` reset key) uses.
 pub const HEAT_LEVELS: RangeInclusive<u8> = 1..=5;
@@ -131,19 +131,14 @@ impl World {
         self.rng = super::Rng::new(seed);
         self.reseed = Some(Reseed::Melting);
         self.pulses.clear();
-        // What hangs from the top layer melts up into it; the top layer
-        // itself stays.
-        // (as does a drip still letting go): its skirt already reaches up.
+        // What hangs from the top layer (or is still letting go of it: its
+        // skirt reaches up) melts up into it; the top layer itself stays.
         for blob in &mut self.blobs {
-            let joined = blob.attach > 0.0 || blob.prev.attach > 0.0;
-            if blob.phase.at_top() || (blob.top && joined) {
-                blob.phase = Phase::Capping {
-                    left: f64::INFINITY,
-                };
-            } else {
-                blob.phase = Phase::Melting;
-                blob.top = false;
+            let joined = blob.phase != Phase::Free || blob.attach > 0.0 || blob.prev.attach > 0.0;
+            if !(blob.end == End::Top && joined) {
+                blob.end = End::Bottom;
             }
+            blob.phase = Phase::MELTING;
         }
     }
 

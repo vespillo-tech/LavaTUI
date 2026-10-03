@@ -90,20 +90,17 @@ impl Lcg {
     }
 }
 
-/// Each blob's phase, by id.
+/// Each blob's phase (and layer), by id.
 fn phases(world: &World) -> BTreeMap<u64, u8> {
-    let code = |p: Phase| match p {
-        Phase::Budding { .. } => 0,
-        Phase::Free => 1,
-        Phase::Melting => 2,
-        Phase::Dripping { .. } => 3,
-        Phase::Capping { .. } => 4,
+    let code = |b: &crate::sim::Blob| match (b.phase, b.at_top()) {
+        (Phase::Budding { .. }, false) => 0,
+        (Phase::Free, _) => 1,
+        (Phase::Melting { .. }, false) => 2,
+        (Phase::Budding { .. }, true) => 3,
+        (Phase::Melting { left }, true) if left > 0.0 => 4,
+        (Phase::Melting { .. }, true) => 5,
     };
-    world
-        .blobs()
-        .iter()
-        .map(|b| (b.id, code(b.phase)))
-        .collect()
+    world.blobs().iter().map(|b| (b.id, code(b))).collect()
 }
 
 /// What changed between two [`phases`] snapshots (`merged` / `split`:
@@ -125,9 +122,10 @@ fn events(
             (Some(1), 2) => "melt-start",
             (Some(0), 2) => "bud-dry",
             (Some(3), 1) => "drip-off",
-            (Some(3), 4) => "drip-dry",
+            (Some(3), 4 | 5) => "drip-dry",
             (Some(1), 4) => "cap-join",
-            (Some(4), 1) => "cap-off",
+            (Some(4), 5) => "pull-away",
+            (Some(5), 1) => "pinch-off",
             (Some(&b), p) if b != p => "phase",
             _ => continue,
         });
