@@ -463,11 +463,19 @@ signed with the same Developer ID keep the answer.
 
 ## The README's pictures
 
-Every picture is drawn from the release binary in sized ptys, with a
+The README shows two videos filmed in native Ghostty (the trailer and
+a big-screen showcase), the hero (a still PNG) and 15 short loops
+(GIFs). The videos are MP4s on GitHub's attachment storage
+(`github.com/user-attachments/assets/…` URLs, each on its own line in
+the README, which GitHub plays inline), not in the repo: they are
+uploaded through GitHub's web editor. `docs/screenshots/demo.gif` is the
+same trailer drawn headlessly (take A), kept as the fallback for places
+that can't play video, and linked under the trailer.
+
+Everything else is drawn from the release binary in sized ptys, with a
 fixed seed and a scratch config, by pyte + Pillow: no window is filmed.
-The README shows the trailer (`demo.gif`), the hero (a still PNG) and
-15 short loops (GIFs). The stills (`capture.py` with no arguments) are
-kept for the docs and as a fallback.
+The stills (`capture.py` with no arguments) are kept for the docs and
+as a fallback.
 
 **The frame clock.** The hidden `--frame-clock HH:MM` makes a run
 reproducible to the pixel: frame *n* is drawn at exactly *n* frame
@@ -507,9 +515,41 @@ one run per tile, in step through the frame clock; their last second
 crossfades into the frames leading into the start. Encoded with ffmpeg
 (one palette, no dither) and gifsicle.
 
+**The trailer in Ghostty** (`docs/screenshots/trailer_native.py`,
+takes B and C; C, with the user's shaders, is the README's): the same
+takes, seed, cells (100×30), frame clock and keys as `trailer.py`, each
+run in one real Ghostty window through `tools/ghostty_native.py`'s
+driver, with a recording-only Ghostty config (opaque, no title bar or
+padding, the user's font; C adds the user's `custom-shader` lines), never
+the user's own. A helper inside the window brings it to the front first
+(an unfocused LavaTUI drops to 10 fps). The app runs at 60 fps, so
+take A's frame n is frame 6n; a pass-through between Ghostty and the
+app sends each key after frame 6n+5 and logs when every frame was
+handed over. The full-display recording is matched to that log by the
+app's first frame, each film frame is taken from the middle of its
+window (shaders add display latency that wanders), and the result is
+cropped to the window (its border off, its rounded corners filled from
+inside). `record B|C` needs the window in front, hands off, for about
+five minutes; `film` makes the 60 fps MP4 (`--width`, `--crf`,
+`--mp4-only`) and the frames either side of each cut; `small` a
+GIF that fits 5 MB (native text and shader texture compress far worse
+than take A's flat cells). Ghostty's cells are a little taller than
+take A's (2.1 vs 2.0 high per wide), so the lamp is a slightly different
+shape and the wax plays out differently from take A, the same in B and
+C.
+
+**The showcase** (`tools/ghostty_native.py`): one long take of the
+user's big-screen layout, outline style, abyss colours, at 343×68
+cells, fullscreen on the second display, recorded from inside the
+window: `--app-config` (the layout), `--ghostty-config` (recording-only,
+with the shaders), `--fullscreen-on 2`, `--seed 7`, `--styles outline
+--palette abyss`, `--record --record-at --record-secs
+--keep-recordings` (see the tool's docstring).
+
 **Budget.** Trailer under 5 MB; the loops together under 4 MB, none over
 1.5 MB (the styles sheet is the heaviest: its matrix tile changes every
-frame); the README about 8.2 MB in all. GIF is used throughout: in these
+frame); the README's GIFs and stills about 8.2 MB in all (the two videos stream
+from GitHub's storage: the trailer 7.6 MB, the showcase 6.6 MB). GIF is used throughout: in these
 flat-colour pictures it beat lossy WebP (smaller and sharper) and APNG,
 and every GitHub client plays it.
 

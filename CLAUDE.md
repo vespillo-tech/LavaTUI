@@ -124,7 +124,10 @@ and a second copy), and keeps helper output off the screen
 regenerates the README pictures: stills (no arguments) and the 15 loops
 (`capture.py loops`); `docs/screenshots/trailer.py check` makes the
 README trailer (`demo.gif`, match cuts between takes on the hidden
-`--frame-clock`) and the frames either side of each cut. Rerun them
+`--frame-clock`) and the frames either side of each cut;
+`docs/screenshots/trailer_native.py` films the same takes in native
+Ghostty (the README's trailer video is take C, uploaded to GitHub, not in
+the repo; `demo.gif` is its headless fallback). Rerun them
 after visible changes, and look at every image and cut. Music shots use
 `--demo`; never commit real album art or real song names. Budgets:
 trailer < 5 MB, loops < 4 MB together (docs/architecture.md).
