@@ -198,16 +198,16 @@
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    look             ▸ spotify                    not set up  │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    clock & timer      lyrics                            off  │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    widgets            lyrics timing                 on time  │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│  ▸ music & lyrics     cover picture                    auto  │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    controls           cover size                     medium  │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    window             small cover with music             on  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    widgets            word by word                       on  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│  ▸ music & lyrics     lyrics timing                 on time  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    controls           cover picture                    auto  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    window             cover size                     medium  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                       small cover with music             on  │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                       saved lyrics & covers   nothing saved  │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                       reset this page                 reset  │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│ Play, pause and skip work with the Spotify app on its own.   │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│ Playlists and likes need a one-time setup: press enter.      │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~╰ changes save automatically ──────────────────────── esc back ╯

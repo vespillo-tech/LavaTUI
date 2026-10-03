@@ -22,6 +22,7 @@ use crate::config::{
 use crate::disk_cache::size_words;
 use crate::dock::cover::{CoverSize, Detail};
 use crate::dock::{self, Anchor, Backing, Place, TextInk, WIDGETS};
+use crate::lyrics::Karaoke;
 use crate::media::{Status, Unavailable};
 use crate::render::StyleId;
 use crate::sim::{HEAT_LEVELS, SimSpeed};
@@ -171,6 +172,8 @@ pub enum Item {
     InlineCover,
     /// Lyrics sooner or later than the player says (`lyrics.delay_ms`).
     LyricsTiming,
+    /// The current line word by word (`lyrics.karaoke`).
+    WordByWord,
     Mouse,
     LampOnly,
     HintLine,
@@ -435,7 +438,7 @@ impl Model {
             Page::Music => {
                 out.push(Spotify);
                 with_position(widget("lyrics"), &mut out);
-                out.push(LyricsTiming);
+                out.extend([WordByWord, LyricsTiming]);
                 out.extend([CoverDetail, CoverSize, InlineCover, ClearSaved]);
             }
             Page::Controls => out.push(Mouse),
@@ -642,6 +645,17 @@ impl Model {
                 "small cover with music",
                 on_off(s.art.inline),
                 "A little cover beside the song, while the album cover itself is off.",
+            ),
+            Item::WordByWord => choice(
+                "word by word",
+                match s.lyrics.karaoke {
+                    Karaoke::On => "on",
+                    Karaoke::Timed => "when the lyrics time words",
+                    Karaoke::Off => "off",
+                },
+                "Lights up each word as it's sung. Most lyrics only say when each line \
+                 starts, so the words' times are a good guess, not exact. Off lights up \
+                 the whole line.",
             ),
             Item::LyricsTiming => choice(
                 "lyrics timing",
@@ -1419,6 +1433,14 @@ impl Model {
                 s.art.size = COVER_SIZES[i];
             }
             Item::InlineCover => s.art.inline = !s.art.inline,
+            Item::WordByWord => {
+                let i = wrap(
+                    index_of(&Karaoke::ALL, &s.lyrics.karaoke),
+                    Karaoke::ALL.len(),
+                    step,
+                );
+                s.lyrics.karaoke = Karaoke::ALL[i];
+            }
             Item::LyricsTiming => {
                 // The next step on the grid (from a hand-edited value too).
                 let (v, step) = (s.lyrics.delay_ms, LYRICS_DELAY_STEP);

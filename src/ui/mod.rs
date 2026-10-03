@@ -99,6 +99,11 @@ pub fn draw(frame: &mut Frame, model: &Model, lamp: &mut LampState) {
         .filter(|((r, _), _)| free(*r, 0));
     if let Some(((r, text), toast)) = &toast {
         chrome::draw_toast(buf, *r, text, toast, model);
+    } else if model.hud
+        && let Some(row) = layout.toast.filter(|&r| free(r, 0))
+        && cards::guide(layout, model).is_none_or(|(g, _)| !g.intersects(row))
+    {
+        chrome::draw_lyrics_readout(buf, row, model);
     }
     if layout.status.is_none()
         && model.hud

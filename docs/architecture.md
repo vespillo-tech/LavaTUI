@@ -214,6 +214,43 @@ another app's pause, seek or track change (the fake player in Docker,
 manager's `SessionsChanged` nudge it (lint-checked, not run). A player
 whose events stream (a ticking timeline) is read at most every 250 ms.
 
+**A few words behind** (lava-75z.30). Reported as the highlight
+sometimes trailing the voice by a few words. Taken apart:
+
+- *Word estimate*: the cause. It spread a line's words over all the
+  time to the next line (up to 1.5× the song's median pace), but singers
+  mostly sing a line at their own speed and then rest. Modelled on the
+  43 songs of a real lyrics cache (1,651 lines; a line sung at the
+  song's quick pace, the 25th percentile of its lines' seconds per
+  syllable, then a rest), it trailed by 2+ words on 28 % of lines and
+  4+ on one in ten. Now each line is sung at the song's 35th-percentile
+  pace: 2+ words behind on 2 %; if a singer instead draws lines out, the
+  highlight runs ahead (2+ words on 7 %).
+- *Position*: not it. 30 minutes of real listening (13 track changes,
+  a pause): steady error median −0.2 ms, 99th percentile +2 ms; pause
+  and resume shown within 22-29 ms. After a track change Spotify
+  announces it, then holds the new track at 0:00 for ~0.5 s: the
+  position ran ~0.12 s early for ~0.95 s (lyrics early, not late). Now
+  the worker re-reads every 300 ms after an event until two readings
+  agree (up to 3): 20 more minutes of listening (6 track changes) had
+  each settle within 150-245 ms. Spotify's position also drifts for the
+  last ~2 s of a song (seen at every change; after the last line, as a
+  rule). Two event races fixed too: the read a change event brought on right after
+  LavaTUI's own pause or seek could briefly undo it (Spotify announces
+  the pause before its state reads paused); and only the first poll of
+  a burst of events got its 300 ms re-read. *Lyrics timing* was applied
+  before extrapolating, so a reading in a song's first moments shifted
+  it by less than set (now after; the user's was 0 anyway).
+- *Other recordings*: LRCLIB lyrics are only taken within 2 s (3 s from
+  search) of the track's length; a same-length version with a shifted
+  intro can't be told apart (*lyrics timing* covers it).
+- *Rendering*: not it. Each frame works the word out from the clock, so
+  a slow or skipped frame shows a word late by at most a frame (33 ms at
+  30 fps, 100 ms unfocused), never by words.
+
+The performance info (`d`) reads the timing out in the toast row
+(design.md §4.1) for reports from real listening.
+
 One open question from the same run: at a pause, Spotify's reported
 position jumped back about 0.8 s from where playing had it (every
 variant saw it). Either Spotify steps back on pause, or while playing it

@@ -73,6 +73,12 @@ pub struct Syncer {
     pub lead: Duration,
     /// How early words light up ([`WORD_LEAD`]).
     pub word_lead: Duration,
+    /// The lyrics timing setting: this many ms later than the player's
+    /// position (sooner if negative), applied to the extrapolated
+    /// position, so it holds from the first moment of a song.
+    pub delay_ms: i32,
+    /// Which lines go word by word (others wake nobody at word times).
+    pub karaoke: super::Karaoke,
     last: Option<Last>,
 }
 
@@ -95,6 +101,8 @@ impl Syncer {
         Self {
             lead,
             word_lead,
+            delay_ms: 0,
+            karaoke: super::Karaoke::On,
             last: None,
         }
     }
@@ -111,7 +119,13 @@ impl Syncer {
         playback: &Playback,
         now: Instant,
     ) -> Cursor {
+        let shift = Duration::from_millis(u64::from(self.delay_ms.unsigned_abs()));
         let mut base = playback.position_at(now);
+        base = if self.delay_ms >= 0 {
+            base.saturating_sub(shift)
+        } else {
+            base + shift
+        };
         let seeked = self.last.is_some_and(|last| {
             let expected = if last.playing {
                 last.position + now.saturating_duration_since(last.at)
@@ -182,9 +196,11 @@ impl Syncer {
                     word = Some(sung - 1);
                     sung -= 1;
                 }
-                match line.words.get(sung + usize::from(word.is_some())) {
-                    Some(w) => soonest(w.at, self.word_lead),
-                    None => soonest(line.end, self.word_lead),
+                if self.karaoke.shows(line) {
+                    match line.words.get(sung + usize::from(word.is_some())) {
+                        Some(w) => soonest(w.at, self.word_lead),
+                        None => soonest(line.end, self.word_lead),
+                    }
                 }
             }
             // A gap or the intro: its dots light at each third.
@@ -324,6 +340,28 @@ mod tests {
     }
 
     #[test]
+    fn the_timing_setting_moves_the_extrapolated_position() {
+        let l = lyrics();
+        let c = clock();
+        // A reading at 0.1 s, the very start of a song; lyrics 0.5 s later.
+        let p = c.playing(0.1, 0.0);
+        let mut s = Syncer::new(Duration::ZERO, Duration::ZERO);
+        s.delay_ms = 500;
+        // 5.4 s on, the player is at 5.5 s: the lyrics show 5.0 s.
+        let cur = s.cursor(&l, None, &p, c.t(5.4));
+        assert_eq!(cur.position, secs(5.0));
+        assert_eq!(cur.index, Some(0), "line one starts at 5 s");
+        // Sooner: 0.5 s ahead of the player.
+        let mut s = Syncer::new(Duration::ZERO, Duration::ZERO);
+        s.delay_ms = -500;
+        assert_eq!(s.cursor(&l, None, &p, c.t(4.4)).position, secs(5.0));
+        // Never before the song's start.
+        let mut s = Syncer::new(Duration::ZERO, Duration::ZERO);
+        s.delay_ms = 1000;
+        assert_eq!(s.cursor(&l, None, &p, c.t(0.2)).position, Duration::ZERO);
+    }
+
+    #[test]
     fn a_pause_shows_where_it_stopped() {
         let l = lyrics();
         let c = clock();
@@ -392,6 +430,10 @@ mod tests {
         assert_eq!(next(&mut s, 5.5), Some(secs(6.0)));
         assert_eq!(next(&mut s, 7.5), Some(secs(8.0)), "the line's end");
         assert_eq!(next(&mut s, 8.5), Some(secs(10.0)), "the next line");
+        // Word by word off: no wakeups for words, just the next line.
+        let mut off = Syncer::new(Duration::ZERO, Duration::ZERO);
+        off.karaoke = crate::lyrics::Karaoke::Off;
+        assert_eq!(next(&mut off, 5.5), Some(secs(10.0)));
         // With leads, each comes that much sooner.
         let mut led = Syncer::new(Duration::from_millis(150), Duration::from_millis(50));
         assert_eq!(next(&mut led, 5.5), Some(Duration::from_millis(5950)));
