@@ -133,7 +133,9 @@ loaded Music accepts shuffle and repeat but doesn't change them, so
 only changes made with a song loaded count when deciding whether Music
 ignores them. Volume is exact except that
 1 reads back as 0. Seek, next and previous weren't tried live (the same
-AppleScript as Spotify's, checked against Music's dictionary). Open with
+AppleScript as Spotify's, checked against Music's dictionary), nor
+events and timing while a song plays, nor a Music song's cover and
+lyrics end to end in the app (lava-75z.33). Open with
 nothing loaded (no subscription, nothing picked), Music reads as
 stopped with no song: the widgets say "nothing playing"
 (`music_open_with_nothing_loaded_is_calm`). Music posts
