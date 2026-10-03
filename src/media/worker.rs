@@ -19,13 +19,14 @@
 //! The position is pinned down over polls ([`Baseline`]): each reading
 //! was taken between sending the request and getting the reply, so
 //! readings of the same playback narrow down when it really was, to a few
-//! ms however slow any one poll was. While synced lyrics are on screen
-//! ([`MediaSource::follow_closely`]) the player is polled more often
-//! ([`Cadence::close`]), so a pause, resume or seek made in the player
-//! itself shows sooner.
+//! ms however slow any one poll was. Between polls the position is
+//! predicted, so polling only has to catch what changes in the player
+//! itself: where the player says so ([`Backend::listen`]: a notification
+//! or signal on change), the worker polls at once ([`Nudge`]), then once
+//! more [`Cadence::after_event`] later, for a player that tells before
+//! its state reads the new way.
 
 use std::mem;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
@@ -46,6 +47,47 @@ pub trait Backend: Send + 'static {
     fn capabilities(&self) -> Capabilities {
         Capabilities::ALL
     }
+
+    /// Start listening for the player's own change events, if it has any,
+    /// calling `nudge` on each. Called once, on the worker thread; what it
+    /// returns is dropped (stopping the listening) when the worker ends.
+    fn listen(&mut self, _nudge: Nudge) -> Option<Box<dyn Send>> {
+        None
+    }
+}
+
+/// Polls brought on by change events are at least this far apart.
+const EVENT_GAP: Duration = Duration::from_millis(250);
+
+/// What the worker is sent: a command from the UI, or word that the
+/// player changed.
+#[derive(Debug)]
+pub(crate) enum Msg {
+    Command(Command),
+    Changed,
+    /// The handle is gone (a listener's [`Nudge`] keeps the channel open,
+    /// so its closing can't say so).
+    Stop,
+}
+
+/// Tells the worker the player changed on its own (a notification or
+/// signal from it): it polls at once. Cheap and safe from any thread.
+#[derive(Clone, Debug)]
+pub struct Nudge(Sender<Msg>);
+
+impl Nudge {
+    /// A nudge and what it sends, for testing a listener.
+    #[cfg(test)]
+    pub(crate) fn channel() -> (Self, Receiver<Msg>) {
+        let (tx, rx) = mpsc::channel();
+        (Self(tx), rx)
+    }
+
+    /// Whether the worker is still there to hear it (a listener stops
+    /// when it isn't).
+    pub fn changed(&self) -> bool {
+        self.0.send(Msg::Changed).is_ok()
+    }
 }
 
 /// How long to wait before the next poll, by what the player is doing.
@@ -62,9 +104,9 @@ pub struct Cadence {
     /// The re-read after a command: long enough for the player to have
     /// applied it.
     pub after_command: Duration,
-    /// Playing or paused while something follows playback closely (synced
-    /// lyrics on screen).
-    pub close: Duration,
+    /// The re-read after a change event: the player may say it changed a
+    /// moment before its state reads the new way.
+    pub after_event: Duration,
 }
 
 impl Default for Cadence {
@@ -76,15 +118,14 @@ impl Default for Cadence {
             not_responding: Duration::from_secs(5),
             broken: Duration::from_secs(15),
             after_command: Duration::from_millis(400),
-            close: Duration::from_millis(250),
+            after_event: Duration::from_millis(300),
         }
     }
 }
 
 impl Cadence {
-    fn after(&self, status: &Status, close: bool) -> Duration {
+    fn after(&self, status: &Status) -> Duration {
         match status {
-            Status::Playing | Status::Paused if close => self.close,
             Status::Playing | Status::Connecting => self.playing,
             Status::Paused | Status::Stopped => self.idle,
             Status::Unavailable(Unavailable::NotRunning) => self.not_running,
@@ -213,9 +254,7 @@ struct State {
 /// exchange in flight; nothing waits for it).
 pub struct Polled {
     state: Arc<Mutex<State>>,
-    commands: Option<Sender<Command>>,
-    /// [`MediaSource::follow_closely`], read by the worker.
-    close: Arc<AtomicBool>,
+    commands: Option<Sender<Msg>>,
 }
 
 impl Polled {
@@ -227,7 +266,7 @@ impl Polled {
             capabilities: backend.capabilities(),
         }));
         let (tx, rx) = mpsc::channel();
-        let close = Arc::new(AtomicBool::new(false));
+        let nudge = Nudge(tx.clone());
         let worker = Worker {
             backend,
             state: Arc::clone(&state),
@@ -235,20 +274,18 @@ impl Polled {
             handled: 0,
             cadence,
             misses: 0,
-            close: Arc::clone(&close),
             baseline: Baseline::new(Instant::now()),
         };
         let spawned = thread::Builder::new()
             .name("lavatui-media".into())
             .spawn(move || {
                 crate::thread_qos::worker();
-                worker.run()
+                worker.run(nudge)
             });
         match spawned {
             Ok(_) => Self {
                 state,
                 commands: Some(tx),
-                close,
             },
             Err(err) => Self::unavailable(Unavailable::Error(err.to_string())),
         }
@@ -263,7 +300,6 @@ impl Polled {
                 capabilities: Capabilities::NONE,
             })),
             commands: None,
-            close: Arc::default(),
         }
     }
 }
@@ -277,10 +313,6 @@ impl MediaSource for Polled {
         lock(&self.state).capabilities
     }
 
-    fn follow_closely(&self, on: bool) {
-        self.close.store(on, Ordering::Relaxed);
-    }
-
     fn send(&self, command: Command) {
         let mut state = lock(&self.state);
         if !state.snapshot.status.is_available() {
@@ -290,9 +322,17 @@ impl MediaSource for Polled {
         // Under the lock, so the worker sees the count and the optimistic
         // snapshot change together.
         if let Some(tx) = &self.commands
-            && tx.send(command).is_ok()
+            && tx.send(Msg::Command(command)).is_ok()
         {
             state.sent += 1;
+        }
+    }
+}
+
+impl Drop for Polled {
+    fn drop(&mut self) {
+        if let Some(tx) = &self.commands {
+            let _ = tx.send(Msg::Stop);
         }
     }
 }
@@ -304,32 +344,52 @@ fn lock(state: &Mutex<State>) -> MutexGuard<'_, State> {
 struct Worker<B> {
     backend: B,
     state: Arc<Mutex<State>>,
-    commands: Receiver<Command>,
+    commands: Receiver<Msg>,
     /// Commands taken off the channel so far.
     handled: u64,
     cadence: Cadence,
     /// Failed polls in a row (see [`GRACE`]).
     misses: u32,
-    /// [`Cadence::close`] wanted (set by the UI).
-    close: Arc<AtomicBool>,
     baseline: Baseline,
 }
 
 impl<B: Backend> Worker<B> {
-    fn run(mut self) {
+    fn run(mut self, nudge: Nudge) {
+        // Kept until the worker ends; dropping it stops the listening.
+        let _listening = self.backend.listen(nudge);
         let mut next_poll = Instant::now();
+        // The last poll an event brought on, and an event held back.
+        let mut evented: Option<Instant> = None;
+        let mut held = false;
         loop {
             let wait = next_poll.saturating_duration_since(Instant::now());
-            let batch = match self.commands.recv_timeout(wait) {
-                Ok(first) => {
-                    let mut batch = vec![first];
-                    batch.extend(self.commands.try_iter());
-                    batch
-                }
-                Err(RecvTimeoutError::Timeout) => Vec::new(),
+            let (batch, changed, stop) = match self.commands.recv_timeout(wait) {
+                Ok(first) => split(std::iter::once(first).chain(self.commands.try_iter())),
+                Err(RecvTimeoutError::Timeout) => (Vec::new(), false, false),
                 Err(RecvTimeoutError::Disconnected) => return,
             };
-            next_poll = Instant::now() + self.turn(batch);
+            if stop {
+                return;
+            }
+            let now = Instant::now();
+            // An event polls at once, then once more after_event later;
+            // more events within EVENT_GAP of it (a player whose timeline
+            // ticks) are held back and folded into one poll at the gap.
+            let fresh = changed && batch.is_empty();
+            if fresh && evented.is_some_and(|at| now < at + EVENT_GAP) {
+                next_poll = next_poll.min(evented.map_or(now, |at| at + EVENT_GAP));
+                held = true;
+                continue;
+            }
+            if mem::take(&mut held) || fresh {
+                crate::diag::note(|| "player: change event".to_owned());
+                evented = Some(now);
+            }
+            let mut wait = self.turn(batch);
+            if fresh {
+                wait = wait.min(self.cadence.after_event);
+            }
+            next_poll = Instant::now() + wait;
         }
     }
 
@@ -360,8 +420,7 @@ impl<B: Backend> Worker<B> {
                 return self.cadence.playing;
             }
         }
-        let close = self.close.load(Ordering::Relaxed);
-        let mut wait = self.cadence.after(&fresh.status, close);
+        let mut wait = self.cadence.after(&fresh.status);
         if !batch.is_empty() {
             wait = wait.min(self.cadence.after_command);
         }
@@ -376,6 +435,26 @@ impl<B: Backend> Worker<B> {
         }
         wait
     }
+}
+
+/// The commands among `msgs`, whether a change event was too, and
+/// whether the handle is gone.
+fn split(msgs: impl Iterator<Item = Msg>) -> (Vec<Command>, bool, bool) {
+    let (mut changed, mut stop) = (false, false);
+    let commands = msgs
+        .filter_map(|m| match m {
+            Msg::Command(c) => Some(c),
+            Msg::Changed => {
+                changed = true;
+                None
+            }
+            Msg::Stop => {
+                stop = true;
+                None
+            }
+        })
+        .collect();
+    (commands, changed, stop)
 }
 
 /// Setting the same thing twice in a row only needs the last value (ten
@@ -453,11 +532,9 @@ mod tests {
             sent: 0,
             capabilities: Capabilities::ALL,
         }));
-        let close = Arc::new(AtomicBool::new(false));
         let handle = Polled {
             state: Arc::clone(&state),
             commands: Some(tx),
-            close: Arc::clone(&close),
         };
         let worker = Worker {
             backend: Scripted(answer, Arc::clone(&log)),
@@ -466,10 +543,14 @@ mod tests {
             handled: 0,
             cadence: Cadence::default(),
             misses: 0,
-            close,
             baseline: Baseline::new(Instant::now()),
         };
         (handle, worker, log)
+    }
+
+    /// The commands waiting for `worker`, as its loop would batch them.
+    fn drain<B: Backend>(worker: &Worker<B>) -> Vec<Command> {
+        split(worker.commands.try_iter()).0
     }
 
     #[test]
@@ -480,25 +561,81 @@ mod tests {
         assert_eq!(handle.snapshot().status, Status::Playing);
 
         let cadence = Cadence::default();
-        assert_eq!(cadence.after(&Status::Paused, false), cadence.idle);
-        assert!(
-            cadence.after(&Status::Unavailable(Unavailable::NotRunning), false) > cadence.playing
-        );
-        assert!(
-            cadence.after(&Status::Unavailable(Unavailable::PermissionDenied), false)
-                > cadence.idle
-        );
-        // Synced lyrics on screen: playing and paused are polled closely,
-        // nothing else.
-        handle.follow_closely(true);
-        assert_eq!(worker.turn(Vec::new()), cadence.close);
-        assert!(cadence.close < cadence.playing);
-        assert_eq!(cadence.after(&Status::Paused, true), cadence.close);
-        assert_eq!(cadence.after(&Status::Stopped, true), cadence.idle);
-        assert_eq!(
-            cadence.after(&Status::Unavailable(Unavailable::NotRunning), true),
-            cadence.not_running
-        );
+        assert_eq!(cadence.after(&Status::Paused), cadence.idle);
+        assert!(cadence.after(&Status::Unavailable(Unavailable::NotRunning)) > cadence.playing);
+        assert!(cadence.after(&Status::Unavailable(Unavailable::PermissionDenied)) > cadence.idle);
+    }
+
+    /// A backend that hands its [`Nudge`] to the test and counts reads.
+    struct Evented(Arc<Mutex<Option<Nudge>>>, Arc<Mutex<Vec<Instant>>>);
+
+    impl Backend for Evented {
+        fn exchange(&mut self, _: &[Command]) -> Snapshot {
+            self.1.lock().unwrap().push(Instant::now());
+            playing("a", MS, Instant::now())
+        }
+
+        fn listen(&mut self, nudge: Nudge) -> Option<Box<dyn Send>> {
+            *self.0.lock().unwrap() = Some(nudge);
+            None
+        }
+    }
+
+    #[test]
+    fn a_change_event_polls_at_once_and_once_more_after() {
+        let (nudge, reads) = (Arc::default(), Arc::default());
+        let slow = Cadence {
+            playing: Duration::from_secs(60),
+            after_event: MS * 50,
+            ..testing::fast()
+        };
+        let source = Polled::spawn(Evented(Arc::clone(&nudge), Arc::clone(&reads)), slow);
+        let count = || reads.lock().unwrap().len();
+        let wait = |n: usize| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while count() < n {
+                assert!(Instant::now() < deadline, "only {} reads", count());
+                thread::sleep(MS);
+            }
+        };
+        wait(1); // the first poll
+        let nudge = loop {
+            if let Some(n) = nudge.lock().unwrap().clone() {
+                break n;
+            }
+            thread::sleep(MS);
+        };
+        thread::sleep(MS * 100);
+        assert_eq!(count(), 1, "nothing until the player says so");
+        let sent = Instant::now();
+        // A burst of events is one read (and one re-read).
+        for _ in 0..3 {
+            assert!(nudge.changed());
+        }
+        wait(3);
+        let reads = reads.lock().unwrap().clone();
+        assert!(reads[1] - sent < MS * 40, "at once: {:?}", reads[1] - sent);
+        assert!(reads[2] - reads[1] >= MS * 50, "then once more");
+        thread::sleep(MS * 150);
+        assert!(count() <= 4, "{}", count());
+        // A stream of events (a timeline ticking): read every EVENT_GAP
+        // at most, not once per event.
+        let before = count();
+        let start = Instant::now();
+        while start.elapsed() < MS * 600 {
+            nudge.changed();
+            thread::sleep(MS * 10);
+        }
+        thread::sleep(MS * 100);
+        let polls = count() - before;
+        assert!((2..=5).contains(&polls), "{polls} reads for ~60 events");
+        // Gone with the source: the listener hears so.
+        drop(source);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while nudge.changed() {
+            assert!(Instant::now() < deadline, "the worker never stopped");
+            thread::sleep(MS);
+        }
     }
 
     /// lava-75z.22: a missed answer or two (Spotify busy over a track
@@ -585,7 +722,7 @@ mod tests {
         handle.play_pause();
         // Seen at once, before the worker has done anything.
         assert_eq!(handle.snapshot().status, Status::Paused);
-        let batch: Vec<_> = worker.commands.try_iter().collect();
+        let batch = drain(&worker);
         assert_eq!(worker.turn(batch), Cadence::default().after_command);
         assert_eq!(handle.snapshot().status, Status::Paused);
         assert_eq!(log.lock().unwrap()[1], vec![Command::PlayPause]);
@@ -611,7 +748,7 @@ mod tests {
         worker.turn(Vec::new());
         handle.play_pause();
         handle.set_shuffle(true);
-        let batch: Vec<_> = worker.commands.try_iter().collect();
+        let batch = drain(&worker);
         worker.turn(batch);
         let snap = handle.snapshot();
         assert_eq!((snap.status, snap.shuffle), (Status::Paused, true));
@@ -632,7 +769,7 @@ mod tests {
         });
         worker.turn(Vec::new());
         handle.next();
-        let batch: Vec<_> = worker.commands.try_iter().collect();
+        let batch = drain(&worker);
         worker.turn(batch);
         assert_eq!(
             handle.snapshot().status,
@@ -657,7 +794,7 @@ mod tests {
             worker(|_| Snapshot::new(Status::Unavailable(Unavailable::NotRunning), Instant::now()));
         worker.turn(Vec::new());
         handle.next();
-        assert_eq!(worker.commands.try_iter().count(), 0);
+        assert!(drain(&worker).is_empty());
         let none = Polled::unavailable(Unavailable::Unsupported);
         none.play_pause();
         assert_eq!(
@@ -787,7 +924,7 @@ mod tests {
     }
 
     /// Replays a `live_timing_audit` CSV (`LAVATUI_TIMING_CSV`): its
-    /// back-to-back readings, taken as the app's own every 250 ms (or
+    /// back-to-back readings, taken as the app's own every 1000 ms (or
     /// `LAVATUI_REPLAY_MS`), through [`Baseline`], against the truth (the
     /// median of each moment's nearby readings). Prints the error and how
     /// long each jump took to settle within 50 ms.
@@ -799,7 +936,7 @@ mod tests {
         let every: f64 = std::env::var("LAVATUI_REPLAY_MS")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(250.0);
+            .unwrap_or(1000.0);
         // (send, recv, playing, pos, track)
         let reads: Vec<(f64, f64, bool, f64, String)> = csv
             .lines()
@@ -936,7 +1073,7 @@ pub(crate) mod testing {
             not_responding: MS * 20,
             broken: MS * 20,
             after_command: MS * 5,
-            close: MS * 20,
+            after_event: MS * 5,
         }
     }
 

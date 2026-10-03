@@ -329,7 +329,7 @@ mod bus {
 
     use super::ModesCheck;
     use super::{Call, Meta, choose, fallback_name, keep_position, plan, snapshot};
-    use crate::media::worker::Backend;
+    use crate::media::worker::{Backend, Nudge};
     use crate::media::{Capabilities, Command, Snapshot, Status, Unavailable};
 
     const PATH: &str = "/org/mpris/MediaPlayer2";
@@ -428,7 +428,48 @@ mod bus {
         }
     }
 
+    /// The players' change signals, heard on a connection of their own:
+    /// dropping it closes the connection, which ends the listening thread.
+    struct Signals(Option<Connection>);
+
+    impl Drop for Signals {
+        fn drop(&mut self) {
+            if let Some(conn) = self.0.take() {
+                let _ = conn.close();
+            }
+        }
+    }
+
     impl Backend for Mpris {
+        /// Every signal a player sends on the MPRIS path
+        /// (`PropertiesChanged`: play, pause, track, volume; `Seeked`)
+        /// nudges the worker into a poll.
+        fn listen(&mut self, nudge: Nudge) -> Option<Box<dyn Send>> {
+            let conn = zbus::blocking::connection::Builder::session()
+                .ok()?
+                .build()
+                .ok()?;
+            let rule = zbus::MatchRule::builder()
+                .msg_type(zbus::message::Type::Signal)
+                .path(PATH)
+                .ok()?
+                .build();
+            let signals =
+                zbus::blocking::MessageIterator::for_match_rule(rule, &conn, Some(16)).ok()?;
+            std::thread::Builder::new()
+                .name("lavatui-media-events".into())
+                .spawn(move || {
+                    crate::thread_qos::worker();
+                    for signal in signals {
+                        if signal.is_err() || !nudge.changed() {
+                            break;
+                        }
+                    }
+                })
+                .ok()?;
+            Some(Box::new(Signals(Some(conn))))
+        }
+
         fn exchange(&mut self, commands: &[Command]) -> Snapshot {
             let mut snap = match self.try_exchange(commands) {
                 Ok(snap) => snap,
@@ -687,6 +728,45 @@ mod live {
         drop(fake);
         let snap = gone(&mut mpris);
         assert_eq!(snap.player, None);
+    }
+
+    #[test]
+    #[ignore = "needs a D-Bus session bus and python3-dbus-next (tools/linux/run.sh mpris)"]
+    fn changes_made_elsewhere_nudge_the_worker() {
+        use crate::media::worker::Nudge;
+        let _fake = Fake::start(&[]);
+        let mut ours = Mpris::new();
+        let (nudge, heard) = Nudge::channel();
+        let listening = ours.listen(nudge).expect("a session bus");
+        // Another app pauses, then seeks: each is heard at once.
+        let mut other = Mpris::new();
+        let heard_within = |what: &str, sent: Instant| {
+            assert!(
+                heard.recv_timeout(S).is_ok(),
+                "{what} wasn't heard within a second"
+            );
+            println!("{what}: heard {:?} after it was asked for", sent.elapsed());
+            while heard.try_recv().is_ok() {}
+        };
+        for (what, command) in [
+            ("a pause", Command::PlayPause),
+            ("a seek", Command::Seek(S * 30)),
+            ("a track change", Command::Next),
+        ] {
+            let sent = Instant::now();
+            other.exchange(&[command]);
+            heard_within(what, sent);
+        }
+        // Dropping it ends the listening (the thread's sender goes).
+        drop(listening);
+        let deadline = Instant::now() + S * 2;
+        loop {
+            match heard.recv_timeout(MS * 100) {
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                _ => assert!(Instant::now() < deadline, "still listening"),
+            }
+            other.exchange(&[Command::PlayPause]);
+        }
     }
 
     #[test]

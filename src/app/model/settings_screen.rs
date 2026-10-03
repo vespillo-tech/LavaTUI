@@ -16,7 +16,8 @@ use std::time::{Duration, Instant};
 use super::{Model, Overlay, depth_for, palette_named, pomodoro_config};
 use crate::clock;
 use crate::config::{
-    CellsChoice, ColorChoice, LoginStore, MinimalClock, Overridden, Settings, UiMode,
+    CellsChoice, ColorChoice, LYRICS_DELAY, LYRICS_DELAY_STEP, LoginStore, MinimalClock,
+    Overridden, Settings, UiMode,
 };
 use crate::disk_cache::size_words;
 use crate::dock::cover::{CoverSize, Detail};
@@ -168,6 +169,8 @@ pub enum Item {
     CoverDetail,
     CoverSize,
     InlineCover,
+    /// Lyrics sooner or later than the player says (`lyrics.delay_ms`).
+    LyricsTiming,
     Mouse,
     LampOnly,
     HintLine,
@@ -291,6 +294,18 @@ fn step_in(list: &[u32], current: u32, up: bool) -> Option<u32> {
         list.iter().copied().find(|&v| v > current)
     } else {
         list.iter().rev().copied().find(|&v| v < current)
+    }
+}
+
+/// `lyrics.delay_ms` in words: `on time`, `0.25 s later`, `0.1 s sooner`.
+fn lyrics_timing(ms: i32) -> String {
+    let secs = f64::from(ms.unsigned_abs()) / 1000.0;
+    let secs = format!("{secs:.2}");
+    let secs = secs.trim_end_matches('0').trim_end_matches('.');
+    match ms {
+        0 => "on time".into(),
+        1.. => format!("{secs} s later"),
+        _ => format!("{secs} s sooner"),
     }
 }
 
@@ -420,6 +435,7 @@ impl Model {
             Page::Music => {
                 out.push(Spotify);
                 with_position(widget("lyrics"), &mut out);
+                out.push(LyricsTiming);
                 out.extend([CoverDetail, CoverSize, InlineCover, ClearSaved]);
             }
             Page::Controls => out.push(Mouse),
@@ -626,6 +642,12 @@ impl Model {
                 "small cover with music",
                 on_off(s.art.inline),
                 "A little cover beside the song, while the album cover itself is off.",
+            ),
+            Item::LyricsTiming => choice(
+                "lyrics timing",
+                &lyrics_timing(s.lyrics.delay_ms),
+                "Words lighting up before you hear them? Move them later. After? Sooner. \
+                 Bluetooth headphones often need them a little later.",
             ),
             Item::Mouse => choice(
                 "mouse",
@@ -1397,6 +1419,19 @@ impl Model {
                 s.art.size = COVER_SIZES[i];
             }
             Item::InlineCover => s.art.inline = !s.art.inline,
+            Item::LyricsTiming => {
+                // The next step on the grid (from a hand-edited value too).
+                let (v, step) = (s.lyrics.delay_ms, LYRICS_DELAY_STEP);
+                let to = if up {
+                    (v.div_euclid(step) + 1) * step
+                } else {
+                    (v - 1).div_euclid(step) * step
+                };
+                if !(LYRICS_DELAY.0..=LYRICS_DELAY.1).contains(&to) {
+                    return;
+                }
+                s.lyrics.delay_ms = to;
+            }
             Item::Mouse => s.input.mouse = !s.input.mouse,
             Item::LoginStore => {
                 s.spotify.store = match s.spotify.store {
@@ -1460,6 +1495,7 @@ impl Model {
             Page::Widgets => s.dock = d.dock,
             Page::Music => {
                 s.art = d.art;
+                s.lyrics = d.lyrics;
                 if let Some((_, widget)) = dock::by_name("lyrics") {
                     s.dock.set(widget, d.dock.place(widget));
                     s.dock.set_anchor(widget, d.dock.anchor(widget));

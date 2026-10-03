@@ -453,6 +453,11 @@ have every song. When it has none, the lyrics box says so (for example
 "no lyrics on lrclib.net for this song"). Songs without singing say
 "instrumental". Lyrics also need an internet connection the first time.
 
+**Lyrics light up too early or too late.**
+Open settings (`,`), go to *music & lyrics*, and change *lyrics timing*
+with the arrow keys until the words match what you hear. Bluetooth
+headphones often need the lyrics a little later.
+
 **My Mac asks for a password about the "lavatui" keychain.**
 That's macOS guarding your Spotify login. LavaTUI keeps the login in
 your Keychain, and macOS asks before an app reads it. Type your Mac

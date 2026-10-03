@@ -472,3 +472,37 @@ fn the_seconds_row_turns_seconds_off_and_saves() {
     let (again, _) = model_at(path);
     assert!(!again.settings.clock.seconds);
 }
+
+#[test]
+fn lyrics_timing_steps_by_50_ms_within_a_second_and_saves() {
+    let path = temp_config("lyrics-timing");
+    let (mut m, t0) = model_at(path.clone());
+    assert_eq!(m.settings.lyrics.delay_ms, 0);
+    open(&mut m, t0, 3);
+    to(&mut m, t0, Item::LyricsTiming);
+    assert_eq!(row(&m, Item::LyricsTiming).value, "on time");
+    m.update(Action::Change(true), t0);
+    m.update(Action::Change(true), t0);
+    assert_eq!(m.settings.lyrics.delay_ms, 100);
+    assert_eq!(row(&m, Item::LyricsTiming).value, "0.1 s later");
+    for _ in 0..7 {
+        m.update(Action::Change(false), t0);
+    }
+    assert_eq!(m.settings.lyrics.delay_ms, -250);
+    assert_eq!(row(&m, Item::LyricsTiming).value, "0.25 s sooner");
+    // A second either way, no further.
+    for _ in 0..40 {
+        m.update(Action::Change(false), t0);
+    }
+    assert_eq!(m.settings.lyrics.delay_ms, -1000);
+    assert_eq!(row(&m, Item::LyricsTiming).value, "1 s sooner");
+    m.save();
+    let (mut again, _) = model_at(path);
+    assert_eq!(again.settings.lyrics.delay_ms, -1000);
+    // A hand-edited value steps onto the grid.
+    again.settings.lyrics.delay_ms = 30;
+    open(&mut again, t0, 3);
+    to(&mut again, t0, Item::LyricsTiming);
+    again.update(Action::Change(true), t0);
+    assert_eq!(again.settings.lyrics.delay_ms, 50);
+}

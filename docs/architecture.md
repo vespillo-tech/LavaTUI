@@ -150,8 +150,9 @@ until the clock or timer changes.
 Music costs about nothing: 3.4 % of a core at 80×24 with the music card
 vs 3.4 % without (60 s each, solid). Spotify is asked once a second
 through one `osascript` process that stays up (about 3.5 ms of CPU a
-poll; four a second, ~1.4 % of a core, while synced lyrics are on
-screen). Lyrics are one request per track, on their own thread, and
+poll: ~0.35 % of a core playing, ~0.12 % paused at one poll every 2 s),
+plus a second, idle one that hears Spotify's change notifications (no
+measurable CPU: under 0.01 s in 18 minutes). Lyrics are one request per track, on their own thread, and
 cached. The cover's cells are worked out once per track and size, so
 they add nothing per frame.
 
@@ -169,11 +170,48 @@ extrapolates minus that:
 
 (Six minutes each, side by side, with a pause, seeks and track skips in
 them.) Replaying those readings through `Baseline` with real pauses and
-seeks in them: polled every 250 ms (lyrics on screen) the 99th
+seeks in them: polled every 250 ms (what lava-75z.25 did while lyrics
+showed; events replace it now, below) the 99th
 percentile is +47 ms, once a second +131 ms; what's left is the time to
 see a change, plus Spotify holding the position still 250-400 ms after a
 seek while it buffers (followed at once now) and the odd poll Spotify
-takes 0.7 s to answer. The lead on top (lines 150 ms, words 50 ms) is a
+takes 0.7 s to answer.
+
+**Changes made in the player** (lava-75z.29). Between polls the
+position is predicted, so polling only needs to catch what changes in
+the player itself; the player says so instead, and the worker polls at
+once (then once more 300 ms on). Measured (the same audit, three
+variants side by side for 20 minutes, Spotify played and paused in
+between by hand):
+
+| | resume shown after | pause shown after | CPU while paused |
+|---|---|---|---|
+| polling every 1 s (2 s paused), no events | 129 ms (lucky: up to 2 s) | 394 ms (up to 1 s) | 0.12 % |
+| polling 4× a second (lava-75z.25, now gone) | 120 ms (up to 250 ms) | 13 ms (up to 250 ms) | 0.91 % |
+| events | 46 ms | 25 ms | 0.12 % (+ the idle helper) |
+
+Spotify's `com.spotify.client.PlaybackStateChanged` arrived within
+13 ms of play and pause (and on track changes). Seeks made in Spotify
+weren't tried (read-only), and its notification isn't known to cover
+them, so a seek in the app still shows at the next poll (within 1 s,
+0.5 s on average); a seek with LavaTUI's own keys shows at once (applied
+as it's sent). macOS delivers distributed notifications only to a
+main-thread run loop, so a JXA `osascript` helper listens
+(`src/media/notify.rs`) and exits with LavaTUI. On Linux, MPRIS
+`PropertiesChanged` and `Seeked` (seeks included) arrived 2-3 ms after
+another app's pause, seek or track change (the fake player in Docker,
+`mpris::live`). On Windows the media session's `PlaybackInfoChanged`,
+`TimelinePropertiesChanged` and `MediaPropertiesChanged` and the
+manager's `SessionsChanged` nudge it (lint-checked, not run). A player
+whose events stream (a ticking timeline) is read at most every 250 ms.
+
+One open question from the same run: at a pause, Spotify's reported
+position jumped back about 0.8 s from where playing had it (every
+variant saw it). Either Spotify steps back on pause, or while playing it
+reports a little ahead of what's heard; if lyrics ever feel early, that
+is the place to look (and *lyrics timing* moves them).
+
+The lead on top (lines 150 ms, words 50 ms) is a
 choice, not a correction. Word times are exact only when the lyrics
 have enhanced-LRC word tags; LRCLIB almost never does (none of 295
 synced versions of 19 popular songs), so words are usually estimated
@@ -181,10 +219,11 @@ synced versions of 19 popular songs), so words are usually estimated
 
 ```sh
 # Read-only against the running Spotify app (plays nothing, changes nothing):
-LAVATUI_TIMING_SECS=360 LAVATUI_TIMING_CLOSE=1 LAVATUI_TIMING_CSV=/tmp/t.csv \
+# (LAVATUI_TIMING_EVENTS=0 polls without listening for Spotify's events.)
+LAVATUI_TIMING_SECS=360 LAVATUI_TIMING_CSV=/tmp/t.csv \
   cargo test --release -- --ignored --nocapture live_timing_audit
 # The same readings replayed through the Baseline at a poll interval:
-LAVATUI_TIMING_CSV=/tmp/t.csv LAVATUI_REPLAY_MS=250 \
+LAVATUI_TIMING_CSV=/tmp/t.csv LAVATUI_REPLAY_MS=1000 \
   cargo test --release -- --ignored --nocapture baseline_replay
 ```
 
