@@ -123,7 +123,9 @@ impl<R: Runner> Backend for AppleMusic<R> {
             *track = self.cover(track);
         }
         self.known.update(&mut snapshot, incomplete);
-        if snapshot.status.is_available() {
+        // With nothing loaded Music takes shuffle / repeat and changes
+        // nothing (macOS 26.6): that says nothing about a song.
+        if snapshot.status.is_available() && snapshot.track.is_some() {
             for command in commands {
                 self.modes.sent(command, now);
             }
@@ -501,6 +503,18 @@ mod tests {
                 "volume 100"
             ]
         );
+    }
+
+    #[test]
+    fn with_nothing_loaded_shuffle_isnt_judged() {
+        let stopped = "lavatui1\u{1e}stopped\u{1e}0\u{1e}0\u{1e}0\u{1e}56";
+        let mut music = music(Canned::new([]), "nothing");
+        music.runner.replies.push_back(Ok(stopped.to_owned()));
+        music.exchange(&[Command::SetShuffle(true)]);
+        std::thread::sleep(crate::media::modes::MODES_GRACE);
+        music.runner.replies.push_back(Ok(stopped.to_owned()));
+        music.exchange(&[]);
+        assert!(music.capabilities().shuffle);
     }
 
     #[test]

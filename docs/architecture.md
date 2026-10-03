@@ -129,8 +129,9 @@ repeat and puts them back with `LAVATUI_LIVE_CHANGES=1`). Live on macOS
 26.6 (2026-10-03, a library song loaded and paused at volume 0): the
 song's details, length and cover came through; play/pause, volume,
 shuffle and repeat were all honoured (~60-75 ms a request). With nothing
-loaded Music accepts shuffle and repeat but doesn't change them (the app
-then stops offering them until restarted). Volume is exact except that
+loaded Music accepts shuffle and repeat but doesn't change them, so
+only changes made with a song loaded count when deciding whether Music
+ignores them. Volume is exact except that
 1 reads back as 0. Seek, next and previous weren't tried live (the same
 AppleScript as Spotify's, checked against Music's dictionary).
 
