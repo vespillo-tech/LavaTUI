@@ -5,8 +5,9 @@
 //! `GlobalSystemMediaTransportControlsSessionManager` (the `windows`
 //! crate), its async calls waited on with `join` on the worker thread.
 //! Everything else here is pure and platform-neutral (so its tests run
-//! anywhere): picking a session ([`choose`], [`app_name`]), status codes
-//! ([`status`]), the timeline ([`position`]) and the track ([`track`]).
+//! anywhere): picking a session ([`choose`], [`app_name`]), keeping event
+//! handlers on it ([`Subscribed`]), status codes ([`status`]), the
+//! timeline ([`position`]) and the track ([`track`]).
 //!
 //! What SMTC can't do: volume (no such control: `Capabilities::volume` is
 //! off), playing a URI (`Capabilities::uris` is off: the library plays
@@ -21,6 +22,7 @@
 
 use std::time::Duration;
 
+use super::worker::Nudge;
 use super::{Status, Track};
 
 /// 100 ns ticks (`TimeSpan`, `DateTime`) per millisecond.
@@ -50,6 +52,76 @@ pub fn choose<'a>(
         current: s.current,
         in_use: in_use == Some(s.app_id),
     }))
+}
+
+/// The session handlers kept ([`Subscribed`]): play / pause, timeline,
+/// media properties.
+pub const HANDLERS: usize = 3;
+
+/// A session whose change events can be handled (`windows`: an SMTC
+/// session; tests: a fake).
+pub trait Subscribe {
+    type Token;
+    /// Set handler `which` (`0..HANDLERS`), nudging `nudge`.
+    fn add(&self, which: usize, nudge: &Nudge) -> Result<Self::Token, ()>;
+    fn remove(&self, which: usize, token: Self::Token);
+    /// The same session object (a player quit and reopened is another one
+    /// with the same app id).
+    fn same(&self, other: &Self) -> bool;
+}
+
+/// Handlers on the session in use, moved with it: set all at once or not
+/// at all (a half-failed registration takes back what it set, and is tried
+/// again on the next exchange), removed when the session goes or is
+/// replaced, and when dropped.
+pub struct Subscribed<S: Subscribe>(Option<(S, Vec<S::Token>)>);
+
+impl<S: Subscribe> Default for Subscribed<S> {
+    fn default() -> Self {
+        Self(None)
+    }
+}
+
+impl<S: Subscribe + Clone> Subscribed<S> {
+    /// Keep the handlers on `session` (none: no session).
+    pub fn follow(&mut self, session: Option<&S>, nudge: &Nudge) {
+        if let (Some((now, _)), Some(session)) = (&self.0, session)
+            && now.same(session)
+        {
+            return;
+        }
+        self.clear();
+        let Some(session) = session else { return };
+        let mut tokens = Vec::with_capacity(HANDLERS);
+        for which in 0..HANDLERS {
+            match session.add(which, nudge) {
+                Ok(token) => tokens.push(token),
+                Err(()) => {
+                    for (which, token) in tokens.into_iter().enumerate() {
+                        session.remove(which, token);
+                    }
+                    return;
+                }
+            }
+        }
+        self.0 = Some((session.clone(), tokens));
+    }
+}
+
+impl<S: Subscribe> Subscribed<S> {
+    pub fn clear(&mut self) {
+        if let Some((session, tokens)) = self.0.take() {
+            for (which, token) in tokens.into_iter().enumerate() {
+                session.remove(which, token);
+            }
+        }
+    }
+}
+
+impl<S: Subscribe> Drop for Subscribed<S> {
+    fn drop(&mut self) {
+        self.clear();
+    }
 }
 
 fn is_spotify(app_id: &str) -> bool {
@@ -188,8 +260,8 @@ mod backend {
     use windows::core::{IUnknown, Interface};
 
     use super::{
-        Candidate, Cover, UNIX_EPOCH_TICKS, app_name, choose, duration, position, status, to_ticks,
-        track,
+        Candidate, Cover, Subscribe, Subscribed, UNIX_EPOCH_TICKS, app_name, choose, duration,
+        position, status, to_ticks, track,
     };
     use windows::Foundation::TypedEventHandler;
 
@@ -207,25 +279,65 @@ mod backend {
         in_use: Option<String>,
         /// Where change events go ([`Backend::listen`]).
         nudge: Option<Nudge>,
-        /// The manager's and the session's event handlers, while set.
-        events: Option<Events>,
+        /// The manager's handler (players coming and going), while set.
+        sessions_changed: Option<(Manager, i64)>,
+        /// The handlers on the session in use.
+        events: Subscribed<Live>,
     }
 
-    /// Handlers on the session in use (play / pause, position, track) and
-    /// on the manager (players coming and going), each nudging the worker.
-    /// Removed when dropped (another session chosen, the manager lost).
-    struct Events {
-        manager: (Manager, i64),
-        session: Option<(String, Session, [i64; 3])>,
-    }
-
-    impl Drop for Events {
+    impl Drop for Smtc {
         fn drop(&mut self) {
-            let _ = self.manager.0.RemoveSessionsChanged(self.manager.1);
-            if let Some((_, session, [a, b, c])) = self.session.take() {
-                let _ = session.RemovePlaybackInfoChanged(a);
-                let _ = session.RemoveTimelinePropertiesChanged(b);
-                let _ = session.RemoveMediaPropertiesChanged(c);
+            self.unsubscribe();
+        }
+    }
+
+    /// A session, with its identity (COM identity: its `IUnknown`'s
+    /// address, unique while the session is held) for telling a reopened
+    /// player's new session from the old one.
+    #[derive(Clone)]
+    struct Live {
+        session: Session,
+        identity: Option<usize>,
+    }
+
+    impl Live {
+        fn new(session: Session) -> Self {
+            let identity = identity(&session);
+            Self { session, identity }
+        }
+    }
+
+    fn identity(session: &Session) -> Option<usize> {
+        let unknown = session.cast::<IUnknown>().ok()?;
+        Some(unknown.as_raw() as usize)
+    }
+
+    impl Subscribe for Live {
+        type Token = i64;
+
+        fn add(&self, which: usize, nudge: &Nudge) -> Result<i64, ()> {
+            let s = &self.session;
+            match which {
+                0 => s.PlaybackInfoChanged(&nudging(nudge)),
+                1 => s.TimelinePropertiesChanged(&nudging(nudge)),
+                _ => s.MediaPropertiesChanged(&nudging(nudge)),
+            }
+            .map_err(|_| ())
+        }
+
+        fn remove(&self, which: usize, token: i64) {
+            let s = &self.session;
+            let _ = match which {
+                0 => s.RemovePlaybackInfoChanged(token),
+                1 => s.RemoveTimelinePropertiesChanged(token),
+                _ => s.RemoveMediaPropertiesChanged(token),
+            };
+        }
+
+        fn same(&self, other: &Self) -> bool {
+            match (&self.identity, &other.identity) {
+                (Some(a), Some(b)) => a == b,
+                _ => self.session == other.session,
             }
         }
     }
@@ -265,14 +377,15 @@ mod backend {
             commands: &[Command],
         ) -> windows::core::Result<(Snapshot, Option<Arc<str>>)> {
             let manager = self.manager()?;
-            let Some(session) = session(&manager, self.in_use.as_deref())? else {
+            let chosen = session(&manager, self.in_use.as_deref())?;
+            self.follow(&manager, chosen.as_ref());
+            let Some(session) = chosen else {
                 self.in_use = None;
                 let snap =
                     Snapshot::new(Status::Unavailable(Unavailable::NotRunning), Instant::now());
                 return Ok((snap, None));
             };
             let id = session.SourceAppUserModelId()?.to_string();
-            self.follow(&manager, &id, &session);
             let name: Arc<str> = Arc::from(app_name(&id));
             self.in_use = Some(id);
             for command in commands {
@@ -283,6 +396,10 @@ mod backend {
             let status = status(info.PlaybackStatus()?.0);
             let timeline = session.GetTimelineProperties()?;
             let (start, end) = (timeline.StartTime()?.Duration, timeline.EndTime()?.Duration);
+            // The position is true now: stamped here, not after the slow
+            // metadata and cover reads below (the worker's Baseline takes
+            // the stamp as when it was read).
+            let sampled_at = Instant::now();
             let now_ticks = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map_or(0, to_ticks)
@@ -319,50 +436,39 @@ mod backend {
                 position: at,
                 shuffle,
                 repeat,
-                ..Snapshot::new(status, Instant::now())
+                ..Snapshot::new(status, sampled_at)
             };
             Ok((snap, Some(name)))
         }
 
-        /// Keep event handlers on `manager` and on `session` (app `id`),
-        /// moving them when another session is in use. Best effort: a
-        /// handler that can't be set leaves polling to catch the change.
-        fn follow(&mut self, manager: &Manager, id: &str, session: &Session) {
-            let Some(nudge) = &self.nudge else { return };
-            if self
-                .events
-                .as_ref()
-                .is_some_and(|e| &e.manager.0 != manager)
-            {
-                self.events = None;
-            }
-            if self.events.is_none() {
-                let Ok(token) = manager.SessionsChanged(&nudging(nudge)) else {
-                    return;
-                };
-                self.events = Some(Events {
-                    manager: (manager.clone(), token),
-                    session: None,
-                });
-            }
-            let Some(events) = &mut self.events else {
+        /// Keep event handlers on `manager` and on `session` (none: no
+        /// session), moving them when another session is in use. Best
+        /// effort: a handler that can't be set leaves polling to catch the
+        /// change, and is tried again next time.
+        fn follow(&mut self, manager: &Manager, session: Option<&Session>) {
+            let Some(nudge) = self.nudge.clone() else {
                 return;
             };
-            if events.session.as_ref().is_some_and(|(at, ..)| at == id) {
-                return;
+            if self
+                .sessions_changed
+                .as_ref()
+                .is_some_and(|(at, _)| at != manager)
+            {
+                self.unsubscribe();
             }
-            if let Some((_, old, [a, b, c])) = events.session.take() {
-                let _ = old.RemovePlaybackInfoChanged(a);
-                let _ = old.RemoveTimelinePropertiesChanged(b);
-                let _ = old.RemoveMediaPropertiesChanged(c);
+            if self.sessions_changed.is_none()
+                && let Ok(token) = manager.SessionsChanged(&nudging(&nudge))
+            {
+                self.sessions_changed = Some((manager.clone(), token));
             }
-            let tokens = (
-                session.PlaybackInfoChanged(&nudging(nudge)),
-                session.TimelinePropertiesChanged(&nudging(nudge)),
-                session.MediaPropertiesChanged(&nudging(nudge)),
-            );
-            if let (Ok(a), Ok(b), Ok(c)) = tokens {
-                events.session = Some((id.to_owned(), session.clone(), [a, b, c]));
+            self.events
+                .follow(session.cloned().map(Live::new).as_ref(), &nudge);
+        }
+
+        fn unsubscribe(&mut self) {
+            self.events.clear();
+            if let Some((manager, token)) = self.sessions_changed.take() {
+                let _ = manager.RemoveSessionsChanged(token);
             }
         }
     }
@@ -382,7 +488,7 @@ mod backend {
                     snap
                 }
                 Err(err) => {
-                    self.events = None;
+                    self.unsubscribe();
                     self.manager = None;
                     Snapshot::new(
                         Status::Unavailable(Unavailable::Error(format!(
@@ -444,12 +550,6 @@ mod backend {
         Ok(choose(candidates, in_use).map(|i| found.swap_remove(i).0))
     }
 
-    /// The session's COM identity (its `IUnknown`'s address).
-    fn identity(session: &Session) -> Option<usize> {
-        let unknown = session.cast::<IUnknown>().ok()?;
-        Some(unknown.as_raw() as usize)
-    }
-
     fn send(session: &Session, command: &Command) -> windows::core::Result<bool> {
         match command {
             Command::PlayPause => session.TryTogglePlayPauseAsync()?.join(),
@@ -507,6 +607,87 @@ mod tests {
         let none = [at("chrome", false, false), at("MSEdge", false, false)];
         assert_eq!(choose(none, None), Some(0));
         assert_eq!(choose([], None), None);
+    }
+
+    /// A session whose handlers are counted; `fail` makes that handler's
+    /// registration fail.
+    #[derive(Clone)]
+    struct FakeSession {
+        id: u32,
+        live: std::rc::Rc<std::cell::RefCell<Vec<(u32, usize)>>>,
+        fail: Option<usize>,
+    }
+
+    impl Subscribe for FakeSession {
+        type Token = (u32, usize);
+        fn add(&self, which: usize, _: &Nudge) -> Result<Self::Token, ()> {
+            if self.fail == Some(which) {
+                return Err(());
+            }
+            self.live.borrow_mut().push((self.id, which));
+            Ok((self.id, which))
+        }
+        fn remove(&self, which: usize, token: Self::Token) {
+            assert_eq!(token, (self.id, which), "removed from the session it's on");
+            let mut live = self.live.borrow_mut();
+            let i = live.iter().position(|t| *t == token).expect("live");
+            live.remove(i);
+        }
+        fn same(&self, other: &Self) -> bool {
+            self.id == other.id
+        }
+    }
+
+    #[test]
+    fn handlers_follow_the_session_object_not_its_app_id() {
+        let (nudge, _rx) = Nudge::channel();
+        let live = std::rc::Rc::default();
+        let session = |id| FakeSession {
+            id,
+            live: std::rc::Rc::clone(&live),
+            fail: None,
+        };
+        let mut subs = Subscribed::default();
+        subs.follow(Some(&session(1)), &nudge);
+        subs.follow(Some(&session(1)), &nudge);
+        assert_eq!(*live.borrow(), [(1, 0), (1, 1), (1, 2)], "set once");
+        // Spotify quit: its handlers go...
+        subs.follow(None, &nudge);
+        assert!(live.borrow().is_empty());
+        // ...and reopened (same app id, a new session object), they're
+        // set on the new one (claude review #3, codex #4).
+        subs.follow(Some(&session(2)), &nudge);
+        assert_eq!(*live.borrow(), [(2, 0), (2, 1), (2, 2)]);
+        // Replaced without a gap: moved over.
+        subs.follow(Some(&session(3)), &nudge);
+        assert_eq!(*live.borrow(), [(3, 0), (3, 1), (3, 2)]);
+        drop(subs);
+        assert!(live.borrow().is_empty(), "removed when dropped");
+    }
+
+    #[test]
+    fn a_half_failed_registration_leaks_nothing_and_is_tried_again() {
+        let (nudge, _rx) = Nudge::channel();
+        for fail in 0..HANDLERS {
+            let live = std::rc::Rc::default();
+            let mut subs = Subscribed::default();
+            let broken = FakeSession {
+                id: 1,
+                live: std::rc::Rc::clone(&live),
+                fail: Some(fail),
+            };
+            for _ in 0..5 {
+                subs.follow(Some(&broken), &nudge);
+                assert!(live.borrow().is_empty(), "handler {fail} failed: none kept");
+            }
+            // Once it works, it's set (tried again, not given up on).
+            let fixed = FakeSession {
+                fail: None,
+                ..broken
+            };
+            subs.follow(Some(&fixed), &nudge);
+            assert_eq!(live.borrow().len(), HANDLERS);
+        }
     }
 
     #[test]

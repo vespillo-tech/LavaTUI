@@ -91,6 +91,10 @@ What changed in each version of LavaTUI, in plain words.
   controls away from another app that is playing. LavaTUI follows
   whatever is playing, Spotify first only while it plays. When you pause,
   the keys stay with the player you paused.
+- On Windows, after you quit and reopen your music app, LavaTUI again
+  hears about play, pause and skip straight away, instead of up to a
+  second late. Lyrics also keep better time when the app is slow to
+  share a song's details.
 
 ## 1.2.0 — 2026-10-02 — first public release
 

@@ -81,7 +81,7 @@ pub struct Nudge(Sender<Msg>);
 
 impl Nudge {
     /// A nudge and what it sends, for testing a listener.
-    #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+    #[cfg(test)]
     pub(crate) fn channel() -> (Self, Receiver<Msg>) {
         let (tx, rx) = mpsc::channel();
         (Self(tx), rx)
