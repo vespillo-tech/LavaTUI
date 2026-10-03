@@ -4,7 +4,8 @@ A day in three scenes, cut together so it plays as one calm recording:
 morning focus (solid, lava, the clock and focus timer beside the lamp,
 the timer starting), evening music (synthwave, the music card and karaoke
 lyrics beside the lamp, the cover on it coming into focus), late night
-(abyss, the clock at 23:30 beside the lamp, slow wax).
+(on a big screen: matrix, abyss, wax at the top, everything floating on
+the lava in two stacked groups, "Late at night the room is blue").
 
 Every scene state is its own take: the same seed and window, the hidden
 `--frame-clock` (time moves exactly one frame a frame, so frame k is the
@@ -42,6 +43,8 @@ DISSOLVE = 8
 def toml(**sections):
     """capture.py's `;`-separated TOML from {section: {key: value}}."""
     def lit(v):
+        if isinstance(v, dict):
+            return "{ " + ", ".join(f"{k} = {lit(x)}" for k, x in v.items()) + " }"
         return ("true" if v else "false") if isinstance(v, bool) else f'"{v}"' if isinstance(v, str) else str(v)
     return ";".join(f"[{s}];" + ";".join(f"{k}={lit(v)}" for k, v in kv.items()) for s, kv in sections.items())
 
@@ -49,16 +52,29 @@ def toml(**sections):
 OFF = dict(clock="off", pomodoro="off", music="off", lyrics="off", cover="off")
 
 
-def scene(style, palette, dock=None, minimal=False, art=None):
+def scene(style, palette, dock=None, minimal=False, art=None, lamp=None, clock=None):
     ui = dict(status_bar=False, mode="minimal" if minimal else "full")
     sections = dict(
-        ui=ui, minimal=dict(clock="off"), clock=dict(seconds=False),
-        lamp=dict(style=style), theme=dict(palette=palette),
+        ui=ui, minimal=dict(clock="off"), clock=dict(seconds=False, **(clock or {})),
+        lamp=dict(style=style, **(lamp or {})), theme=dict(palette=palette),
         dock=dict(OFF, backing="soft", **(dock or {})),
     )
     if art:
-        sections["art"] = dict(detail=art)
+        sections["art"] = art if isinstance(art, dict) else dict(detail=art)
     return toml(**sections)
+
+
+# A big monitor, everything floating on the lava in two stacked groups:
+# the clock and timer top right; the music card, cover and lyrics bottom
+# right (the layout the user runs at 343×68, here at 150×45 so it can be
+# read at README width: drawn at 2/3 scale, it fills the same frame).
+BIG = (150, 45)
+BIG_DOCK = dict(
+    clock="overlay", pomodoro="overlay", music="overlay", cover="overlay", lyrics="overlay",
+    text="light",
+    anchor=dict(clock="top-right", pomodoro="top-right", music="bottom-right",
+                cover="bottom-right", lyrics="bottom-right"),
+)
 
 
 # The side panel is 30 columns at 100, whatever it holds, so the lamp is
@@ -75,10 +91,18 @@ TAKES = {
         f"evening-{d}": (scene("synthwave", "synthwave", MUSIC, art=d), SONG, "19:30")
         for d in ["big-pixels", "medium-pixels", "small-pixels", "sharp"]
     },
-    # Not lamp only: dropping the panel widens the lamp, and the wax then
-    # re-centres in one frame (the walls ease, the view doesn't).
-    "night": (scene("solid", "abyss", dict(clock="side")), "18:-", "23:30"),
+    # Late night on the big screen. "Warm Light Falling" (two songs on)
+    # from 0:00, so "Late at night the room is blue" comes as it appears.
+    "night": (
+        scene("matrix", "abyss", BIG_DOCK, lamp=dict(top_wax=True, heat=3),
+              clock=dict(face="analog", hour24=True),
+              art=dict(detail="sharp", size="large", inline=True)),
+        "7.3:A,7.5:n,7.7:n,7.9:A", "23:30", BIG,
+    ),
 }
+# Scenes that open with a dissolve rather than a cut (a different window:
+# the wax can't match), over this many frames.
+DISSOLVE_IN = {"night": 8}
 
 # (take, first frame, end frame): the film.
 CUT = [
@@ -89,14 +113,17 @@ CUT = [
     ("evening-sharp", 111, 155),
     ("night", 155, 225),
 ]
-# Which parts share a palette (a scene's colours).
+# Which parts share a palette (a scene's colours), and how many colours:
+# the night is nearly all teal, and its matrix rain is costly.
 SCENES = [["morning"], [n for n in TAKES if n.startswith("evening")], ["night"]]
+SCENE_COLOURS = [COLOURS, COLOURS, 64]
 
 
 def take(name, seed=SEED, frames=None):
-    cfg, keys, clock = TAKES[name]
+    cfg, keys, clock, *size = TAKES[name]
+    cols, rows = size[0] if size else (COLS, ROWS)
     end = frames or max(e for _, _, e in CUT) + DISSOLVE + 5
-    shot = capture.Shot(COLS, ROWS, cfg, keys, f"--seed {seed} --fps {FPS} --demo --frame-clock {clock}", frames=end)
+    shot = capture.Shot(cols, rows, cfg, keys, f"--seed {seed} --fps {FPS} --demo --frame-clock {clock}", frames=end)
     snaps = []
     capture.run(shot, snaps)
     return snaps
@@ -108,21 +135,24 @@ def record(names):
 
 
 def frame(takes, name, k):
-    return capture.draw(takes[name][k])
+    """Frame `k` of a take, at the film's size (a bigger window drawn smaller)."""
+    im = capture.draw(takes[name][k])
+    size = (COLS * capture.CW, ROWS * capture.CH)
+    return im if im.size == size else im.resize(size, Image.LANCZOS)
 
 
 def encode(parts, out):
     """`parts`: [(frames, colours)] → one GIF, each part its own palette."""
     tmp = tempfile.mkdtemp()
     gifs = []
-    for i, frames in enumerate(parts):
+    for i, (frames, colours) in enumerate(parts):
         d = f"{tmp}/p{i}"
         os.makedirs(d)
         for j, im in enumerate(frames):
             im.resize((round(im.width * SCALE), round(im.height * SCALE)), Image.LANCZOS).save(f"{d}/f{j:04d}.png")
         g = f"{tmp}/p{i}.gif"
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-framerate", str(FPS), "-i", f"{d}/f%04d.png",
-                        "-vf", f"split[a][b];[a]palettegen=max_colors={COLOURS}:stats_mode=full[p];"
+                        "-vf", f"split[a][b];[a]palettegen=max_colors={colours}:stats_mode=full[p];"
                         "[b][p]paletteuse=dither=none", "-loop", "0", g], check=True)
         gifs.append(g)
     subprocess.run(["gifsicle", "-O3", "--no-warnings", "--merge", *gifs, "-o", out], check=True)
@@ -131,9 +161,20 @@ def encode(parts, out):
 def film(takes):
     parts = []
     for names in SCENES:
-        parts.append([frame(takes, n, k) for n, a, b in CUT if n in names for k in range(a, b)])
-    first, (name, _, end) = parts[0][0], CUT[-1]
-    parts[-1] += [Image.blend(frame(takes, name, end + j), first, (j + 1) / (DISSOLVE + 1)) for j in range(DISSOLVE)]
+        frames = []
+        for i, (n, a, b) in enumerate(CUT):
+            if n not in names:
+                continue
+            fade = DISSOLVE_IN.get(n, 0)
+            prev = CUT[i - 1][0]
+            for k in range(a, b):
+                im = frame(takes, n, k)
+                if k - a < fade:
+                    im = Image.blend(frame(takes, prev, k), im, (k - a + 1) / (fade + 1))
+                frames.append(im)
+        parts.append([frames, SCENE_COLOURS[len(parts)]])
+    first, (name, _, end) = parts[0][0][0], CUT[-1]
+    parts[-1][0] += [Image.blend(frame(takes, name, end + j), first, (j + 1) / (DISSOLVE + 1)) for j in range(DISSOLVE)]
     return parts
 
 
