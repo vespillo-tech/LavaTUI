@@ -1707,6 +1707,30 @@ fn the_demo_is_logged_in_to_a_made_up_account() {
     assert_eq!(m.settings.spotify.logged_in, saved);
 }
 
+#[test]
+fn the_demo_never_saves_spotify_settings() {
+    let (mut m, t0) = demo_model("demo-saves");
+    let path = temp_config("demo-saves");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "[spotify]\nlogged_in = true\n").unwrap();
+    m.store = Some(Store::new(Some(path.clone())));
+    m.file = m.store.as_mut().unwrap().load().settings;
+    // What the demo's Spotify page can change, plus one ordinary setting.
+    m.settings.spotify.client_id = "0123456789abcdef0123456789abcdef".into();
+    m.settings.spotify.store = crate::config::LoginStore::File;
+    m.settings.spotify.logged_in = false;
+    m.settings.lamp.heat = 1;
+    m.changed(t0);
+    m.save();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("logged_in = true"), "{text}");
+    assert!(
+        !text.contains("client_id") && !text.contains("store"),
+        "{text}"
+    );
+    assert!(text.contains("heat = 1"), "the rest is saved: {text}");
+}
+
 /// [`demo_model`] with the demo's player and account kept to look at.
 fn demo_rig(name: &str) -> (Model, Instant, FakeSource, FakeWeb) {
     let (mut m, t0) = demo_model(name);

@@ -50,7 +50,8 @@ pub struct Cli {
     #[arg(long, value_name = "PATH", hide = true)]
     pub trace: Option<PathBuf>,
 
-    /// A made-up player, cover and lyrics (screenshots, the README demo).
+    /// A made-up player, covers, lyrics and Spotify account (screenshots,
+    /// the README demo). Without --config it reads and saves no settings.
     #[arg(long, hide = true)]
     pub demo: bool,
 

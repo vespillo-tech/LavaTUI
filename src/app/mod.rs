@@ -52,7 +52,7 @@ pub fn run(
     panic_after: Option<u64>,
     trace_path: Option<&Path>,
 ) -> io::Result<Vec<String>> {
-    let store = Store::new(session.config_path.clone());
+    let store = Store::for_session(session);
     let size = terminal.size()?;
     let cell = reported_cell();
     let mut model = Model::new(

@@ -651,7 +651,12 @@ impl Model {
         if self.save_at.take().is_none() {
             return;
         }
-        let out = config::to_persist(&self.settings, &self.file, &self.overridden);
+        let mut out = config::to_persist(&self.settings, &self.file, &self.overridden);
+        if self.library.demo {
+            // The demo's Spotify page drives a made-up account: what it
+            // changes there (Client ID, login store) is never written down.
+            out.spotify.clone_from(&self.file.spotify);
+        }
         if let Some(saver) = &mut self.saver {
             saver.submit(out);
             return;
