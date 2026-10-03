@@ -56,6 +56,79 @@ pub trait Backend: Send + 'static {
     }
 }
 
+/// When the worker polls next, apart from commands (always at once):
+/// - by the [`Cadence`] after each poll;
+/// - at once for a change event, unless one polled less than
+///   [`EVENT_GAP`] ago (a player whose events stream, a ticking
+///   timeline, is read at most that often);
+/// - `after_event` after the last event of a burst (each event moves it),
+///   for a player that tells before its state reads the new way, and
+///   again after that while readings disagree, [`FOLLOWUPS`] times at most.
+///
+/// Pure, on the instants it's given, so it's tested on a fake clock.
+#[derive(Debug)]
+struct Schedule {
+    after_event: Duration,
+    /// The next poll by the cadence.
+    cadence: Instant,
+    /// The last poll an event brought on.
+    evented: Option<Instant>,
+    /// The re-read after the last event.
+    reread: Option<Instant>,
+    /// Re-reads left while readings disagree.
+    followups: u8,
+}
+
+impl Schedule {
+    fn new(now: Instant, after_event: Duration) -> Self {
+        Self {
+            after_event,
+            cadence: now,
+            evented: None,
+            reread: None,
+            followups: 0,
+        }
+    }
+
+    /// When the next poll is due.
+    fn due(&self) -> Instant {
+        self.reread.map_or(self.cadence, |r| r.min(self.cadence))
+    }
+
+    /// A change event at `now`: whether to poll for it now. Either way the
+    /// re-read moves to `after_event` from now.
+    fn event(&mut self, now: Instant) -> bool {
+        self.reread = Some(now + self.after_event);
+        self.followups = FOLLOWUPS;
+        if self.evented.is_some_and(|at| now < at + EVENT_GAP) {
+            return false;
+        }
+        self.evented = Some(now);
+        true
+    }
+
+    /// Whether a poll at `now` is the re-read (which is then done).
+    fn take_reread(&mut self, now: Instant) -> bool {
+        let due = self.reread.is_some_and(|at| now >= at);
+        if due {
+            self.reread = None;
+        }
+        due
+    }
+
+    /// A poll ended at `now`; the cadence says `wait` until the next.
+    /// After an event's poll or its re-read, while the readings disagree
+    /// (`unsettled`: a track held still a moment before it plays), read
+    /// again `after_event` on.
+    fn polled(&mut self, now: Instant, wait: Duration, after_event: bool, unsettled: bool) {
+        self.cadence = now + wait;
+        if after_event && self.reread.is_none() && self.followups > 0 && unsettled {
+            self.followups -= 1;
+            self.reread = Some(now + self.after_event);
+        }
+    }
+}
+
 /// Re-reads after an event while readings still disagree (a track that
 /// starts a moment after it's announced settles within these).
 const FOLLOWUPS: u8 = 3;
@@ -373,21 +446,9 @@ impl<B: Backend> Worker<B> {
     fn run(mut self, nudge: Nudge) {
         // Kept until the worker ends; dropping it stops the listening.
         let _listening = self.backend.listen(nudge);
-        // The next poll by the cadence; the last poll an event brought on;
-        // an event waiting for its poll (EVENT_GAP after that one); the
-        // re-read after_event after the last event of a burst.
-        let mut scheduled = Instant::now();
-        let mut evented: Option<Instant> = None;
-        let mut held = false;
-        let mut reread: Option<Instant> = None;
-        // Re-reads left while readings after an event disagree.
-        let mut followups = 0;
+        let mut schedule = Schedule::new(Instant::now(), self.cadence.after_event);
         loop {
-            let gap = evented.filter(|_| held).map(|at| at + EVENT_GAP);
-            let due = [Some(scheduled), gap, reread].into_iter().flatten().min();
-            let wait = due.map_or(Duration::ZERO, |d| {
-                d.saturating_duration_since(Instant::now())
-            });
+            let wait = schedule.due().saturating_duration_since(Instant::now());
             let (batch, changed, stop) = match self.commands.recv_timeout(wait) {
                 Ok(first) => split(std::iter::once(first).chain(self.commands.try_iter())),
                 Err(RecvTimeoutError::Timeout) => (Vec::new(), false, false),
@@ -397,41 +458,23 @@ impl<B: Backend> Worker<B> {
                 return;
             }
             let now = Instant::now();
-            // An event polls at once; more within EVENT_GAP of that (a
-            // player whose timeline ticks) wait for one poll at the gap.
-            // The last of a burst gets a re-read after_event later (each
-            // event moves it), for a player that tells before its state
-            // reads the new way.
-            if changed {
-                reread = Some(now + self.cadence.after_event);
-                followups = FOLLOWUPS;
-            }
-            let event = changed && batch.is_empty();
-            if event && evented.is_some_and(|at| now < at + EVENT_GAP) {
-                held = true;
+            let event = changed && schedule.event(now);
+            if changed && batch.is_empty() && !event {
+                // Within EVENT_GAP of the last event's poll: its re-read
+                // (now moved later) covers it.
                 continue;
             }
-            if event || (held && gap.is_some_and(|g| now >= g)) {
+            if event {
                 crate::diag::note(|| "player: change event".to_owned());
-                evented = Some(now);
-                held = false;
             }
-            let rereading = reread.is_some_and(|at| now >= at);
-            if rereading {
-                reread = None;
-            }
-            scheduled = Instant::now() + self.turn(batch);
-            // After an event, until two readings agree on where playback
-            // is (a new track that starts a moment after it's announced),
-            // read again soon rather than at the cadence.
-            if (rereading || event)
-                && reread.is_none()
-                && followups > 0
-                && self.baseline.unsettled()
-            {
-                followups -= 1;
-                reread = Some(Instant::now() + self.cadence.after_event);
-            }
+            let rereading = schedule.take_reread(now);
+            let wait = self.turn(batch);
+            schedule.polled(
+                Instant::now(),
+                wait,
+                event || rereading,
+                self.baseline.unsettled(),
+            );
         }
     }
 
@@ -670,23 +713,35 @@ mod tests {
             thread::sleep(MS);
         };
         assert!(nudge.changed());
-        thread::sleep(MS * 700);
+        // Re-reads until two agree (the schedule's own tests say when); on
+        // the thread: the stall is followed and the position ends up right,
+        // long before the 60 s cadence, with a few reads, not many.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let at = source.snapshot().position_at(Instant::now());
+            let first = reads.lock().unwrap()[0];
+            let truth = Instant::now().saturating_duration_since(first + MS * 250);
+            if reads.lock().unwrap().len() >= 3 && at.abs_diff(truth) < MS * 50 {
+                break;
+            }
+            assert!(Instant::now() < deadline, "{at:?} vs {truth:?}");
+            thread::sleep(MS * 10);
+        }
+        thread::sleep(MS * 500);
         let n = reads.lock().unwrap().len();
-        // The first read, the event's, then re-reads until two agree
-        // (~100 ms apart, a few at most), not one more at the cadence.
-        assert!((4..=6).contains(&n), "{n} reads");
-        let at = source.snapshot().position_at(Instant::now());
-        let truth = Instant::now().saturating_duration_since(reads.lock().unwrap()[0] + MS * 250);
-        assert!(at.abs_diff(truth) < MS * 30, "{at:?} vs {truth:?}");
+        assert!(n <= 2 + 1 + FOLLOWUPS as usize, "{n} reads");
     }
 
     #[test]
-    fn a_change_event_polls_at_once_and_once_more_after() {
+    fn a_change_event_polls_at_once_on_the_thread() {
+        // The schedule's timing is tested on a fake clock below; here, on
+        // a real thread: an event brings a read long before the (60 s)
+        // cadence would, a burst doesn't bring a flood, and the listener
+        // hears when the worker is gone.
         let (nudge, reads) = (Arc::default(), Arc::default());
         let slow = Cadence {
             playing: Duration::from_secs(60),
-            // Far apart from "at once", even on a busy machine.
-            after_event: MS * 400,
+            after_event: MS * 100,
             ..testing::fast()
         };
         let source = Polled::spawn(Evented::new(&nudge, &reads), slow);
@@ -705,37 +760,83 @@ mod tests {
             }
             thread::sleep(MS);
         };
-        thread::sleep(MS * 100);
-        assert_eq!(count(), 1, "nothing until the player says so");
-        let sent = Instant::now();
-        // A burst of events is one read (and one re-read).
         for _ in 0..3 {
             assert!(nudge.changed());
         }
-        wait(3);
-        let reads = reads.lock().unwrap().clone();
-        assert!(reads[1] - sent < MS * 300, "at once: {:?}", reads[1] - sent);
-        assert!(reads[2] - reads[1] >= MS * 400, "then once more");
-        thread::sleep(MS * 150);
-        assert!(count() <= 4, "{}", count());
-        // A stream of events (a timeline ticking): read every EVENT_GAP
-        // at most, not once per event.
-        let before = count();
-        let start = Instant::now();
-        while start.elapsed() < MS * 600 {
-            nudge.changed();
-            thread::sleep(MS * 10);
-        }
-        thread::sleep(MS * 100);
-        let polls = count() - before;
-        assert!((1..=6).contains(&polls), "{polls} reads for ~60 events");
-        // Gone with the source: the listener hears so.
+        wait(3); // the event's read and its re-read
+        thread::sleep(MS * 300);
+        assert!(count() <= 5, "{} reads for a burst of 3", count());
         drop(source);
         let deadline = Instant::now() + Duration::from_secs(2);
         while nudge.changed() {
             assert!(Instant::now() < deadline, "the worker never stopped");
             thread::sleep(MS);
         }
+    }
+
+    /// `t(ms)`: a fake clock.
+    fn clock() -> impl Fn(u64) -> Instant {
+        let t0 = Instant::now();
+        move |ms| t0 + MS * ms as u32
+    }
+
+    #[test]
+    fn schedule_an_event_polls_at_once_then_rereads_after_the_burst() {
+        let t = clock();
+        let mut s = Schedule::new(t(0), MS * 300);
+        s.polled(t(0), Duration::from_secs(1), false, false);
+        assert_eq!(s.due(), t(1000), "the cadence");
+        // A burst, however it arrives: one poll at once…
+        assert!(s.event(t(10)));
+        assert!(!s.take_reread(t(10)));
+        s.polled(t(30), Duration::from_secs(1), true, false);
+        assert!(!s.event(t(35)), "within the gap: no poll of its own");
+        assert!(!s.event(t(60)));
+        // …and one re-read, after_event after its last event.
+        assert_eq!(s.due(), t(360));
+        assert!(s.take_reread(t(360)));
+        s.polled(t(380), Duration::from_secs(1), true, false);
+        assert_eq!(s.due(), t(1380), "settled: back to the cadence");
+    }
+
+    #[test]
+    fn schedule_a_stream_of_events_is_read_at_most_every_gap() {
+        let t = clock();
+        let mut s = Schedule::new(t(0), MS * 300);
+        let mut polls = Vec::new();
+        for ms in (0..1000).step_by(10) {
+            if s.event(t(ms)) {
+                polls.push(ms);
+                s.polled(t(ms + 20), Duration::from_secs(1), true, false);
+            }
+        }
+        assert_eq!(polls, [0, 250, 500, 750]);
+        // The re-read follows the stream's last event.
+        assert_eq!(s.due(), t(990 + 300));
+    }
+
+    #[test]
+    fn schedule_rereads_while_readings_disagree_a_few_times() {
+        let t = clock();
+        let mut s = Schedule::new(t(0), MS * 300);
+        assert!(s.event(t(0)));
+        s.polled(t(20), Duration::from_secs(1), true, true);
+        assert_eq!(s.due(), t(300), "the event's re-read");
+        let (mut at, mut last) = (300, 0);
+        let mut rereads = 0;
+        while s.reread.is_some() {
+            assert!(s.take_reread(t(at)));
+            last = at + 20;
+            s.polled(t(last), Duration::from_secs(1), true, true);
+            rereads += 1;
+            at = (s.due() - t(0)).as_millis() as u64;
+        }
+        assert_eq!(rereads, 1 + usize::from(FOLLOWUPS));
+        assert_eq!(s.due(), t(last + 1000), "then the cadence");
+        // A poll that isn't the event's or its re-read adds none.
+        let mut s = Schedule::new(t(0), MS * 300);
+        s.polled(t(20), Duration::from_secs(1), false, true);
+        assert_eq!(s.due(), t(1020));
     }
 
     /// lava-75z.22: a missed answer or two (Spotify busy over a track
