@@ -190,6 +190,10 @@ impl Inner {
     }
 
     /// Past the end of the track: on to the next, carrying the overflow.
+    /// Before that the snapshot stays as it was stamped (its reader
+    /// extrapolates): rebasing it to the real clock at every read would
+    /// put it ahead of a reader on a fake clock (tests) by however long
+    /// they took.
     fn roll_over(&mut self, now: Instant) {
         let Some(duration) = self.snapshot.track.as_ref().map(|t| t.duration) else {
             return;
@@ -199,6 +203,9 @@ impl Inner {
         }
         let mut position =
             self.snapshot.position + now.saturating_duration_since(self.snapshot.sampled_at);
+        if position < duration {
+            return;
+        }
         while position >= duration {
             position -= duration;
             self.skip(1, now);
@@ -271,6 +278,29 @@ mod tests {
             ("spotify:track:new", &Status::Playing)
         );
         assert_eq!(fake.sent().len(), 7);
+    }
+
+    #[test]
+    fn a_read_keeps_the_reading_as_stamped() {
+        // A reader on a fake clock (tests) sees playback where its clock
+        // says, however long it really took between reads.
+        let t0 = Instant::now() - Duration::from_secs(5);
+        let fake = FakeSource::new(
+            Snapshot {
+                track: Some(Arc::new(Track {
+                    duration: Duration::from_secs(200),
+                    ..Track::default()
+                })),
+                position: Duration::from_secs(6),
+                ..Snapshot::new(Status::Playing, t0)
+            },
+            Vec::new(),
+        );
+        let snap = fake.snapshot();
+        assert_eq!(snap.sampled_at, t0);
+        assert_eq!(snap.position_at(t0), Duration::from_secs(6));
+        // Real time still moves it on.
+        assert!(snap.position_at(Instant::now()) >= Duration::from_secs(11));
     }
 
     #[test]
