@@ -197,8 +197,29 @@ Reproduce (macOS; keep the window in front, the harness warns about unfocused fr
 
 ```sh
 cargo build --release
-python3 tools/ghostty_native.py --output /tmp/native --font-size 8 --sizes 400x120 --styles synthwave --record --label shaders
-python3 tools/ghostty_native.py --output /tmp/native --font-size 8 --sizes 400x120 --styles synthwave --record --label noshader --ghostty-arg=--custom-shader=
+python3 tools/ghostty_native.py --output /tmp/native --sizes 400x120@8 --styles synthwave --record --label shaders
+python3 tools/ghostty_native.py --output /tmp/native --sizes 400x120@8 --styles synthwave --record --label noshader --ghostty-arg=--custom-shader=
 ```
 
-Harness notes: Ghostty re-splits `-e`'s arguments on spaces and asks before running a lone script path, so the harness runs `/bin/sh <case>.sh` from an `--output` without spaces; it runs a copy of the binary from there (a new Ghostty process may need permission to read `~/Documents`); and each `open -na` Ghostty outlives its window despite `--quit-after-last-window-closed`, so it is killed after each case.
+## The native harness (`tools/ghostty_native.py`, reworked in lava-jop)
+
+One Ghostty window per size runs every case of that size in turn: `<output>/driver.sh` (the same script for every size and run) reads the size's case list (`<output>/<label>-<size>.cases`) and runs the binary once per case, builds alternating when several are given (`--binary NAME=PATH`, order flipped every other round, `--repeat`), styles and scenes (`--scenes music lamp`: music, cover, clock beside the lamp and lyrics on it, or the clock only). The tool samples each case from outside: CPU and timer wakeups of the app (`proc_pid_rusage`, 20–32 s in), GPU busy once a second, then the trace summary and, with `--record`, the frames Ghostty showed. Sizes take a font size each: `300x86@8`. `--snapshots N` saves the window itself (`screencapture -l`, from inside the window for its Screen Recording permission), which works even when another app covers it, unlike the display recording. For README video takes: `--opaque` (an opaque window and `display.cells = "opaque"`: LavaTUI reads Ghostty's opacity from its config files, not the window's flags) or `--ghostty-config FILE` (only that Ghostty config, none of the user's). `--dry-run` writes the driver and case lists without opening anything; the driver runs fine in a pty.
+
+How it opens the window matters:
+
+- The command goes in one dashed argument, `--initial-command=/bin/sh <driver> <cases>`. The old `-e /bin/sh <script>` left bare paths in the arguments, which macOS also hands to Ghostty as files to open: Ghostty then asked the user to allow running the script, for every window, and on approval ran it a second time in a new shell tab. That second copy ran every case again, unfocused at 10 fps, behind the first, wrote the same trace files, and shared the GPU. Most earlier native runs had it. With `--initial-command` there is no prompt and one copy (checked: the driver starts at once, one process). The driver also takes a lock, so a second copy would stop at once.
+- The cases come to the driver on fd 3: LavaTUI needs the window's terminal as its stdin (redirecting `/dev/tty` in its place fails: macOS can't watch it with kqueue).
+- Helpers run in LavaTUI's own terminal, so all their output goes to `<case>/helpers.log`. In lava-jop a full disk made `screencapture -v` print "screencapture: Failed to save to final location …mov" onto the screen: the user saw it as text peeking through the lava near the bottom, kept wherever the lamp's cells didn't change (ratatui redraws only what changed). Reproduced on a nearly full RAM disk; LavaTUI itself writes nothing to the terminal while it runs. A test in `src/main.rs` keeps the helpers redirected and the window opened with `--initial-command`.
+- It runs copies of the binaries from `--output` (no spaces; a new Ghostty process may need permission to read `~/Documents`), unsets `ZMX_SESSION`/`GHOSTEX_*` (a hosted session's variables would make LavaTUI think it is in Ghostex), and kills the window's Ghostty process after the size (it can outlive its window).
+- Keep the window in front: a click elsewhere drops LavaTUI to 10 fps, and the summary warns.
+
+## Frame wait A/B in native Ghostty (lava-jop, 2026-10-03)
+
+A one-sleep guard window in `app/wake.rs` (sleep once to 200 µs before the deadline instead of 100 µs slices) against main, 16 cases (2 per cell: 117×43 and 300×86@8, with and without music, solid, 40 s each, `--record`), user's shaders on. Main / one sleep:
+
+| | Wakeups/s | CPU | Interval p99 (ms) | >2-period gaps | Wake lateness p99 (µs) | Distinct fps shown | Holds > 2 frames |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| main | 1,176–1,340 | 3.1–4.1 % / 10–12 % | 16.87–18.98 | 6 | 17–277 | 52.2 (mean) | 41 |
+| one sleep | 577–666 | same | 17.02–17.78 | 2 | 141–198 | 50.6 (mean) | 55 |
+
+Wakeups halved at equal CPU and app-side pacing, but Ghostty showed slightly fewer frames in 6 of 8 pairs (noisy: most of these ran with the duplicate copy described above), plausibly frames starting ~0.15 ms later and missing Ghostty's redraw more often. Not merged. In a pty, a wait on input until 200 µs before the deadline, then the same spin, kept lateness unchanged with ~37 % fewer wakeups; a spin without the `poll(0)` inside it cut wakeups 86 % but cost 0.5–0.7 CPU points (most wakeups come from those polls, not the sleeps).

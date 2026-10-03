@@ -104,18 +104,35 @@ mod tests {
 
     /// tools/ghostty_native.py runs helpers in LavaTUI's own terminal:
     /// one that prints (screencapture failing to save on a full disk) puts
-    /// text under the lamp, so each sends its output elsewhere.
+    /// text under the lamp, so their output goes to a log. And it opens the
+    /// window with one dashed `--initial-command=`: with `-e <path>` macOS
+    /// hands the path to Ghostty as a file to open, which asks the user to
+    /// allow it and runs a second copy in a new tab.
     #[test]
     fn the_native_harness_keeps_its_helpers_off_the_screen() {
         let tool = include_str!("../tools/ghostty_native.py");
-        let start = tool.find("WRAPPER = ").expect("the wrapper script");
-        let end = start + tool[start..][12..].find("\"\"\"").expect("its end") + 12;
-        for line in tool[start..end].lines() {
-            for helper in ["screencapture", "stty"] {
-                if line.contains(helper) && !line.trim_start().starts_with('#') {
-                    assert!(line.contains("2>"), "{helper} may print on screen: {line}");
-                }
-            }
+        let start = tool.find("DRIVER = ").expect("the driver script");
+        let end = start + tool[start..][10..].find("\"\"\"").expect("its end") + 10;
+        let driver = &tool[start..end];
+        let (open, close) = (
+            driver.find("\n  {\n").expect("the helpers' group"),
+            driver
+                .find("} > \"$dir/helpers.log\" 2>&1")
+                .expect("redirected"),
+        );
+        for (at, _) in driver.match_indices("screencapture") {
+            assert!(
+                open < at && at < close,
+                "screencapture outside the redirected group"
+            );
         }
+        for line in driver.lines().filter(|l| l.contains("stty")) {
+            assert!(line.contains("2>"), "stty may print on screen: {line}");
+        }
+        assert!(tool.contains("--initial-command=/bin/sh"));
+        assert!(
+            !tool.contains("'-e'"),
+            "opened with -e: a prompt and a second copy"
+        );
     }
 }
