@@ -34,6 +34,9 @@ pub struct FakeState {
     pub playlists: Vec<Playlist>,
     /// Items per playlist id.
     pub tracks: HashMap<String, Vec<Track>>,
+    /// Empty slots per playlist id (songs removed since; Spotify still
+    /// counts the slot): positions among all the slots, in order.
+    pub holes: HashMap<String, Vec<usize>>,
     pub liked: BTreeSet<String>,
     /// What `Player` answers; `Err` also refuses the setters.
     pub player: Result<Option<PlayerState>, Error>,
@@ -66,6 +69,7 @@ impl Default for FakeState {
             me: None,
             playlists: Vec::new(),
             tracks: HashMap::new(),
+            holes: HashMap::new(),
             liked: BTreeSet::new(),
             player: Ok(None),
             requests: Vec::new(),
@@ -173,13 +177,29 @@ fn answer(s: &mut FakeState, request: Request) -> Result<Reply, Error> {
                 .tracks
                 .get(&playlist_id)
                 .ok_or_else(|| Error::Forbidden("not yours".into()))?;
-            let from = (offset as usize).min(all.len());
-            let to = (from + PAGE).min(all.len());
+            let holes = s.holes.get(&playlist_id).map_or(&[][..], Vec::as_slice);
+            let mut songs = all.iter();
+            let slots: Vec<Option<&Track>> = (0..all.len() + holes.len())
+                .map(|at| {
+                    if holes.contains(&at) {
+                        None
+                    } else {
+                        songs.next()
+                    }
+                })
+                .collect();
+            let from = (offset as usize).min(slots.len());
+            let to = (from + PAGE).min(slots.len());
             Reply::Tracks(Page {
-                items: all[from..to].to_vec(),
+                items: slots[from..to]
+                    .iter()
+                    .flatten()
+                    .map(|t| (*t).clone())
+                    .collect(),
                 offset,
-                total: all.len() as u32,
-                has_more: to < all.len(),
+                next_offset: to as u32,
+                total: slots.len() as u32,
+                has_more: to < slots.len(),
             })
         }
         Request::PlaylistUris {

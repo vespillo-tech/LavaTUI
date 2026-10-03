@@ -417,6 +417,85 @@ fn playlist_uris_asks_for_uris_only_and_pages_past_holes() {
     assert_eq!(r.client.playlist_uris("pl/1", 120).unwrap().next, None);
 }
 
+/// A raw playlist-items page of `slots` (`None` = a removed song) read from
+/// `offset`; `next` says whether Spotify offers another page.
+fn items_page(slots: &[Option<&str>], offset: u32, next: bool) -> String {
+    let items: Vec<String> = slots
+        .iter()
+        .map(|slot| match slot {
+            Some(id) => format!(
+                r#"{{"added_at":"t","is_local":false,"item":{{"type":"track","id":"{id}","uri":"spotify:track:{id}","name":"{id}","artists":[],"album":{{"name":"","images":[]}},"duration_ms":1000}}}}"#
+            ),
+            None => r#"{"added_at":"t","is_local":false,"item":null}"#.to_string(),
+        })
+        .collect();
+    format!(
+        r#"{{"items":[{}],"offset":{offset},"limit":50,"total":999,"next":{}}}"#,
+        items.join(","),
+        if next { r#""https://next""# } else { "null" },
+    )
+}
+
+#[test]
+fn a_page_with_holes_starts_the_next_after_every_slot() {
+    let mut r = logged_in();
+    // Holes in the middle, together, and at the end of the page.
+    let slots: Vec<Option<&str>> = vec![Some("a"), None, None, Some("b"), Some("c"), None];
+    r.mock.reply(200, &items_page(&slots, 100, true));
+    let page = r.client.playlist_tracks("pl", 100).unwrap();
+    let ids: Vec<_> = page.items.iter().map(|t| t.uri.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["spotify:track:a", "spotify:track:b", "spotify:track:c"]
+    );
+    assert_eq!((page.offset, page.next_offset), (100, 106));
+    assert!(page.has_more);
+
+    // The next page, asked for there, neither repeats nor skips a song.
+    let rest: Vec<Option<&str>> = vec![Some("d"), None];
+    r.mock
+        .reply(200, &items_page(&rest, page.next_offset, false));
+    let last = r.client.playlist_tracks("pl", page.next_offset).unwrap();
+    assert!(r.mock.sent()[1].url.contains("offset=106"));
+    assert_eq!(last.items.len(), 1);
+    assert_eq!(last.items[0].uri, "spotify:track:d");
+    assert_eq!(last.next_offset, 108);
+    assert!(!last.has_more, "the last page ends it");
+}
+
+#[test]
+fn a_page_of_only_holes_still_moves_on_but_an_empty_one_stops() {
+    let mut r = logged_in();
+    r.mock.reply(200, &items_page(&[None, None, None], 0, true));
+    let page = r.client.playlist_tracks("pl", 0).unwrap();
+    assert!(page.items.is_empty());
+    assert_eq!((page.next_offset, page.has_more), (3, true));
+
+    // Spotify claiming more after nothing at all would loop forever.
+    r.mock.reply(200, &items_page(&[], 3, true));
+    let page = r.client.playlist_tracks("pl", 3).unwrap();
+    assert_eq!((page.next_offset, page.has_more), (3, false));
+}
+
+#[test]
+fn my_playlists_asks_for_the_next_page_after_every_slot() {
+    let mut r = logged_in();
+    let page1 = format!(
+        r#"{{"items":[{},null,{}],"offset":0,"limit":50,"total":4,"next":"https://api.spotify.com/v1/me/playlists?offset=3"}}"#,
+        playlist_json("a", "items"),
+        playlist_json("b", "items"),
+    );
+    let page2 = format!(
+        r#"{{"items":[{}],"offset":3,"limit":50,"total":4,"next":null}}"#,
+        playlist_json("c", "items"),
+    );
+    r.mock.reply(200, &page1).reply(200, &page2);
+    let lists = r.client.my_playlists().unwrap();
+    let ids: Vec<_> = lists.iter().map(|p| p.id.as_str()).collect();
+    assert_eq!(ids, ["a", "b", "c"]);
+    assert!(r.mock.sent()[1].url.contains("offset=3"));
+}
+
 #[test]
 fn playlist_tracks_reads_item_or_track_and_skips_holes() {
     let mut r = logged_in();
@@ -440,7 +519,7 @@ fn playlist_tracks_reads_item_or_track_and_skips_holes() {
     );
     assert_eq!(page.items.len(), 4);
     assert_eq!((page.offset, page.total, page.has_more), (50, 200, true));
-    assert_eq!(page.next_offset(), 54);
+    assert_eq!(page.next_offset, 56);
     let [one, two, local, ep] = &page.items[..] else {
         unreachable!()
     };

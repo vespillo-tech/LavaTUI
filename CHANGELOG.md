@@ -56,6 +56,8 @@ What changed in each version of LavaTUI, in plain words.
   a second early or late for a whole song. While lyrics are on screen,
   LavaTUI checks Spotify four times a second, so a pause, skip or jump
   you make in Spotify shows up within about a quarter of a second.
+- Browsing a playlist that has removed songs no longer shows some songs
+  twice when you scroll to the next batch.
 
 ## 1.2.0 — 2026-10-02 — first public release
 

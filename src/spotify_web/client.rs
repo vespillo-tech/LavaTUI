@@ -280,8 +280,8 @@ impl<H: Http> Client<H> {
             let page: RawPage<RawPlaylist> =
                 self.get(&format!("/me/playlists?limit={PAGE}&offset={offset}"))?;
             let page = page.map(|p| Some(Playlist::from(p)));
-            let done = !page.has_more || page.items.is_empty();
-            offset = page.next_offset();
+            let done = !page.has_more;
+            offset = page.next_offset;
             all.extend(page.items);
             if done {
                 break;
@@ -384,6 +384,7 @@ impl<H: Http> Client<H> {
             None => Page {
                 items: Vec::new(),
                 offset,
+                next_offset: offset,
                 total: 0,
                 has_more: false,
             },
