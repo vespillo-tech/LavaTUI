@@ -133,7 +133,11 @@ loaded Music accepts shuffle and repeat but doesn't change them, so
 only changes made with a song loaded count when deciding whether Music
 ignores them. Volume is exact except that
 1 reads back as 0. Seek, next and previous weren't tried live (the same
-AppleScript as Spotify's, checked against Music's dictionary).
+AppleScript as Spotify's, checked against Music's dictionary). Open with
+nothing loaded (no subscription, nothing picked), Music reads as
+stopped with no song: the widgets say "nothing playing"
+(`music_open_with_nothing_loaded_is_calm`). Music posts
+`com.apple.Music.playerInfo` even then, on shuffle and repeat changes.
 
 **Other apps (browsers, Podcasts, VLC…) are not shown.** macOS's own
 "Now Playing" lives in the private MediaRemote framework. Since macOS
@@ -232,7 +236,10 @@ plus a second, idle one that hears Spotify's change notifications (no
 measurable CPU: under 0.01 s in 18 minutes). Asking Apple Music too, in
 the same process, keeps it there: 2.7 ms of CPU a poll with Spotify
 paused and Music closed (300 polls, `LAVATUI_POLLS=303 live_players`,
-load average 30-50), 15-25 ms from request to answer. Lyrics are one request per track, on their own thread, and
+load average 30-50), 15-25 ms from request to answer. Music open (idle)
+answers slower: 5.4 ms of `osascript` CPU plus 2.6 ms of Music's own a
+poll, ~70 ms to answer; at the paused pace (one poll every 2 s) about
+0.4 % of a core. Lyrics are one request per track, on their own thread, and
 cached. The cover's cells are worked out once per track and size, so
 they add nothing per frame.
 

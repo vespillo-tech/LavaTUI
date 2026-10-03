@@ -1701,3 +1701,45 @@ fn hosted_frames_never_draw_symbols_the_host_lacks() {
         }
     }
 }
+
+/// Apple Music open with nothing loaded (stopped, no song, as Music reads
+/// with no subscription and nothing picked): music, lyrics and cover each
+/// say so calmly, no error and no Spotify wording, beside the lamp and on
+/// it.
+#[test]
+fn music_open_with_nothing_loaded_is_calm() {
+    for presses in [1, 2] {
+        let (mut m, t0) = model(120, 36, 1);
+        let fake = FakeSource::new(
+            Snapshot {
+                player: Some("Music".into()),
+                volume: 56,
+                ..Snapshot::new(Status::Stopped, t0)
+            },
+            Vec::new(),
+        );
+        m.music.connect_with(
+            move || Box::new(fake.clone()),
+            || ArtLoader::preloaded(COVER, Art::solid(Rgb(200, 120, 40))),
+        );
+        for widget in ["music", "lyrics", "cover"] {
+            for _ in 0..presses {
+                m.update(Action::Place(widget), t0);
+            }
+        }
+        m.toast = None;
+        let area = m.layout.area;
+        m.tick(t0, area, local());
+        m.toast = None;
+        let buf = draw(&m, 120, 36);
+        // On the lava, spaces show the lamp (`~`).
+        let text = picture(&m, &buf).replace('~', " ");
+        assert!(
+            text.matches("♪ nothing playing").count() >= 2,
+            "{presses}: {text}"
+        );
+        for bad in ["rror", "unexpected", "Spotify", "Open", "answering"] {
+            assert!(!text.contains(bad), "{presses}: {bad:?} in\n{text}");
+        }
+    }
+}
