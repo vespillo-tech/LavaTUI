@@ -112,7 +112,11 @@ one window per size running every case in turn (traces, CPU/wakeups,
 optional screen recording counted for frames Ghostty actually showed,
 window snapshots; `--binary NAME=PATH` twice for an A/B;
 `--ghostty-arg=--custom-shader=` to compare without shaders; `--opaque`
-for video takes); keep the window in front while it runs. It opens the
+for video takes; `--app-config`/`--ghostty-config`/`--seed` for a
+showcase take, `--fullscreen-on 2` for native fullscreen on the second
+display, moved there by the exact Ghostty pid through the Accessibility
+API, never System Events, which can hand back the user's own Ghostty);
+keep the window in front while it runs. It opens the
 window with `--initial-command`, never `-e <path>` (a prompt per window
 and a second copy), and keeps helper output off the screen
 (`docs/perf/frame-trace.md`).
