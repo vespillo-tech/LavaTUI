@@ -272,6 +272,35 @@ fn long_retry_after_goes_back_to_the_caller() {
     assert!(r.sleeps.lock().unwrap().is_empty());
 }
 
+/// lava-jop: a long `Retry-After` holds every call back until it's over,
+/// whatever asks next.
+#[test]
+fn a_long_rate_limit_keeps_every_call_off_the_network() {
+    let mock = Mock::default();
+    let store = MemoryStore::default();
+    store.save(&tokens(NOW + 3600)).unwrap();
+    let now = Arc::new(std::sync::atomic::AtomicU64::new(NOW));
+    let clock = Arc::clone(&now);
+    let mut client = Client::new(mock.clone(), ID.into(), Box::new(store)).with_time(
+        move || clock.load(std::sync::atomic::Ordering::Relaxed),
+        |_| {},
+    );
+    mock.rate_limit("30");
+    assert!(client.me().is_err());
+    now.store(NOW + 10, std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(
+        client.my_playlists(),
+        Err(Error::RateLimited {
+            retry_after: Duration::from_secs(20)
+        })
+    );
+    assert_eq!(mock.sent().len(), 1, "nothing sent while told to wait");
+    now.store(NOW + 30, std::sync::atomic::Ordering::Relaxed);
+    mock.reply(200, ME);
+    assert!(client.me().is_ok());
+    assert_eq!(mock.sent().len(), 2);
+}
+
 #[test]
 fn rate_limited_twice_gives_up() {
     let mut r = logged_in();

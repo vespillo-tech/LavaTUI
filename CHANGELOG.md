@@ -62,6 +62,10 @@ What changed in each version of LavaTUI, in plain words.
   lyrics follow; it still checks once a second for anything else.
 - Browsing a playlist that has removed songs no longer shows some songs
   twice when you scroll to the next batch.
+- When Spotify asks LavaTUI to slow down, it now waits as long as asked
+  before asking again, everywhere. Before, a few lookups kept asking,
+  which kept Spotify saying no. A song list that didn't load is tried
+  again a few seconds later.
 - If lyrics come too early or too late for your ears (Bluetooth
   headphones often play a little late), move them: settings (`,`) ›
   music & lyrics › lyrics timing, up to a second sooner or later.

@@ -47,6 +47,10 @@ pub struct Client<H> {
     store: Box<dyn TokenStore>,
     /// The store has been read (or overwritten): [`Self::load`] is a no-op.
     loaded: bool,
+    /// Spotify said to wait until then (unix seconds): every API call
+    /// fails at once with [`Error::RateLimited`] until it's over, whoever
+    /// asks.
+    quiet_until: u64,
     /// Unix seconds.
     clock: Box<dyn Fn() -> u64 + Send>,
     sleep: Box<dyn Fn(Duration) + Send>,
@@ -79,6 +83,7 @@ impl<H: Http> Client<H> {
             tokens: None,
             store,
             loaded: false,
+            quiet_until: 0,
             clock: Box::new(unix_now),
             sleep: Box::new(std::thread::sleep),
         }
@@ -219,11 +224,17 @@ impl<H: Http> Client<H> {
 
     /// One authorized API call: refreshes a stale token first; on 401
     /// refreshes and retries once; on 429 waits out a short `Retry-After`
-    /// once; retries a 5xx once. Returns the 2xx body.
+    /// once, and a longer one keeps every call off the network until it's
+    /// over; retries a 5xx once. Returns the 2xx body.
     fn call(&mut self, method: Method, path: &str, body: Body) -> Result<String, Error> {
         let url = format!("{API_BASE}{path}");
         let (mut refreshed, mut waited, mut retried) = (false, false, false);
         loop {
+            let now = (self.clock)();
+            if now < self.quiet_until {
+                let retry_after = Duration::from_secs(self.quiet_until - now);
+                return Err(Error::RateLimited { retry_after });
+            }
             let tokens = self.tokens.as_ref().ok_or(Error::NotLoggedIn)?;
             if (self.clock)() + EXPIRY_MARGIN >= tokens.expires_at {
                 self.refresh()?;
@@ -250,7 +261,10 @@ impl<H: Http> Client<H> {
                         (self.sleep)(wait);
                         waited = true;
                     }
-                    wait => return Err(Error::RateLimited { retry_after: wait }),
+                    wait => {
+                        self.quiet_until = now + wait.as_secs().max(1);
+                        return Err(Error::RateLimited { retry_after: wait });
+                    }
                 },
                 500 | 502 | 503 | 504 if !retried => {
                     (self.sleep)(SERVER_ERROR_PAUSE);

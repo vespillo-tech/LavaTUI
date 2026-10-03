@@ -389,6 +389,88 @@ fn a_context_that_blocks_toggles_hides_them_but_keeps_the_login() {
     assert_eq!(m.library.player.allowed, Some(true));
 }
 
+fn count(account: &FakeWeb, what: impl Fn(&Request) -> bool) -> usize {
+    account.state().requests.iter().filter(|r| what(r)).count()
+}
+
+/// lava-jop: a rate-limited account lookup waits as long as Spotify says
+/// before asking again (it used to ask every frame).
+#[test]
+fn a_rate_limited_account_lookup_waits_before_asking_again() {
+    let account = demo();
+    let wait = Duration::from_secs(60);
+    account.state().fail = Some(Error::RateLimited { retry_after: wait });
+    let (mut m, t0, _) = rig("me-rate-limited", &account);
+    let me = |a: &FakeWeb| count(a, |r| *r == Request::Me);
+    settle(&mut m, t0 + wait - Duration::from_secs(1));
+    assert_eq!(me(&account), 1);
+    settle(&mut m, t0 + wait);
+    assert_eq!(me(&account), 2);
+    assert!(m.library.me.is_some());
+}
+
+/// lava-jop: a playlist page that failed isn't asked for again every
+/// frame while the cursor sits at the end.
+#[test]
+fn a_failed_playlist_page_waits_before_asking_again() {
+    let account = demo();
+    let (mut m, t0, _) = rig("page-rate-limited", &account);
+    key(&mut m, t0, P::Playlists);
+    settle(&mut m, t0);
+    m.update(Action::Keep, t0);
+    settle(&mut m, t0);
+    let wait = Duration::from_secs(30);
+    account.state().fail = Some(Error::RateLimited { retry_after: wait });
+    let pages = |a: &FakeWeb| count(a, |r| matches!(r, Request::PlaylistTracks { .. }));
+    m.update(Action::Edge(true), t0);
+    settle(&mut m, t0);
+    let failed = pages(&account);
+    assert_eq!(failed, 2, "the first page, then the one that failed");
+    settle(&mut m, t0 + wait - Duration::from_secs(1));
+    m.update(Action::Edge(true), t0 + wait - Duration::from_secs(1));
+    assert_eq!(pages(&account), failed, "not every frame");
+    settle(&mut m, t0 + wait);
+    assert_eq!(pages(&account), failed + 1);
+    assert_eq!(m.library.open.as_ref().unwrap().tracks.items.len(), 60);
+}
+
+/// lava-jop (Codex review #7): a page asked for by an earlier opening of
+/// the same playlist changes nothing in the new one.
+#[test]
+fn a_page_for_an_earlier_opening_is_left_alone() {
+    let account = demo();
+    let (mut m, t0, _) = rig("stale-page", &account);
+    key(&mut m, t0, P::Playlists);
+    settle(&mut m, t0);
+    account.state().hold = true;
+    m.update(Action::Keep, t0);
+    m.update(Action::Back, t0);
+    m.update(Action::Keep, t0);
+    // The first opening's page lands while the second waits for its own.
+    account.release_one();
+    tick(&mut m, t0);
+    let open = m.library.open.as_ref().unwrap();
+    assert!(open.tracks.loading && !open.tracks.loaded);
+    assert!(open.tracks.items.is_empty());
+    account.release();
+    for _ in 0..5 {
+        tick(&mut m, t0);
+        m.update(Action::Edge(true), t0);
+    }
+    let open = m.library.open.as_ref().unwrap();
+    assert_eq!(open.tracks.items.len(), 60);
+    let offsets: Vec<u32> = account
+        .state()
+        .requests
+        .iter()
+        .filter_map(|r| match r {
+            Request::PlaylistTracks { offset, .. } => Some(*offset),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(offsets, [0, 0, 50], "each page of the new opening once");
+}
+
 #[test]
 fn a_refused_web_play_falls_back_to_the_desktop_app_in_context() {
     let account = demo();

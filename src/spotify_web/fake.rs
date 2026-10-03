@@ -141,6 +141,18 @@ impl FakeWeb {
         s.events.push_back(Event::LoginFailed(error));
     }
 
+    /// Answer the first held request only; the rest stay held.
+    #[cfg(test)]
+    pub fn release_one(&self) {
+        let mut s = self.state();
+        if s.held.is_empty() {
+            return;
+        }
+        let (id, request) = s.held.remove(0);
+        let result = answer(&mut s, request);
+        s.events.push_back(Event::Reply { id, result });
+    }
+
     /// Answer the held unlock and requests.
     #[cfg(test)]
     pub fn release(&self) {

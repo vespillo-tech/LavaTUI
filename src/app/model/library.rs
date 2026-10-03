@@ -112,6 +112,11 @@ pub struct OpenPlaylist {
     /// empty slots, so it can be past `tracks.items.len()`.
     pub next_offset: u32,
     pub has_more: bool,
+    /// Which opening this is: a page asked for by an earlier one is
+    /// left alone.
+    opening: u64,
+    /// The last page failed: not asked again before this.
+    retry: Option<Instant>,
 }
 
 /// The Web API's view of the player: shuffle / repeat live here when the
@@ -151,8 +156,11 @@ pub enum Account {
 enum Want {
     Me,
     Playlists,
+    /// A page of the open playlist, from `offset`, for its `opening`.
     Tracks {
         playlist_id: String,
+        opening: u64,
+        offset: u32,
     },
     Liked(String),
     Like {
@@ -204,6 +212,8 @@ pub struct Library {
     pub login_error: Option<String>,
     pub me: Option<User>,
     me_asked: bool,
+    /// The account lookup failed: asked again then.
+    me_retry: Option<Instant>,
     /// Spotify refused the logged-in account (not on the app's allowlist,
     /// or the app's owner has no Premium): its message. Not asked again
     /// until the next login.
@@ -229,6 +239,8 @@ pub struct Library {
     read_after: Option<Instant>,
     /// Pages the add picker may still read ahead.
     read_budget: u32,
+    /// Playlists opened so far (each opening's number).
+    openings: u64,
     /// An add waiting for the check or for the user.
     pub adding: Option<Adding>,
 }
@@ -321,6 +333,7 @@ impl Library {
             login_error: None,
             me: None,
             me_asked: false,
+            me_retry: None,
             refused: None,
             playlists: Listing::default(),
             open: None,
@@ -335,6 +348,7 @@ impl Library {
             reading: false,
             read_after: None,
             read_budget: 0,
+            openings: 0,
             adding: None,
         }
     }
@@ -439,6 +453,7 @@ impl Library {
         self.wants.clear();
         self.me = None;
         self.me_asked = false;
+        self.me_retry = None;
         self.refused = None;
         self.playlists = Listing::default();
         self.open = None;
@@ -729,7 +744,7 @@ impl Library {
         if !self.logged_in() {
             return toasts;
         }
-        if !self.me_asked {
+        if !self.me_asked && self.me_retry.is_none_or(|at| now >= at) {
             self.me_asked = true;
             self.request(Request::Me, Want::Me);
         }
@@ -836,7 +851,11 @@ impl Library {
                     "Spotify refused this account · settings (,) › spotify says why".into(),
                 );
             }
-            (Want::Me, _) => self.me_asked = false,
+            (Want::Me, result) => {
+                self.me_asked = false;
+                let wait = result.err().and_then(|e| e.retry_after(RETRY));
+                self.me_retry = Some(now + wait.unwrap_or(RETRY));
+            }
             (Want::Playlists, Ok(Reply::Playlists(lists))) => {
                 // What was read of a playlist that changed since is stale.
                 self.contents.retain(|id, c| {
@@ -855,23 +874,41 @@ impl Library {
                 self.playlists.loading = false;
                 self.playlists.error = Some(message(result));
             }
-            (Want::Tracks { playlist_id }, result) => {
-                let open = self
-                    .open
-                    .as_mut()
-                    .filter(|o| o.playlist.id == playlist_id)?;
+            (
+                Want::Tracks {
+                    playlist_id,
+                    opening,
+                    offset,
+                },
+                result,
+            ) => {
+                // Only the page this opening is waiting for.
+                let open = self.open.as_mut().filter(|o| {
+                    o.playlist.id == playlist_id
+                        && o.opening == opening
+                        && o.next_offset == offset
+                        && o.tracks.loading
+                })?;
                 open.tracks.loading = false;
                 match result {
                     Ok(Reply::Tracks(page)) => {
-                        if page.offset == open.next_offset {
+                        if page.offset == offset {
                             open.tracks.items.extend(page.items);
                             open.next_offset = page.next_offset;
                         }
                         open.tracks.loaded = true;
+                        open.tracks.error = None;
                         open.has_more = page.has_more;
                         open.playlist.total = page.total;
                     }
-                    other => open.tracks.error = Some(message(other)),
+                    Err(e) => {
+                        open.retry = Some(now + e.retry_after(RETRY).unwrap_or(RETRY));
+                        open.tracks.error = Some(e.to_string());
+                    }
+                    other => {
+                        open.retry = Some(now + RETRY);
+                        open.tracks.error = Some(message(other));
+                    }
                 }
             }
             (Want::Liked(uri), Ok(Reply::Contains(found))) => {
@@ -1137,6 +1174,13 @@ impl Model {
         {
             self.refind(view.kind);
             self.overlay = Overlay::Library(self.follow_list(view));
+            self.load_more(&view);
+        }
+        // A page that failed is asked for again once the wait is over.
+        if let Overlay::Library(view) = self.overlay
+            && let Some(open) = &self.library.open
+            && open.retry.is_some_and(|at| self.now >= at)
+        {
             self.load_more(&view);
         }
         self.check_adding();
@@ -1775,6 +1819,8 @@ impl Model {
                     return true;
                 }
                 let id = p.id.clone();
+                self.library.openings += 1;
+                let opening = self.library.openings;
                 self.library.open = Some(OpenPlaylist {
                     playlist: p,
                     tracks: Listing {
@@ -1783,13 +1829,19 @@ impl Model {
                     },
                     next_offset: 0,
                     has_more: false,
+                    opening,
+                    retry: None,
                 });
                 let request = Request::PlaylistTracks {
                     playlist_id: id.clone(),
                     offset: 0,
                 };
-                self.library
-                    .request(request, Want::Tracks { playlist_id: id });
+                let want = Want::Tracks {
+                    playlist_id: id,
+                    opening,
+                    offset: 0,
+                };
+                self.library.request(request, want);
                 let find = &mut self.library.find;
                 find.back = std::mem::take(&mut find.text);
                 self.refind(ListKind::Tracks);
@@ -1948,6 +2000,10 @@ impl Model {
         };
         let next_offset = open.next_offset;
         let near_end = finding || view.cursor + PREFETCH >= shown;
+        if open.retry.is_some_and(|at| self.now < at) {
+            return;
+        }
+        open.retry = None;
         if open.has_more && !open.tracks.loading && near_end {
             open.tracks.loading = true;
             let playlist_id = open.playlist.id.clone();
@@ -1955,7 +2011,12 @@ impl Model {
                 playlist_id: playlist_id.clone(),
                 offset: next_offset,
             };
-            self.library.request(request, Want::Tracks { playlist_id });
+            let want = Want::Tracks {
+                playlist_id,
+                opening: open.opening,
+                offset: next_offset,
+            };
+            self.library.request(request, want);
         }
     }
 
