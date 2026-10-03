@@ -380,7 +380,7 @@ def picks(case, box, wanted):
                      last_frame=max(times), last_pick=out[-1])
 
 
-def film(out, label, width=900):
+def film(out, label, width=900, mp4_only=False, crf=16):
     from PIL import Image
     box = crop_box(out, out / trailer.CUT[0][0] / "screen.mov")
     frames_dir = out / f"{label}-frames"
@@ -401,13 +401,14 @@ def film(out, label, width=900):
                     first = im
                     enc = subprocess.Popen(
                         ["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s",
-                         f"{size[0]}x{size[1]}", "-r", str(RATE), "-i", "-", "-c:v", "libx264", "-crf", "16",
-                         "-preset", "slow", "-pix_fmt", "yuv420p", str(out / f"{label}.mp4")],
+                         f"{size[0]}x{size[1]}", "-r", str(RATE), "-i", "-", "-c:v", "libx264", "-crf", str(crf),
+                         "-preset", "slow", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-an",
+                         str(out / f"{label}.mp4")],
                         stdin=subprocess.PIPE)
                 if index >= total - d:
                     im = Image.blend(im, first, (index - (total - d) + 1) / (d + 1))
                 enc.stdin.write(im.tobytes())
-                if index % STEP == 0:
+                if index % STEP == 0 and not mp4_only:
                     im.save(frames_dir / f"f{index // STEP:04d}.png")
                 index += 1
                 want_n = next(need, None)
@@ -415,6 +416,10 @@ def film(out, label, width=900):
                 break
     enc.stdin.close()
     enc.wait()
+    if mp4_only:
+        mp4 = out / f"{label}.mp4"
+        print(f"{mp4} {mp4.stat().st_size} B, {index / RATE:.1f} s, {size[0]}x{size[1]}", flush=True)
+        return
     ten = [Image.open(frames_dir / f"f{k:04d}.png").convert("RGB") for k in range(index // STEP)]
     gif = out / f"{label}.gif"
     saved, trailer.SCALE = trailer.SCALE, 1.0
@@ -478,6 +483,9 @@ def main():
     f = sub.add_parser("film")
     f.add_argument("output", type=Path)
     f.add_argument("label")
+    f.add_argument("--width", type=int, default=900)
+    f.add_argument("--mp4-only", action="store_true", help="just the 60 fps MP4 (e.g. a README video)")
+    f.add_argument("--crf", type=int, default=16, help="x264 quality (lower is better and bigger)")
     sm = sub.add_parser("small", help="a smaller GIF of a film's frames (B: 660, C: 560 fit 5 MB)")
     sm.add_argument("output", type=Path)
     sm.add_argument("label")
@@ -492,7 +500,7 @@ def main():
         out = a.output.resolve()
         small_gif(out / f"{a.label}-frames", out / f"{a.label}-{a.width}.gif", a.width, a.colours)
     else:
-        film(a.output.resolve(), a.label)
+        film(a.output.resolve(), a.label, a.width, a.mp4_only, a.crf)
 
 
 if __name__ == "__main__":
