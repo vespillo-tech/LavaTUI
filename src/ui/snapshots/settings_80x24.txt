@@ -212,7 +212,7 @@
 ~~~~~~~~│    controls           3  paste the client id     paste here  │
 ~~~~~~~~│    window             4  connect                    connect  │
 ~~~~~~~~│                       keep the login in      password store  │
-~~~~~~~~│                       spotify app                  checking  │
+~~~~~~~~│                       spotify app               not running  │
 ~~~~~~~~│                                                              │
 ~~~~~~~~│ Play, pause, skip, covers and lyrics work with no setup.     │
 ~~~~~~~~│ Playlists and likes need your own free Spotify developer     │
@@ -237,7 +237,7 @@
 ~~~~~~~~│    controls         ▸ 3  paste the client id  …ient-secret▏  │
 ~~~~~~~~│    window             4  connect                    connect  │
 ~~~~~~~~│                       keep the login in      password store  │
-~~~~~~~~│                       spotify app                  checking  │
+~~~~~~~~│                       spotify app               not running  │
 ~~~~~~~~│                                                              │
 ~~~~~~~~│ That isn't a Client ID: it only has the digits 0-9 and the   │
 ~~~~~~~~│ letters a-f.                                                 │
@@ -262,7 +262,7 @@
 ~~~~~~~~│    controls           3  paste the client id  012345…abcdef  │
 ~~~~~~~~│    window             4  connect                  connected  │
 ~~~~~~~~│                       keep the login in      password store  │
-~~~~~~~~│                       spotify app                  checking  │
+~~~~~~~~│                       spotify app               not running  │
 ~~~~~~~~│                                                              │
 ~~~~~~~~│ Play, pause, skip, covers and lyrics work with no setup.     │
 ~~~~~~~~│ Playlists and likes need your own free Spotify developer     │
