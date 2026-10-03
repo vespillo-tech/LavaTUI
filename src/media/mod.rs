@@ -15,12 +15,14 @@
 //!   adaptive cadence and runs commands as they arrive. Nothing here ever
 //!   blocks the caller. A new backend implements `Backend` and gets the
 //!   threading, optimistic state and smoothing for free.
-//! - `spotify` (macOS): the Spotify desktop app, through one long-lived
-//!   `osascript` process (`runner`: requests over stdin, replies with a
-//!   timeout). It never launches Spotify.
+//! - macOS: [`players`] asks the Spotify desktop app (`spotify`) and Apple
+//!   Music (`apple_music`) through one long-lived `osascript` process
+//!   (`applescript`: the shared script loop and record format; `runner`:
+//!   requests over stdin, replies with a timeout). It never launches a
+//!   player.
 //! - [`mpris`] (Linux): any MPRIS player on the session bus, over zbus.
 //! - [`smtc`] (Windows): the System Media Transport Controls sessions.
-//! - [`choice`]: which player those two follow when several are open:
+//! - [`choice`]: which player each of them follows when several are open:
 //!   Spotify first only while it plays, else whatever plays, else the one
 //!   in use.
 //! - [`fake`]: [`FakeSource`], an in-memory player for tests and for
@@ -30,11 +32,17 @@
 //!
 //! No terminal code, and no I/O on the caller's thread.
 
+#[cfg(target_os = "macos")]
+pub mod apple_music;
+#[cfg(target_os = "macos")]
+pub mod applescript;
 pub mod art;
-// Which player to follow (Linux and Windows have several).
-#[cfg(any(target_os = "linux", windows, test))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows, test))]
 pub mod choice;
 pub mod fake;
+// Whether a player honours shuffle / repeat (MPRIS players, Apple Music).
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+pub mod modes;
 // The pure parts of the Linux and Windows backends are tested everywhere
 // (elsewhere the rest of each is unused).
 #[cfg(any(target_os = "linux", test))]
@@ -42,6 +50,10 @@ pub mod fake;
 pub mod mpris;
 #[cfg(target_os = "macos")]
 pub mod notify;
+// The choosing is pure and tested everywhere.
+#[cfg(any(target_os = "macos", test))]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub mod players;
 #[cfg(target_os = "macos")]
 pub mod runner;
 #[cfg(any(windows, test))]
@@ -100,15 +112,15 @@ pub trait MediaSource: Send {
     }
 }
 
-/// The media source for this platform: Spotify (AppleScript) on macOS,
-/// MPRIS on Linux, SMTC on Windows; elsewhere a source that is always
+/// The media source for this platform: Spotify and Apple Music
+/// (AppleScript) on macOS, MPRIS on Linux, SMTC on Windows; elsewhere a source that is always
 /// `Unavailable(Unsupported)`. Starts the backend's worker thread; cheap to
 /// call, never blocks.
 pub fn detect() -> Box<dyn MediaSource> {
     #[cfg(target_os = "macos")]
     {
         Box::new(Polled::spawn(
-            spotify::Spotify::new(runner::Osascript::new(spotify::script())).watching(),
+            players::Players::detect(),
             worker::Cadence::default(),
         ))
     }
@@ -304,7 +316,8 @@ impl Unavailable {
 /// The track that is loaded.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Track {
-    /// The player's own identifier: Spotify's URI on macOS, an MPRIS
+    /// The player's own identifier: Spotify's URI or Music's persistent
+    /// ID on macOS, an MPRIS
     /// object path (what seeking needs), or the title, artist and album
     /// where the player gives none (Windows). Tells tracks apart; not
     /// something to hand to the Web API (that's [`Track::uri`]).

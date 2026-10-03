@@ -59,17 +59,17 @@ cache and data go where each OS expects them. Only now playing differs:
 |---|---|---|---|
 | Builds in CI | ✓ | ✓ | ✓ |
 | Tested on real hardware | ✓ | in Docker with a stand-in MPRIS player (`tools/linux/run.sh`); not yet on a desktop | not yet |
-| Now playing via | AppleScript, one long-lived `osascript` | MPRIS on the D-Bus session bus (zbus) | System Media Transport Controls |
-| Players | the Spotify desktop app | any MPRIS player | any app in the media flyout |
-| Which one, when several are open (`media/choice.rs`) | – | Spotify while it plays, else one that plays, else the one in use | same, and the session Windows calls current before an idle Spotify |
+| Now playing via | AppleScript, one long-lived `osascript` for every player | MPRIS on the D-Bus session bus (zbus) | System Media Transport Controls |
+| Players | the Spotify desktop app, Apple Music (not browsers, Podcasts, VLC…: see below) | any MPRIS player | any app in the media flyout |
+| Which one, when several are open (`media/choice.rs`) | Spotify while it plays, else one that plays, else the one in use | same | same, and the session Windows calls current before an idle Spotify |
 | Play/pause, next/previous, seek | ✓ | ✓ | ✓ |
 | Volume | ✓ | ✓ if the player has it | – (SMTC has no volume) |
-| Shuffle / repeat | through the Web API only (Spotify's AppleScript setters do nothing) | ✓ if the player honours them (Spotify: through your account) | ✓ if the app honours them |
-| Cover art | ✓ | ✓ (`https` art URLs, so Spotify) | ✓ (the session's thumbnail) |
-| Like / add the playing song (library setup) | ✓ | ✓ Spotify songs | ✓ Spotify songs, once your account's player reports the same song |
-| Play from the playlist browser | ✓, the rest of the playlist follows | with Premium and Spotify playing: ✓; otherwise just that song | with Premium and Spotify playing: ✓; otherwise it says so |
+| Shuffle / repeat | Music: ✓ if it honours them; Spotify: through the Web API only (its AppleScript setters do nothing) | ✓ if the player honours them (Spotify: through your account) | ✓ if the app honours them |
+| Cover art | ✓ (Spotify's URL; Music's picture bytes) | ✓ (`https` art URLs, so Spotify) | ✓ (the session's thumbnail) |
+| Like / add the playing song (library setup) | ✓ Spotify songs | ✓ Spotify songs | ✓ Spotify songs, once your account's player reports the same song |
+| Play from the playlist browser | ✓ in Spotify (while it's open), the rest of the playlist follows; another player playing is paused | with Premium and Spotify playing: ✓; otherwise just that song | with Premium and Spotify playing: ✓; otherwise it says so |
 | Launches the player? | never | never | never |
-| Permission | macOS asks once (Automation) | none | none |
+| Permission | macOS asks once per player (Automation) | none | none |
 
 Linux players vary: Spotify has long reported its position as 0 over
 MPRIS (the bar then counts on from where it was first seen) and ignored
@@ -93,6 +93,63 @@ that couldn't be fetched are asked for again every 30 s; a failed "is
 this song liked?" waits 5 s (or as long as Spotify asks) before asking
 again. Songs LRCLIB has no lyrics for say so, and are asked about again
 the next day.
+
+### macOS: Spotify, Apple Music, and why not every app
+
+`media/players.rs` asks every player each poll and follows one by the
+shared rule (`media/choice.rs`). Both talk to one `osascript` process
+(`media/applescript.rs`): each request names its app's bundle id, the
+script checks `application id … is running` first, and only then
+compiles that app's part at run time (`run script`), because compiling a
+`tell application` block launches the app. A player that isn't open
+costs one such check. Commands go to the player followed; a Spotify URI
+from the library goes to Spotify (while it's open) wherever the keys
+are, and a non-Spotify player that's playing is paused first, so
+Spotify takes over. Both apps' change notifications
+(`com.spotify.client.PlaybackStateChanged`, `com.apple.Music.playerInfo`)
+reach one listener.
+
+Apple Music (`media/apple_music.rs`) reads state, position, shuffle
+(`shuffle enabled`), repeat (`song repeat`: off is off, one or all is
+on; repeat on sets all), volume and the current track: its `persistent
+ID` (plus the stream title on a radio station, so each song there is a
+new track), name, artist, album and length. Music has no artwork URL:
+on a new track the script writes `raw data of artwork 1` to a private
+temporary file, the worker reads it, deletes it and hands the bytes to
+the art loader (`art::stash`, as on Windows). A song whose cover isn't
+there yet is read again for a few seconds. If Music is seen to ignore a
+shuffle or repeat change (`media/modes.rs`, shared with MPRIS), they
+stop being offered. Lyrics and the karaoke timing use the same
+`Baseline` and change events as Spotify. Its part is checked against
+Music's own scripting dictionary without Music: an ignored test builds a
+stand-in app carrying a copy of it
+(`music_part_compiles_against_musics_dictionary`); `live_music` reads
+the real app when it's open (and changes volume, play/pause, shuffle and
+repeat and puts them back with `LAVATUI_LIVE_CHANGES=1`).
+
+**Other apps (browsers, Podcasts, VLC…) are not shown.** macOS's own
+"Now Playing" lives in the private MediaRemote framework. Since macOS
+15.4 only Apple-signed processes may read it; the known workarounds run
+through such a process. Checked on macOS 26.6 (2026-10-03):
+
+- [mediaremote-adapter](https://github.com/ungive/mediaremote-adapter)
+  (BSD-3-Clause) loads a helper framework into `/usr/bin/perl`. It works
+  and can send commands, but it means building and shipping an
+  Objective-C framework beside the binary, and Apple has said since
+  10.15 that scripting runtimes like Perl won't stay in macOS by
+  default.
+- `osascript` itself gets the same access: a JXA script that loads
+  `MediaRemote.framework` and asks `MRNowPlayingRequest` read the
+  playing app, its state, position and length in ~50 ms with no
+  permission prompt, and `ObjC.bindFunction` binds
+  `MRMediaRemoteSendCommand`. Nothing to install.
+
+Both lean on undocumented, private API through a loophole Apple already
+narrowed once (15.4), with no stable track ids and no documented
+change events; a macOS update can break them silently. So they're not
+in this release. The `osascript` route is the one worth trying first,
+as an opt-in fallback for players the AppleScript backends don't cover
+(lava-75z.32).
 
 For problems that come and go, `LAVATUI_MEDIA_LOG=<file>` writes one line
 per event to that file: a missed player answer, a song read without some
@@ -164,7 +221,10 @@ vs 3.4 % without (60 s each, solid). Spotify is asked once a second
 through one `osascript` process that stays up (about 3.5 ms of CPU a
 poll: ~0.35 % of a core playing, ~0.12 % paused at one poll every 2 s),
 plus a second, idle one that hears Spotify's change notifications (no
-measurable CPU: under 0.01 s in 18 minutes). Lyrics are one request per track, on their own thread, and
+measurable CPU: under 0.01 s in 18 minutes). Asking Apple Music too, in
+the same process, keeps it there: 2.7 ms of CPU a poll with Spotify
+paused and Music closed (300 polls, `LAVATUI_POLLS=303 live_players`,
+load average 30-50), 15-25 ms from request to answer. Lyrics are one request per track, on their own thread, and
 cached. The cover's cells are worked out once per track and size, so
 they add nothing per frame.
 

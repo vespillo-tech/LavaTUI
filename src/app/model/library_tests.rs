@@ -1057,7 +1057,12 @@ fn other_players_local_files_and_ads_are_never_given_a_spotify_uri() {
         settle(&mut m, t0);
         assert_eq!(m.liked(), None, "{player} {id}");
         key(&mut m, t0, P::Like);
-        assert_eq!(toast(&m), "nothing to like", "{player} {id}");
+        let why = if player == "Spotify" {
+            "nothing to like"
+        } else {
+            "only Spotify songs can be liked"
+        };
+        assert_eq!(toast(&m), why, "{player} {id}");
         assert!(account.state().liked.is_empty());
         assert!(
             !account
@@ -1965,4 +1970,53 @@ fn the_demo_plays_from_the_browser_and_likes() {
     settle(&mut m, t0);
     assert_eq!(m.liked(), Some(false));
     assert!(!account.state().liked.contains(&uri));
+}
+
+/// Apple Music (or any player but Spotify) playing: liking and adding say
+/// they're for Spotify songs, and a playlist played from the library
+/// (Premium, through the Web API) pauses it, so Spotify takes over.
+#[test]
+fn another_players_song_is_not_spotifys_to_like_and_spotify_takes_over() {
+    let account = demo();
+    account.state().player = Ok(Some(premium(false)));
+    let t0 = Instant::now();
+    let track = Track {
+        id: "0123456789ABCDEF".into(),
+        uri: None,
+        ..smtc_track("Slow Rise 0")
+    };
+    let caps = Capabilities {
+        volume: true,
+        shuffle: true,
+        repeat: true,
+        ..Capabilities::NONE
+    };
+    let (mut m, t0, source) = rig_on("apple-music", &account, desktop("Music", track, t0), caps);
+    settle(&mut m, t0);
+    assert_eq!(m.liked(), None);
+    key(&mut m, t0, P::Like);
+    assert_eq!(toast(&m), "only Spotify songs can be liked");
+    key(&mut m, t0, P::AddToPlaylist);
+    assert_eq!(toast(&m), "only Spotify songs can be added to playlists");
+    assert!(account.state().liked.is_empty());
+
+    // Shuffle is Music's own: the account is left alone.
+    key(&mut m, t0, P::Shuffle);
+    assert_eq!(source.sent(), [Command::SetShuffle(true)]);
+
+    // A playlist from the library: Spotify plays it, Music pauses.
+    key(&mut m, t0, P::Playlists);
+    m.update(Action::Keep, t0);
+    m.update(Action::Down, t0);
+    m.update(Action::Keep, t0);
+    assert!(
+        account
+            .state()
+            .requests
+            .iter()
+            .any(|r| matches!(r, Request::Play { .. })),
+        "{:?}",
+        account.state().requests
+    );
+    assert_eq!(source.sent().last(), Some(&Command::PlayPause));
 }

@@ -1,7 +1,7 @@
 //! macOS distributed notifications, for a player that posts one when it
 //! changes (the Spotify app: `com.spotify.client.PlaybackStateChanged` on
-//! play, pause and track change; Apple Music's `com.apple.Music.playerInfo`
-//! for later, lava-75z.26). Each one [`Nudge`]s the media worker into an
+//! play, pause and track change; Apple Music's `com.apple.Music.playerInfo`,
+//! lava-75z.26). Each one [`Nudge`]s the media worker into an
 //! immediate poll, so a change made in the player shows without polling
 //! fast.
 //!

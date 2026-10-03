@@ -397,21 +397,27 @@ the layout/visual contract.
 - `media/`    — now playing (platform-neutral; backends behind `cfg`):
                 `MediaSource` (`snapshot()` a short lock, `send(Command)`
                 queued + applied optimistically, `capabilities()`),
-                `detect()` picks a backend: macOS `spotify.rs` (one
-                long-lived `osascript` fed requests on stdin, never
-                launches Spotify, can't shuffle/repeat), Linux `mpris.rs`
+                `detect()` picks a backend: macOS `players.rs`
+                (`Players`: asks `spotify.rs` (can't shuffle/repeat) and
+                `apple_music.rs` (cover bytes via a temp file →
+                `art::stash`) each poll, follows one by `choice.rs`,
+                routes Spotify URIs to Spotify, pausing the other; both
+                through one long-lived `osascript` fed requests on stdin:
+                `applescript.rs`, the shared loop, guard-then-`run script`
+                so no player is ever launched, `Routed` prefixes the
+                bundle id), Linux `mpris.rs`
                 (any MPRIS player via zbus), Windows
                 `smtc.rs` (system media controls; no
                 volume/URIs; covers from the thumbnail stream via
                 `art::stash`; event handlers kept on the session object
-                in use, all or none: `Subscribed`); both pick the player
+                in use, all or none: `Subscribed`); all pick the player
                 by `choice.rs` (Spotify only while it plays, else whatever
                 plays, else the one in use); `capabilities()` says what each can do (read after
-                every exchange: MPRIS's `ModesCheck` withdraws shuffle/repeat
-                from a player seen to ignore them),
+                every exchange: `modes.rs`'s `ModesCheck` (MPRIS, Music)
+                withdraws shuffle/repeat from a player seen to ignore them),
                 `FakeSource` for tests and `--demo` (what was sent is kept
                 only in tests); `runner.rs`: `Osascript`, the long-lived
-                script process the Spotify backend asks one request at a
+                script process the macOS players ask one request at a
                 time; `worker.rs`'s `Baseline` pins the
                 position down over polls (each reading bounded by its
                 request and reply); polls every 1 s (paused 2 s), and at
@@ -422,7 +428,7 @@ the layout/visual contract.
                 for before a command's
                 re-read aren't published, `settle_until`):
                 macOS `notify.rs` (a JXA `osascript` hearing Spotify's
-                distributed notification: they reach only a main-thread
+                and Music's distributed notifications: they reach only a main-thread
                 run loop), MPRIS signals on the player path, SMTC
                 session / manager events; `art.rs`: `ArtLoader` (cover fetch
                 https-only on its thread, or `lavatui-thumb:` bytes a

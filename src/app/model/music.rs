@@ -17,7 +17,7 @@ use crate::graphics::Protocol;
 use crate::graphics::inline::Wish;
 use crate::graphics::probe::Verdict;
 use crate::media::art::{Art, ArtLoader, ArtState};
-use crate::media::{self, Capabilities, Command, MediaSource, Snapshot};
+use crate::media::{self, Capabilities, Command, MediaSource, Snapshot, Status};
 use crate::theme::Rgb;
 use crate::ui::keymap::PlayerKey;
 
@@ -182,6 +182,15 @@ impl Music {
         }
         self.send(command.ok_or("can't play that")?, now);
         Ok(())
+    }
+
+    /// Pause the player shown if it's another one than Spotify and
+    /// playing (Spotify is about to play something from the library).
+    pub(super) fn pause_other(&mut self, now: Instant) {
+        let Some(snap) = self.current() else { return };
+        if snap.status == Status::Playing && !snap.is_spotify() {
+            self.send(Command::PlayPause, now);
+        }
     }
 
     fn send(&mut self, command: Command, now: Instant) {
