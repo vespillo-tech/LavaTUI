@@ -55,6 +55,7 @@ pub fn run(
     let store = Store::for_session(session);
     let size = terminal.size()?;
     let cell = reported_cell();
+    let start = Instant::now();
     let mut model = Model::new(
         session,
         store,
@@ -62,8 +63,11 @@ pub fn run(
         cell.map(|c| c.aspect),
         local_time(),
         session.seed.unwrap_or_else(time_seed),
-        Instant::now(),
+        start,
     );
+    let frame_clock = session
+        .frame_clock
+        .map(|clock| FrameClock::new(start, model.target_fps(), clock));
     model.option_drag = option_drag(std::env::var("TERM_PROGRAM").ok().as_deref());
     model.cell_px = cell.map(|c| c.px);
     model.background_saves()?;
@@ -81,6 +85,7 @@ pub fn run(
         &mut model,
         session.max_frames,
         panic_after,
+        frame_clock,
         &mut trace,
     );
     let traced = trace.finish();
@@ -150,6 +155,7 @@ fn run_loop(
     model: &mut Model,
     max_frames: Option<u64>,
     panic_after: Option<u64>,
+    frame_clock: Option<FrameClock>,
     trace: &mut trace::Trace,
 ) -> io::Result<()> {
     let mut fps = model.target_fps();
@@ -188,7 +194,11 @@ fn run_loop(
             full_repaint(terminal)?;
             model.inline.invalidate();
         }
-        let timings = draw_frame(terminal, model, &mut lamp, started, local_time())?;
+        let (now, local) = match frame_clock {
+            Some(clock) => (clock.at(frames), clock.local(frames)),
+            None => (started, local_time()),
+        };
+        let timings = draw_frame(terminal, model, &mut lamp, now, local)?;
         // Pictures after the cells, in the same synchronized update.
         model.kitty.write(terminal.backend_mut())?;
         model.inline.write(terminal.backend_mut())?;
@@ -235,7 +245,10 @@ fn run_loop(
         });
         meter.tick(drawn);
         model.stats.fps = meter.fps();
-        model.frame_drawn((drawn - started).as_secs_f64() * 1e3, dt, drawn);
+        // A recording keeps full quality, however slowly its frames draw.
+        if frame_clock.is_none() {
+            model.frame_drawn((drawn - started).as_secs_f64() * 1e3, dt, drawn);
+        }
         if model.target_fps() != fps {
             fps = model.target_fps();
             pacer = FramePacer::new(fps, drawn);
@@ -427,6 +440,48 @@ fn reported_cell() -> Option<CellSize> {
         aspect: (cell_h / cell_w).clamp(1.6, 2.6),
         px: (size.width / size.columns, size.height / size.rows),
     })
+}
+
+/// Hidden `--frame-clock HH:MM`, for recordings: frame `n` is drawn at
+/// exactly `n` frame periods after the start, whenever it really draws, and
+/// the clock face reads HH:MM plus that time. The wax only follows the
+/// time it's given, so two takes with the same seed and lamp show the same
+/// wax at the same frame, and a recording can cut from one to the other.
+#[derive(Debug, Clone, Copy)]
+struct FrameClock {
+    start: Instant,
+    wall: SystemTime,
+    period: Duration,
+    clock: u32,
+}
+
+impl FrameClock {
+    fn new(start: Instant, fps: u32, clock: u32) -> Self {
+        Self {
+            start,
+            wall: SystemTime::now(),
+            period: Duration::from_secs(1) / fps.max(1),
+            clock,
+        }
+    }
+
+    fn since_start(&self, frame: u64) -> Duration {
+        self.period * u32::try_from(frame).unwrap_or(u32::MAX)
+    }
+
+    fn at(&self, frame: u64) -> Instant {
+        self.start + self.since_start(frame)
+    }
+
+    fn local(&self, frame: u64) -> LocalTime {
+        let since = self.since_start(frame);
+        let secs = (u64::from(self.clock) + since.as_secs()) % 86_400;
+        LocalTime {
+            time: ClockTime::from_secs_of_day(secs as u32),
+            wall: self.wall + since,
+            ..local_time()
+        }
+    }
 }
 
 /// Local wall-clock time and date for the clock face.

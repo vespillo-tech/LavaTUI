@@ -58,6 +58,20 @@ pub struct Cli {
     /// Panic after rendering N frames, to check the terminal is restored.
     #[arg(long, value_name = "N", hide = true)]
     pub panic_after: Option<u64>,
+
+    /// Recordings: time moves exactly one frame a frame (not with the wall
+    /// clock) and the clock starts at HH:MM, so takes can be cut together.
+    #[arg(long, value_name = "HH:MM", hide = true, value_parser = clock_start)]
+    pub frame_clock: Option<u32>,
+}
+
+/// `--frame-clock`: `HH:MM` as seconds into the day.
+fn clock_start(text: &str) -> Result<u32, String> {
+    let (h, m) = text.split_once(':').ok_or("HH:MM")?;
+    match (h.parse::<u32>(), m.parse::<u32>()) {
+        (Ok(h), Ok(m)) if h < 24 && m < 60 => Ok(h * 3600 + m * 60),
+        _ => Err("HH:MM".into()),
+    }
 }
 
 /// `--style`: a style name (or an old alias of one), any case, else
@@ -99,6 +113,7 @@ impl Cli {
             max_frames: self.frames,
             config_path: self.config,
             demo: self.demo,
+            frame_clock: self.frame_clock,
         }
     }
 }
@@ -130,6 +145,18 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(!help.contains("--trace"));
+    }
+
+    #[test]
+    fn frame_clock_is_hidden() {
+        let session = Cli::parse_from(["lavatui", "--frame-clock", "07:30"]).into_session();
+        assert_eq!(session.frame_clock, Some(7 * 3600 + 30 * 60));
+        assert!(Cli::try_parse_from(["lavatui", "--frame-clock", "7"]).is_err());
+        assert!(Cli::try_parse_from(["lavatui", "--frame-clock", "24:00"]).is_err());
+        let help = Cli::try_parse_from(["lavatui", "--help"])
+            .unwrap_err()
+            .to_string();
+        assert!(!help.contains("--frame-clock"));
     }
 
     #[test]

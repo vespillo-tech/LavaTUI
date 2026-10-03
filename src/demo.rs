@@ -40,7 +40,8 @@ enum Kind {
 
 /// Title (letters and spaces only: it's matched in the lookup URL),
 /// artist, album, length in seconds, the cover's encoded bytes, the lyrics,
-/// and whether they time each word (enhanced LRC) or only lines.
+/// whether they time each word (enhanced LRC) or only lines, and their
+/// pace: when the first line comes and how long each line lasts.
 struct Song {
     title: &'static str,
     artist: &'static str,
@@ -50,7 +51,21 @@ struct Song {
     kind: Kind,
     words: &'static [&'static str],
     word_times: bool,
+    pace: Pace,
 }
+
+/// When a song's lyrics start and how long a line lasts, in seconds.
+#[derive(Clone, Copy)]
+struct Pace {
+    intro: f64,
+    line: f64,
+}
+
+/// An 8 s intro and a line every 4.5 s.
+const EASY: Pace = Pace {
+    intro: 8.0,
+    line: 4.5,
+};
 
 const SONGS: &[Song] = &[
     Song {
@@ -77,6 +92,7 @@ const SONGS: &[Song] = &[
             "And then it starts to rise again",
         ],
         word_times: false,
+        pace: EASY,
     },
     Song {
         title: "Blob Merge",
@@ -97,6 +113,11 @@ const SONGS: &[Song] = &[
             "Nowhere else we would escape",
         ],
         word_times: true,
+        // Brisk: the README trailer sings it beside the lamp.
+        pace: Pace {
+            intro: 2.0,
+            line: 2.4,
+        },
     },
     Song {
         title: "Warm Light Falling",
@@ -117,6 +138,7 @@ const SONGS: &[Song] = &[
             "Watch it with your sleepy eyes",
         ],
         word_times: false,
+        pace: EASY,
     },
     Song {
         title: "Long Cooldown",
@@ -127,6 +149,7 @@ const SONGS: &[Song] = &[
         kind: Kind::Instrumental,
         words: &[],
         word_times: false,
+        pace: EASY,
     },
     Song {
         title: "Bare Wax",
@@ -137,6 +160,7 @@ const SONGS: &[Song] = &[
         kind: Kind::Missing,
         words: &[],
         word_times: false,
+        pace: EASY,
     },
 ];
 
@@ -375,17 +399,20 @@ impl Http for Canned {
     }
 }
 
-/// The song's words as LRC: a line every 4.5 s after an 8 s intro, the
-/// verses over and over, an empty line (a break) between them. With
-/// `word_times`, each word tagged too (a lazy, even beat, the last word
-/// held), sung over the first 3.4 s of its line.
+/// The song's words as LRC: a line every `pace.line` s after its intro,
+/// the verses over and over, an empty line (a break, 4/3 of a line)
+/// between them. With `word_times`, each word tagged too (an even beat,
+/// the last word held), sung over the first 3/4 of its line.
 fn lrc(song: &Song) -> String {
     let stamp = |at: f64| {
         let cs = (at * 100.0).round() as u64;
         format!("{:02}:{:02}.{:02}", cs / 6000, cs / 100 % 60, cs % 100)
     };
+    // In parts of a 4.5 s line: the words over 2.6 s, held to 3.4 s, a
+    // break of 6 s.
+    let part = |secs: f64| song.pace.line * secs / 4.5;
     let mut out = String::new();
-    let mut at = 8.0;
+    let mut at = song.pace.intro;
     for line in song.words.iter().cycle() {
         if at > song.secs as f64 - 5.0 {
             break;
@@ -393,16 +420,16 @@ fn lrc(song: &Song) -> String {
         out.push_str(&format!("[{}]", stamp(at)));
         if song.word_times && !line.is_empty() {
             let words: Vec<&str> = line.split(' ').collect();
-            let beat = 2.6 / words.len() as f64;
+            let beat = part(2.6) / words.len() as f64;
             for (i, word) in words.iter().enumerate() {
                 out.push_str(&format!("<{}>{word} ", stamp(at + i as f64 * beat)));
             }
-            out.push_str(&format!("<{}>", stamp(at + 3.4)));
+            out.push_str(&format!("<{}>", stamp(at + part(3.4))));
         } else {
             out.push_str(line);
         }
         out.push('\n');
-        at += if line.is_empty() { 6.0 } else { 4.5 };
+        at += part(if line.is_empty() { 6.0 } else { 4.5 });
     }
     out
 }

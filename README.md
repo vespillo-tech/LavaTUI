@@ -11,7 +11,7 @@ A clock, a focus timer and the song you're playing can sit beside the
 lamp or float on top of it. Or turn everything off and just watch the
 wax.
 
-![LavaTUI in action: changing styles and colours, the clock and timer on the lamp, the music card, lyrics and album cover, the settings, and lamp-only mode](docs/screenshots/demo.gif)
+![A tour of LavaTUI. The welcome card. The wax in all nine styles and a few colour themes. The music card, with an album cover that comes into focus and lyrics that light up word by word. The playlists, and a song liked and added. The help and settings screens. The clock, timer and music move onto the lamp. Then the lamp on its own](docs/screenshots/demo.gif)
 
 It runs in the terminal window you already use, on macOS, Linux and
 Windows. It's one small program. For the best look, we recommend a
@@ -44,36 +44,37 @@ us which terminal you use. We'd love to hear how it works for you.
 
 ## Pictures
 
-The lamp with the clock and a running focus timer:
+The lamp with the clock and a running focus timer. The pictures after
+this one move: each shows a few seconds of the lamp.
 
 ![LavaTUI in a 120 by 36 window: the wax in the solid style, a big clock and a focus timer](docs/screenshots/hero.png)
 
 **Nine styles.** Press `s` to switch. This is the same lamp at the same
 moment in each one:
 
-![the nine styles side by side: solid, outline, ascii, braille, halftone, synthwave, matrix, topo and chrome](docs/screenshots/styles.png)
+![the same moving wax in the nine styles side by side: solid, outline, ascii, braille, halftone, synthwave, matrix, topo and chrome](docs/screenshots/styles.gif)
 
 **Eight colour themes.** Press `p` to switch:
 
-![the eight colour themes side by side: lava, ultraviolet, abyss, toxic, synthwave, mono, paper and ansi](docs/screenshots/palettes.png)
+![the same moving wax in the eight colour themes side by side: lava, ultraviolet, abyss, toxic, synthwave, mono, paper and ansi](docs/screenshots/palettes.gif)
 
 | **Music beside the lamp**, with the cover and lyrics on it | **Everything on the lamp**: music, clock and lyrics |
 |---|---|
-| ![the music card beside the lamp, with the album cover and the lyrics floating on the wax](docs/screenshots/music.png) | ![the music card, a big clock and the lyrics all floating on the wax](docs/screenshots/music-lava.png) |
+| ![the music card beside the moving wax, with the album cover and the lyrics floating on it](docs/screenshots/music.gif) | ![the music card, a big clock and the lyrics all floating on moving wax](docs/screenshots/music-lava.gif) |
 | **Clock and timer on the lamp** (`t`, `f`) | **Clock on the lamp, timer beside it** |
-| ![the clock and timer floating on the wax](docs/screenshots/overlay.png) | ![the clock on the wax in the braille style, the timer beside it](docs/screenshots/overlay-mix.png) |
+| ![the clock and timer floating on moving wax](docs/screenshots/overlay.gif) | ![the clock on the wax in the braille style, the timer beside it](docs/screenshots/overlay-mix.gif) |
 | **Settings** (`,`) | **Spotify setup** (inside the settings) |
-| ![the settings screen over the lamp](docs/screenshots/settings.png) | ![the Spotify setup page, with steps 1 to 4](docs/screenshots/spotify-setup.png) |
+| ![the settings screen over the moving lamp](docs/screenshots/settings.gif) | ![the Spotify setup page, with steps 1 to 4, over the moving lamp](docs/screenshots/spotify-setup.gif) |
 | **Help** (`?`): every key | **Style picker** (`Shift+S`): try before you choose |
-| ![the help screen listing every key](docs/screenshots/help.png) | ![the style picker over the lamp](docs/screenshots/picker.png) |
+| ![the help screen listing every key, over the moving lamp](docs/screenshots/help.gif) | ![the style picker beside the lamp, which shows the chosen style](docs/screenshots/picker.gif) |
 | **Lamp only** (`m`) | **The welcome card** on the first run |
-| ![just the lamp, with a small clock in the corner](docs/screenshots/minimal.png) | ![the welcome card with the five main keys](docs/screenshots/welcome.png) |
+| ![just the moving lamp, with a small clock in the corner](docs/screenshots/minimal.gif) | ![the welcome card with the five main keys, over the moving lamp](docs/screenshots/welcome.gif) |
 | **A tall, thin window**: the clock moves below | **A tiny window**: lamp and a small clock |
-| ![a tall, thin window with the clock under the lamp](docs/screenshots/portrait.png) | ![a tiny window with just the lamp and the time](docs/screenshots/tiny.png) |
+| ![a tall, thin window with the moving wax above and the clock under it](docs/screenshots/portrait.gif) | ![a tiny window with just the moving wax and the time](docs/screenshots/tiny.gif) |
 
 It also works in terminals with only 16 colours:
 
-![the ascii style in 16 colours](docs/screenshots/color16.png)
+![the moving wax in the ascii style, in 16 colours](docs/screenshots/color16.gif)
 
 The songs, cover and lyrics in these pictures are made up for the demo.
 

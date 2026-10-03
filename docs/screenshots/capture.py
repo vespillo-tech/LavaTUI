@@ -9,6 +9,8 @@ a monospace font. Clock times are whatever the local time is.
     python3 -m venv /tmp/v && /tmp/v/bin/pip install pyte pillow
     /tmp/v/bin/python docs/screenshots/capture.py            # all
     /tmp/v/bin/python docs/screenshots/capture.py hero help  # some
+    /tmp/v/bin/python docs/screenshots/capture.py loops      # the README loops (GIF)
+    /tmp/v/bin/python docs/screenshots/capture.py loops music help  # some
     /tmp/v/bin/python docs/screenshots/capture.py live       # needs Spotify playing
     /tmp/v/bin/python docs/screenshots/capture.py lyrics     # Spotify + lrclib.net
     /tmp/v/bin/python docs/screenshots/capture.py library    # --demo's made-up account
@@ -44,11 +46,11 @@ captures always show text cells. `tools/kitty_check.py` checks pixels.
 Fonts default to macOS Menlo; set LAVATUI_SHOT_FONT to a .ttf/.ttc
 elsewhere (e.g. DejaVuSansMono.ttf).
 """
-import fcntl, os, pty, select, struct, sys, tempfile, termios, time
+import fcntl, os, pty, select, struct, subprocess, sys, tempfile, termios, time
 from concurrent.futures import ThreadPoolExecutor
 
 import pyte
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageStat
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BIN = os.path.join(HERE, "..", "..", "target", "release", "lavatui")
@@ -94,18 +96,42 @@ def with_welcome(toml, welcome):
     return f"{toml};[ui];{flag}"
 
 
-def run(args):
+FRAME_END = b"\x1b[?2026l"  # the app wraps every frame in DEC 2026
+
+
+class Snap:
+    """The screen as one frame left it (what `draw` reads), and when."""
+
+    def __init__(self, screen, at):
+        self.columns, self.lines, self.at = screen.columns, screen.lines, at
+        self.buffer = [[screen.buffer[y][x] for x in range(screen.columns)] for y in range(screen.lines)]
+
+
+def run(args, snaps=None):
+    """Run `args` in a pty and return its last screen. With `snaps` (a
+    list), also append a `Snap` at the end of every frame, and keys may be
+    timed by frame: `f42:x` sends x as soon as frame 42 has been drawn, so
+    the app handles it before frame 43 in every run."""
     cfg = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False)
     cfg.write(with_welcome(args.toml, args.welcome).replace(";", "\n"))
     cfg.close()
     argv = [BIN, "--config", cfg.name, "--frames", str(args.frames)] + args.app
-    keys = []
+    keys, frame_keys = [], []
     for k in filter(None, args.keys.split(",")):
         t, s = k.split(":", 1)
-        keys.append((float(t), s.encode().decode("unicode_escape").encode()))
+        data = s.encode().decode("unicode_escape").encode()
+        if t.startswith("f"):
+            frame_keys.append((int(t[1:]), data))
+        else:
+            keys.append((float(t), data))
+    frame_keys.sort(key=lambda k: k[0])
     env = dict(os.environ, TERM="xterm-256color", COLORTERM="truecolor")
-    for k in ("NO_COLOR", "TERM_PROGRAM", "GHOSTTY_RESOURCES_DIR", "KITTY_WINDOW_ID", "TMUX"):
+    # A plain terminal: nothing from the one capture.py runs in (inside
+    # Ghostex / zmx the app would draw its safe symbols).
+    for k in ("NO_COLOR", "TERM_PROGRAM", "GHOSTTY_RESOURCES_DIR", "KITTY_WINDOW_ID", "TMUX", "ZMX_SESSION"):
         env.pop(k, None)
+    for k in [k for k in env if k.startswith("GHOSTEX_")]:
+        env.pop(k)
     for e in args.env:
         k, v = e.split("=", 1)
         if v:
@@ -136,11 +162,20 @@ def run(args):
             if not done:
                 i = data.find(b"\x1b[?1049l")
                 if i >= 0:
-                    stream.feed(data[:i])
-                    done = True
-                else:
+                    data, done = data[:i], True
+                if snaps is None:
                     stream.feed(data)
-        if el > 60:
+                else:
+                    buf += data
+                    while (j := buf.find(FRAME_END)) >= 0:
+                        j += len(FRAME_END)
+                        stream.feed(buf[:j])
+                        buf = buf[j:]
+                        snaps.append(Snap(screen, time.time()))
+                        while frame_keys and frame_keys[0][0] < len(snaps):
+                            os.write(fd, frame_keys.pop(0)[1])
+        # A minute, or more for long recordings (10 fps loops and films).
+        if el > max(60.0, args.frames / 10 + 15):
             os.kill(pid, 9)
             break
     os.waitpid(pid, 0)
@@ -188,6 +223,17 @@ def mix(a, b, t):
 
 
 def render(screen, out, pad=0):
+    img = draw(screen)
+    if pad:
+        framed = Image.new("RGB", (img.width + 2 * pad, img.height + 2 * pad), DEF_BG)
+        framed.paste(img, (pad, pad))
+        img = framed
+    img = img.quantize(colors=256, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
+    img.save(out, optimize=True)
+
+
+def draw(screen):
+    """`screen` as an RGB picture, CW × CH px a cell."""
     w, h = screen.columns * CW, screen.lines * CH
     img = Image.new("RGB", (w, h), DEF_BG)
     d = ImageDraw.Draw(img)
@@ -250,12 +296,7 @@ def render(screen, out, pad=0):
             else:
                 f = pick_font(ch, c.bold)
                 d.text((px + CW / 2, py + CH / 2 + 1), ch, font=f, fill=fg, anchor="mm")
-    if pad:
-        framed = Image.new("RGB", (w + 2 * pad, h + 2 * pad), DEF_BG)
-        framed.paste(img, (pad, pad))
-        img = framed
-    img = img.quantize(colors=256, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
-    img.save(out, optimize=True)
+    return img
 
 
 def montage(out, ncols, items):
@@ -400,7 +441,209 @@ TILES = {f"style-{s}": Shot(34, 30, TILE + f'style="{s}"') for s in STYLES}
 TILES |= {f"palette-{p}": Shot(34, 30, TILE + f'style="solid";[theme];palette="{p}"') for p in PALETTES}
 
 
+# Loops (`capture.py loops [name ...]`): the README pictures as short GIFs
+# that repeat seamlessly. Only the wax moves (a cinemagraph): the timer
+# isn't started, the big clock has no seconds and reads LOOP_CLOCK, the
+# demo player is paused, and every toast has gone before the loop starts.
+# Runs use the hidden --frame-clock, so every run draws the same frames
+# (and sheet tiles, separate runs of one seed, show the same wax at frame
+# k). Each frame is kept (split on the app's DEC 2026 frame ends).
+#
+# Two ways round: a feature picture *swings*: it drifts forward through a
+# gently moving stretch of wax and back again, easing to a stop at each
+# end (seamless whatever the wax does; reversed lava still looks like
+# lava). A sheet *fades*: its last LOOP_FADE s crossfade into the frames
+# leading into its start (small tiles hide the blend), at a fixed moment.
+# Encoded with ffmpeg (one palette, no dither) + gifsicle; written to
+# $LAVATUI_LOOP_OUT (default: here, as <name>.gif).
+LOOP_FPS, LOOP_SECS, LOOP_FADE, LOOP_RECORD = 10, 6.0, 1.0, 54.0
+LOOP_CLOCK = "21:47"
+PAUSE = "3:A,3.2: ,3.4:A"  # music controls on, pause, off again
+
+
+class Loop:
+    def __init__(self, shot=None, tiles=None, ncols=0, scale=0.65, colours=96, start=None):
+        self.shot, self.tiles, self.ncols = shot, tiles, ncols
+        self.scale, self.colours, self.start = scale, colours, start
+
+
+def looped(shot, toml="", keys=None):
+    """`shot` recorded for a loop: LOOP_RECORD s at LOOP_FPS on the frame
+    clock, `toml` added, and `keys` instead of its own (None keeps them)."""
+    return Shot(
+        shot.cols, shot.rows, shot.toml + toml, shot.keys if keys is None else keys,
+        " ".join(shot.app) + f" --fps {LOOP_FPS} --frame-clock {LOOP_CLOCK}",
+        frames=int(LOOP_RECORD * LOOP_FPS) + 5, welcome=shot.welcome,
+    )
+
+
+def still(shot, keys=None):
+    return looped(shot, ";[clock];seconds=false", keys)
+
+
+# The sheets loop at the moment of the approved palettes proof (16.4 s in).
+SHEET_START = 164
+LOOPS = {
+    "palettes": Loop(tiles=[(p, looped(TILES[f"palette-{p}"])) for p in PALETTES], ncols=4, start=SHEET_START),
+    # One palette (lava) across all nine: 64 colours is plenty; a little
+    # smaller, as the matrix rain changes every frame.
+    "styles": Loop(tiles=[(n, looped(TILES[f"style-{n}"])) for n in STYLES], ncols=5, scale=0.6, colours=64, start=SHEET_START),
+    "music": Loop(still(SHOTS["music"], PAUSE)),
+    "music-lava": Loop(still(SHOTS["music-lava"], PAUSE)),
+    "overlay": Loop(still(SHOTS["overlay"], "")),
+    "overlay-mix": Loop(still(SHOTS["overlay-mix"], "")),
+    "settings": Loop(still(SHOTS["settings"])),
+    "spotify-setup": Loop(still(SHOTS["spotify-setup"])),
+    "help": Loop(still(SHOTS["help"])),
+    "picker": Loop(still(SHOTS["picker"])),
+    "minimal": Loop(still(SHOTS["minimal"])),
+    "welcome": Loop(still(SHOTS["welcome"])),
+    "portrait": Loop(still(SHOTS["portrait"], "")),
+    "tiny": Loop(still(SHOTS["tiny"]), scale=1.0),
+    "color16": Loop(still(SHOTS["color16"]), colours=16),
+}
+
+
+def last_key(shot):
+    return max([float(k.split(":", 1)[0]) for k in filter(None, shot.keys.split(","))] or [0.0])
+
+
+def record(shot):
+    snaps = []
+    run(shot, snaps)
+    return snaps
+
+
+def fade_frames(images, start, length):
+    """The loop's frames from `images(k)` (frame k): the last LOOP_FADE s
+    crossfaded into the frames just before `start`."""
+    c = int(LOOP_FADE * LOOP_FPS)
+    out = []
+    for j in range(length):
+        a = images(start + j)
+        if j >= length - c:
+            a = Image.blend(a, images(start + j - length), (j - (length - c) + 1) / (c + 1))
+        out.append(a)
+    return out
+
+
+SWING_EASE = 0.2
+
+
+def swing_at(u, ease=SWING_EASE):
+    """Where a swing is (0..1..0) at `u` (0..1) of its loop: out and back,
+    at an even pace but for an `ease` share of each leg at its ends, where
+    it slows to a stop (no jolt as it turns)."""
+    v = 2 * u if u < 0.5 else 2 - 2 * u
+    peak = 1 / (1 - ease)  # the even pace, so the leg still ends at 1
+
+    def dist(x):  # distance after x of a leg, its pace ramping 0 → peak → 0
+        if x < ease:
+            return peak * x * x / (2 * ease)
+        if x > 1 - ease:
+            return 1 - peak * (1 - x) ** 2 / (2 * ease)
+        return peak * (x - ease / 2)
+
+    return dist(v)
+
+
+def swing_span(n):
+    """Frames a swing of `n` frames covers: its even pace is real time, so
+    between the turns every frame is one the app drew."""
+    return round(n / 2 * (1 - SWING_EASE))
+
+
+def swing_frames(images, start, span, n):
+    """`n` frames that drift forward through frames start..start+span and
+    back again, easing to a stop at both ends; in-between times blend the
+    two nearest frames."""
+    out = []
+    for j in range(n):
+        t = start + span * swing_at(j / n)
+        k = int(t + 1e-6)
+        f = t - k
+        a = images(k)
+        out.append(a if f < 0.01 else Image.blend(a, images(k + 1), f))
+    return out
+
+
+# How lively a swing's stretch is, as a share of the way from the calmest
+# stretch to the busiest: alive, but gentle (and lighter to download).
+SWING_MOTION = 0.4
+
+
+def gentle(snaps, warm, span):
+    """The start of a `span`-frame stretch (from `warm` s on) whose wax
+    moves at the SWING_MOTION point between the calmest and the busiest."""
+    thumbs = [draw(s).convert("L").reduce(4) for s in snaps]
+    steps = [ImageStat.Stat(ImageChops.difference(a, b)).mean[0] for a, b in zip(thumbs, thumbs[1:])]
+    first = int(warm * LOOP_FPS)
+    starts = range(first, len(snaps) - span - 1)
+    if not starts:
+        raise SystemExit("no stretch fits: record longer")
+    motion = {i: sum(steps[i:i + span]) for i in starts}
+    ranked = sorted(starts, key=motion.get)
+    return ranked[round(SWING_MOTION * (len(ranked) - 1))]
+
+
+def encode(frames, out, scale, colours):
+    tmp = tempfile.mkdtemp()
+    for j, im in enumerate(frames):
+        if scale != 1:
+            im = im.resize((round(im.width * scale), round(im.height * scale)), Image.LANCZOS)
+        im.save(f"{tmp}/f{j:03d}.png")
+    raw = f"{tmp}/raw.gif"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-framerate", str(LOOP_FPS), "-i", f"{tmp}/f%03d.png",
+                    "-vf", f"split[a][b];[a]palettegen=max_colors={colours}:stats_mode=full[p];"
+                    "[b][p]paletteuse=dither=none", "-loop", "0", raw], check=True)
+    subprocess.run(["gifsicle", "-O3", raw, "-o", out], check=True)
+    return frames[0].size
+
+
+def make_loop(name):
+    lp = LOOPS[name]
+    out = os.path.join(os.environ.get("LAVATUI_LOOP_OUT", HERE), name + ".gif")
+    n = int(LOOP_SECS * LOOP_FPS)
+    if lp.tiles:
+        with ThreadPoolExecutor(len(lp.tiles)) as ex:
+            runs = list(ex.map(lambda t: record(t[1]), lp.tiles))
+        cache = {}
+
+        def sheet(k):
+            if k not in cache:
+                ims = [draw(r[k]) for r in runs]
+                w, h = ims[0].size
+                lab, gap = 30, 6
+                rows = (len(ims) + lp.ncols - 1) // lp.ncols
+                m = Image.new("RGB", (lp.ncols * w + (lp.ncols - 1) * gap, rows * (h + lab) + (rows - 1) * gap), DEF_BG)
+                d = ImageDraw.Draw(m)
+                for i, (im, (label, _)) in enumerate(zip(ims, lp.tiles)):
+                    x, y = (i % lp.ncols) * (w + gap), (i // lp.ncols) * (h + lab + gap)
+                    m.paste(im, (x, y))
+                    d.text((x + w / 2, y + h + lab / 2), label, font=FONT, fill=(150, 140, 130), anchor="mm")
+                cache[k] = m
+            return cache[k]
+
+        start, how = lp.start, "fade"
+        frames = fade_frames(sheet, start, n)
+    else:
+        snaps = record(lp.shot)
+        span = swing_span(n)
+        start, how = gentle(snaps, last_key(lp.shot) + 4.5, span), "swing"
+        cache = {}
+        frames = swing_frames(lambda k: cache.setdefault(k, draw(snaps[k])), start, span, n)
+    w, h = encode(frames, out, lp.scale, lp.colours)
+    print(f"{out} {os.path.getsize(out)} B {round(w * lp.scale)}x{round(h * lp.scale)} "
+          f"{n / LOOP_FPS:.1f} s, {how} from {start / LOOP_FPS:.1f} s", flush=True)
+    return out
+
+
 def main(names):
+    if names[:1] == ["loops"]:
+        want = names[1:] or list(LOOPS)
+        with ThreadPoolExecutor(3) as ex:
+            list(ex.map(make_loop, want))
+        return
     tmp = tempfile.mkdtemp()
     want = names or list(SHOTS) + ["styles", "palettes"]
     jobs = {n: s for n, s in SHOTS.items() if n in want}
