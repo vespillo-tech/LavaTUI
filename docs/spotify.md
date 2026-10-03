@@ -1,7 +1,7 @@
 # Spotify Web API
 
 LavaTUI's library features (playlist browser, add to playlist, like/unlike,
-search, "more like this") talk to the Spotify Web API through
+shuffle / repeat where the desktop app can't) talk to the Spotify Web API through
 `src/spotify_web/`. Now playing, playback control of the desktop app, the
 cover and lyrics are separate and need none of this.
 
@@ -153,12 +153,12 @@ July 2026 changes:
 | My playlists (all pages, 50 each) | `GET /me/playlists` | `playlist-read-private`, `playlist-read-collaborative` |
 | Playlist contents (page of 50) | `GET /playlists/{id}/items` | `playlist-read-private` |
 | Has it already? (URIs only, page of 50) | `GET /playlists/{id}/items?fields=items(item(uri),track(uri)),next,total` | `playlist-read-private` |
-| New playlist | `POST /me/playlists` (`POST /users/{id}/playlists` is gone) | `playlist-modify-public` / `-private` |
+| New playlist (the live tests only, so far) | `POST /me/playlists` (`POST /users/{id}/playlists` is gone) | `playlist-modify-public` / `-private` |
 | Add to playlist (100 per call) | `POST /playlists/{id}/items` | `playlist-modify-public`, `playlist-modify-private` |
 | Liked? (40 per call) | `GET /me/library/contains` | `user-library-read` |
 | Like / unlike (40 per call) | `PUT` / `DELETE /me/library` | `user-library-modify` |
-| Search tracks (max 10) | `GET /search?type=track` | none |
-| More like this | `GET /search?q=artist:"…"` (top tracks is gone) | none |
+| Search tracks (max 10; the client's tests only, so far) | `GET /search?type=track` | none |
+| More like this (the same) | `GET /search?q=artist:"…"` (top tracks is gone) | none |
 | Player state (shuffle / repeat / device) | `GET /me/player` (204: nothing playing) | `user-read-playback-state` |
 | Shuffle / repeat | `PUT /me/player/shuffle?state=…`, `PUT /me/player/repeat?state=off\|context\|track` | `user-modify-playback-state` (Premium) |
 | Play a track in a playlist | `PUT /me/player/play` `{context_uri, offset: {uri}}` | `user-modify-playback-state` (Premium) |
@@ -174,9 +174,14 @@ playlists come back `Forbidden`.
 
 Error handling: 401 refreshes the token and retries once. A 429 with
 `Retry-After` ≤ 3 s is waited out once; longer ones come back as
-`Error::RateLimited { retry_after }`. A 5xx is retried once after 0.5 s.
-Network failures are `Error::Offline`, 403 is `Forbidden` and 404 is
-`NotFound`.
+`Error::RateLimited { retry_after }`, and every call after it fails the
+same way at once, without touching the network, until the wait is over.
+A 5xx is retried once after 0.5 s. Network failures are `Error::Offline`,
+403 is `Forbidden` and 404 is `NotFound`. `Error::retry_after` says when
+asking again may help (a rate limit's wait; no network or a 5xx: a few
+seconds; anything else: no): the app's lookups that failed (account,
+liked, a playlist page, a duplicate check) wait that long, never ask
+again every frame.
 
 ## In the app
 
@@ -212,7 +217,10 @@ picker reads its playlists' contents itself, URIs only
 `app/model/library.rs` keeps them per playlist id with the
 `snapshot_id` they were read at; a new snapshot (the playlists are read
 again each time the picker opens) drops them, and our own add moves them
-to the snapshot the add returned, so a big playlist is read once.
+to the snapshot the add returned, so a big playlist is read once. A read
+that failed for no network or a server error is tried again 5 s later
+(Spotify's `Retry-After` for a rate limit); one Spotify refused waits for
+the playlist's next snapshot.
 
 - One page request in flight at a time, on the worker; the next page is
   asked for when one lands. Reading ahead starts at the cursor's
@@ -223,8 +231,10 @@ to the snapshot the add returned, so a big playlist is read once.
   not to: adds at once. Still reading: `checking <name>…` (with `150 of
   400 songs` on long ones), `⏎` adds without waiting.
 - A failed read, or one that stops moving for 5 s (e.g. a long
-  `Retry-After`: no reads until it's over), never loses the add: it goes
-  ahead and the toast says `added to <name> · couldn't check it first`.
+  `Retry-After`: no reads until it's over; the 5 s don't count while the
+  playlists themselves are being read again), never loses the add: it
+  goes ahead and the toast says `added to <name> · couldn't check it
+  first`.
 - Rows of playlists known to have the playing song show a quiet `✓`
   (`*` in the safe glyphs) before the count.
 - Liked Songs isn't offered in the picker; like / unlike (`s`) already
@@ -233,9 +243,9 @@ to the snapshot the add returned, so a big playlist is read once.
 ## Using it from the code
 
 ```rust
-use crate::spotify_web::{SpotifyWeb, Request, Reply, Event, client_id_from_env};
+use crate::spotify_web::{SpotifyWeb, LoginStore, Request, Reply, Event, client_id_from_env};
 
-let mut spotify = SpotifyWeb::new(client_id);   // starts the worker thread
+let mut spotify = SpotifyWeb::new(client_id, LoginStore::System); // starts the worker thread
 spotify.is_logged_in();                         // saved login, picked up async
 let url = spotify.login()?;                     // opens the browser; show `url` too
 spotify.cancel_login();
@@ -253,11 +263,11 @@ while let Some(event) = spotify.poll() {
 ```
 
 Requests: `Me`, `MyPlaylists`, `PlaylistTracks { playlist_id, offset }`,
-`CreatePlaylist { name, public }`, `AddToPlaylist { playlist_id, uris }`,
-`LibraryContains { uris }`,
-`Like { uris }`, `Unlike { uris }`, `SearchTracks { query, limit, offset }`,
-`ArtistTracks { artist }`, `Player`, `SetShuffle(bool)`,
-`SetRepeat(Repeat)`, `Play { context_uri, offset_uri }`. They run one at a time, in order, on one worker
+`PlaylistUris { playlist_id, offset }`, `AddToPlaylist { playlist_id,
+uris }`, `LibraryContains { uris }`, `Like { uris }`, `Unlike { uris }`,
+`Player`, `SetShuffle(bool)`, `SetRepeat(Repeat)`, `Play { context_uri,
+offset_uri }` (and, for the live tests, `CreatePlaylist { name, public
+}`). They run one at a time, in order, on one worker
 thread (blocking `ureq`, no async runtime).
 
 Tests: `cargo test` covers it all with a scripted HTTP layer and a fake

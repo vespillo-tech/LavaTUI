@@ -5,9 +5,9 @@
 //! All network work happens on the [`SpotifyWeb`] worker: the model only
 //! queues [`Request`]s and drains [`Event`]s once a frame ([`Library::sync`],
 //! bounded), so nothing here blocks a frame. The client exists only while
-//! the music widget is placed and a Client ID is configured
-//! (`spotify.client_id` or `LAVATUI_SPOTIFY_CLIENT_ID`); tests and
-//! `--demo` plug in a `FakeWeb`.
+//! the music widget is placed (or the Spotify setup is open) and a Client
+//! ID is configured (`spotify.client_id` or `LAVATUI_SPOTIFY_CLIENT_ID`);
+//! tests and `--demo` plug in a `FakeWeb` (the demo's needs no Client ID).
 //!
 //! The saved login is read only when a library feature is first used (or
 //! the Spotify setup opens): on macOS that read can make the Keychain ask
@@ -314,7 +314,8 @@ struct Playing {
 }
 
 impl Library {
-    /// The library for `client_id` (none: off), its login kept in
+    /// The library for `client_id` (none: off, unless a `FakeWeb` is
+    /// plugged in with [`Self::connect_with`]), its login kept in
     /// `store`; `saved`: one is saved. Tests never reach the real thing (a
     /// keyring read could prompt): they plug in a fake.
     pub fn new(client_id: Option<String>, store: LoginStore, saved: bool) -> Self {

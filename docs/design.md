@@ -879,7 +879,10 @@ with seconds 52) only show from 200 cols, where the panel widens for them
 (§1.4).
 
 The colon never blinks (motion belongs to the lamp). Seconds appear only
-in L/XL variants and the `text` face's 12h/24h follows `T`.
+in L/XL variants, and only while `clock.seconds` is on (the default; off,
+every face shows hours and minutes at every size, no second hand, and a
+frozen lamp wakes once a minute instead of every second). The `text`
+face's 12h/24h follows `T`.
 
 **Phase-change flash.** When a pomodoro phase ends on its own: the
 lamp's liquid tint pulses, peaking at 35 % toward `accent`, one `sin` swell over 600 ms; a
@@ -1027,13 +1030,19 @@ whichever side keeps the panel and the stack clear when it can.
 `src/dock/music.rs`, fed by `src/media/` (the player) and
 `src/media/art.rs` (covers). Off by default. While it's placed (side or
 on the lava) the app holds a media source, whose worker thread polls the
-player (Spotify through AppleScript on macOS; MPRIS / SMTC to come); `off`
-drops it, which stops the polling. The UI only ever reads the source's
-latest snapshot (a short lock) once a frame, and commands are queued and
-shown at once (optimistically), so the player never stalls a frame.
+player (Spotify through AppleScript on macOS, any MPRIS player on Linux,
+the system media controls on Windows; Spotify first where it is open):
+once a second while playing (every 2 s paused), and at once when the
+player says it changed (Spotify's notification on macOS, MPRIS signals,
+the media session's events; see §4.6 Lyrics and docs/architecture.md).
+`off` drops it, which stops the polling and the listening. The UI only
+ever reads the source's latest snapshot (a short lock) once a frame, and
+commands are queued and shown at once (optimistically), so the player
+never stalls a frame.
 
-Forms, most preferred first (the layout keeps the first that fits; music
-is last in the registry, so it shrinks first):
+Forms, most preferred first (the layout keeps the first that fits; the
+least important widget shrinks first: lowest rank, then later in the
+registry, `clock, pomodoro, music, lyrics, cover`):
 
 | form | size | shows |
 |---|---|---|
@@ -1424,8 +1433,8 @@ don't scroll (a terminal can't move text by less than a row). A **gap**
 (an empty LRC line, or the intro before the first line) is three dots
 `•  •  •` that light up one by one as it passes.
 
-**States**, each one calm dim sentence like music's: `♪ looking for
-lyrics…`, `♪ no lyrics on lrclib.net for this song` (where that doesn't
+**States**, each one calm dim sentence like music's: `♪ asking
+lrclib.net for lyrics…`, `♪ no lyrics on lrclib.net for this song` (where that doesn't
 fit, the shorter `♪ not on lrclib.net`), `♪ instrumental` (LRCLIB's
 `instrumental` flag, or lyrics that are only an "Instrumental" note), `♪
 lyrics offline`, and the player's own (`♪ Open Spotify to show lyrics`, `♪ nothing
@@ -1446,18 +1455,19 @@ Every everyday setting, in plain words, so nobody needs `config.toml`
 (lava-1xk.17). `app/model/settings_screen.rs` holds what's on it and what
 keys do; `ui/settings.rs` places and draws it.
 
-* **Pages:** *look* (style, colours, heat, speed, background, colour
-  range, stripe fix), *clock & timer* (face, time format,
-  focus / break lengths, long break after, sound at the end), *widgets*
-  (each widget beside the lamp / on the lamp / off, its position while on
-  the lamp, what things on the lamp sit on), *music & lyrics* (Spotify,
-  lyrics with what lrclib.net is sent, lyrics timing (`on time`, `0.25 s
-  later`, `0.1 s sooner`: ±1 s in 50 ms steps, by ear), cover picture /
-  size, small cover with music), *controls* (mouse), *window* (lamp only, hint line,
-  smoothness, lamp-only clock). Each ends with *reset this page*, which
+* **Pages:** *look* (style, colours, heat, speed, wax at the top,
+  background, colour range, stripe fix), *clock & timer* (face, time
+  format, seconds, focus / break lengths, long break after, sound at the
+  end), *widgets* (each widget beside the lamp / on the lamp / off, its
+  position while on the lamp, text on the lamp, what's behind things on
+  the lamp), *music & lyrics* (Spotify, lyrics with what lrclib.net is
+  sent, lyrics timing (`on time`, `0.25 s later`, `0.1 s sooner`: ±1 s in
+  50 ms steps, by ear), cover picture / size, small cover with music,
+  saved lyrics & covers), *controls* (mouse), *window* (lamp only, hint
+  line, smoothness, lamp-only clock). Each ends with *reset this page*, which
   asks for a second `⏎` (the Spotify Client ID is never reset). Labels
   and values are lowercase words, never config keys: `beside the lamp`,
-  not `side`; `position`, not `anchor`; `photo`, not `pixels`.
+  not `side`; `position`, not `anchor`; `cover picture`, not `detail`.
 * **Live, saved:** a change applies at once (the lamp, clock, widgets
   and mouse capture show it) and goes through the usual debounced save;
   the sheet says `changes save automatically` (or that a save failed).
@@ -1876,12 +1886,13 @@ than jumping.
 fps = 60                 # 1..=240
 color = "auto"           # auto | truecolor | 256 | 16 | none
 cell_aspect = 2.0        # used only when the terminal doesn't report pixels
-cells = "auto"           # auto | opaque | translucent (see §2.2)
+cells = "auto"           # auto | opaque | translucent | background (see §2.2)
 
 [lamp]
 style = "solid"
 heat = 3                 # 1..5
 speed = 1.0              # 0.25 | 0.5 | 1 | 2 | 4
+top_wax = false          # wax at the top (§2.4)
 
 [theme]
 palette = "lava"
@@ -1890,6 +1901,7 @@ transparent = false      # true = never paint bg (the terminal's own shows)
 [clock]
 face = "blocks"
 hour24 = true
+seconds = true           # false: hours and minutes only, every face, every size (§4.5)
 
 [pomodoro]
 focus_min = 25
@@ -1917,20 +1929,29 @@ lyrics = "off"
 cover = "off"
 # where each sits on the lava: center | top | top-right | bottom-right | bottom | bottom-left | top-left
 anchor = { clock = "center", pomodoro = "center", music = "top-left", lyrics = "bottom", cover = "top-right" }
+backing = "none"         # none (text floats on the lamp) | soft (§4.6 The backing)
+text = "auto"            # auto (light or dark per glyph, by the wax behind) | light | dark
 
 [art]
 detail = "auto"          # auto | sharp | small-pixels | medium-pixels | big-pixels (§4.6 Cover; older names load)
 size = "medium"          # small | medium | large | fill
 inline = true            # the music card's small cover, while the cover widget is off
 
+[lyrics]
+delay_ms = 0             # lyrics timing, by ear: + later, - sooner (§4.6 Lyrics)
+
 [spotify]
 client_id = ""           # Web API library features (docs/spotify.md); "" = off
+store = "system"         # where the login is kept: system | file
+logged_in = false        # kept by the app: a login is saved (not a secret)
 ```
+
+docs/configuration.md is the full reference, with every value explained.
 
 Out-of-range values are clamped rather than rejected: `fps` 1–240,
 `cell_aspect` 1.6–2.6 (NaN → 2.0), `heat` 1–5, `speed` snapped to the
 nearest step (≤ 0 or non-finite → 1), pomodoro minutes 1–1440, `cycles`
-1–12, `spotify.client_id` trimmed (anything but letters and digits → `""`).
+1–12, `lyrics.delay_ms` −1000–1000, `spotify.client_id` trimmed (anything but letters and digits → `""`).
 An empty `client_id` falls back to `LAVATUI_SPOTIFY_CLIENT_ID`. The old style name `glass` is accepted as `chrome`.
 
 A single `dock.anchor = "top-left"` (before per-widget anchors) loads as
@@ -1947,9 +1968,11 @@ toast; on the command line those names are unknown, like any other.
 
 CLI: `--minimal`/`-m`, `--fps <n>`, `--style <name>`, `--palette <name>`,
 `--color <depth>`, `--seed <u64>`, `--config <path>` (use this file
-instead of the XDG one), plus hidden `--frames <n>` (exit after n frames)
-and `--panic-after <n>` (tests the terminal-restoring panic hook). Flags
-override config for the session only. They're never written back (until
+instead of the XDG one), plus hidden `--frames <n>` (exit after n
+frames), `--panic-after <n>` (tests the terminal-restoring panic hook),
+`--trace <path>` (frame timings) and `--demo` (made-up player, covers,
+lyrics and Spotify account, for screenshots; without `--config` it reads
+and saves no settings). Flags override config for the session only. They're never written back (until
 you change that setting in the app, which then saves as usual). An
 unknown `--style` or `--palette` name is a usage error like any other
 bad flag: exit code 2 and the list of valid names.

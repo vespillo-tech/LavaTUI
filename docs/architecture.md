@@ -44,7 +44,9 @@ Slow work never runs on the frame: saving, the music player, cover
 downloads, lyrics lookups and Spotify requests each have their own
 worker thread, and a frame only reads their latest result.
 
-[`CLAUDE.md`](../CLAUDE.md) (the same text as `AGENTS.md`) has the full
+[`CLAUDE.md`](../CLAUDE.md) (from its project section on, the same text
+as `AGENTS.md`; only the generated issue-tracker notes at the top
+differ) has the full
 module map and step-by-step guides for adding a render style, a clock
 face, a widget or a key.
 
@@ -146,7 +148,13 @@ colours. The design target is 8 ms. If frames ever get slow, adaptive
 quality first lowers the sample grid and then halves the frame rate
 (never below 30 fps); it recovers on its own and never changes your
 settings. An unfocused window drops to 10 fps, and a paused lamp sleeps
-until the clock or timer changes.
+until the clock or timer changes. A paused lamp that still redraws for
+music or lyrics keeps its last cells instead of drawing the lamp again
+(200×60 with the demo's music, lyrics and cover beside it: 1.4–1.7 % →
+0.75–0.9 % of a core; what's left is mostly ratatui's whole-screen diff,
+~0.26 ms a frame). The window size ratatui asks for every frame comes
+from one `ioctl` on stdout (Unix), not a `/dev/tty` opened and closed
+each time (−0.1–0.4 % of a core at 200×60).
 
 Music costs about nothing: 3.4 % of a core at 80×24 with the music card
 vs 3.4 % without (60 s each, solid). Spotify is asked once a second
@@ -353,10 +361,13 @@ invented playlists of the demo songs plus a few more invented ones
 (`MORE`, no lyrics), liked songs, and add-to: "Late Night Lava" already
 has the first song, so adding it shows the "add it again?" question.
 Playing from the browser plays in the `FakeSource`, which knows the
-playlists (`FakeSource::with_contexts`). `Library::demo` keeps its login
-out of the config (`spotify.logged_in`) and counts as set up with no
-Client ID. Nothing goes to the network, no account or keyring is
-touched, and no real album art or song ends up in a committed image.
+playlists (`FakeSource::with_contexts`). `Library::demo` counts as set up
+with no Client ID. Without `--config` the demo reads and saves no
+settings at all (`Store::for_session`); with one (as `capture.py` and the
+tape do), its saves keep the file's `[spotify]` section, so the demo's
+Spotify page can't change a real Client ID, login store or login.
+Nothing goes to the network, no account or keyring is touched, and no
+real album art or song ends up in a committed image.
 `capture.py library` draws the browser, a playlist, the add list and
 the question over it.
 
