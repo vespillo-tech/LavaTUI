@@ -87,6 +87,10 @@ What changed in each version of LavaTUI, in plain words.
 - Performance info (`d`) also shows the lyrics' timing while they play:
   where the song is, the line and word, and whether the word times are
   exact or a guess. Handy for telling us what you see.
+- On Linux and Windows, a paused Spotify no longer takes the music
+  controls away from another app that is playing. LavaTUI follows
+  whatever is playing, Spotify first only while it plays. When you pause,
+  the keys stay with the player you paused.
 
 ## 1.2.0 — 2026-10-02 — first public release
 

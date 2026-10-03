@@ -1,5 +1,5 @@
 //! Windows: the System Media Transport Controls (the media flyout's
-//! sessions), Spotify's session preferred.
+//! sessions), Spotify's first while it plays ([`choice`](super::choice)).
 //!
 //! [`Smtc`] (Windows only) is a [`Backend`](super::worker::Backend) over
 //! `GlobalSystemMediaTransportControlsSessionManager` (the `windows`
@@ -28,10 +28,28 @@ const TICKS_PER_MS: i64 = 10_000;
 /// From 1601-01-01 (Windows `DateTime`) to 1970-01-01, in ticks.
 pub const UNIX_EPOCH_TICKS: i64 = 116_444_736_000_000_000;
 
-/// The session to show, by app id: Spotify's if there is one, else the
-/// one Windows calls current (`None`).
-pub fn choose<'a>(app_ids: impl IntoIterator<Item = &'a str>) -> Option<usize> {
-    app_ids.into_iter().position(is_spotify)
+/// One SMTC session, as far as choosing goes.
+#[derive(Clone, Copy, Debug)]
+pub struct Candidate<'a> {
+    pub app_id: &'a str,
+    pub playing: bool,
+    /// The one Windows calls current.
+    pub current: bool,
+}
+
+/// The session to show, by the shared rule ([`choice`](super::choice):
+/// Spotify while it plays, else whatever plays, else the one in use, else
+/// the one Windows calls current). `in_use` is the app id followed last.
+pub fn choose<'a>(
+    sessions: impl IntoIterator<Item = Candidate<'a>>,
+    in_use: Option<&str>,
+) -> Option<usize> {
+    super::choice::pick(sessions.into_iter().map(|s| super::choice::Player {
+        spotify: is_spotify(s.app_id),
+        playing: s.playing,
+        current: s.current,
+        in_use: in_use == Some(s.app_id),
+    }))
 }
 
 fn is_spotify(app_id: &str) -> bool {
@@ -167,9 +185,11 @@ mod backend {
     use windows::Media::MediaPlaybackAutoRepeatMode;
     use windows::Storage::Streams::DataReader;
     use windows::Win32::System::WinRT::{RO_INIT_MULTITHREADED, RoInitialize};
+    use windows::core::{IUnknown, Interface};
 
     use super::{
-        Cover, UNIX_EPOCH_TICKS, app_name, choose, duration, position, status, to_ticks, track,
+        Candidate, Cover, UNIX_EPOCH_TICKS, app_name, choose, duration, position, status, to_ticks,
+        track,
     };
     use windows::Foundation::TypedEventHandler;
 
@@ -183,6 +203,8 @@ mod backend {
         initialised: bool,
         manager: Option<Manager>,
         cover: Cover,
+        /// The app id of the session followed last.
+        in_use: Option<String>,
         /// Where change events go ([`Backend::listen`]).
         nudge: Option<Nudge>,
         /// The manager's and the session's event handlers, while set.
@@ -243,7 +265,8 @@ mod backend {
             commands: &[Command],
         ) -> windows::core::Result<(Snapshot, Option<Arc<str>>)> {
             let manager = self.manager()?;
-            let Some(session) = session(&manager)? else {
+            let Some(session) = session(&manager, self.in_use.as_deref())? else {
+                self.in_use = None;
                 let snap =
                     Snapshot::new(Status::Unavailable(Unavailable::NotRunning), Instant::now());
                 return Ok((snap, None));
@@ -251,6 +274,7 @@ mod backend {
             let id = session.SourceAppUserModelId()?.to_string();
             self.follow(&manager, &id, &session);
             let name: Arc<str> = Arc::from(app_name(&id));
+            self.in_use = Some(id);
             for command in commands {
                 // A command the app refuses doesn't spoil the read.
                 let _ = send(&session, command);
@@ -395,18 +419,35 @@ mod backend {
         Ok(bytes)
     }
 
-    /// Spotify's session, else the current one, else none.
-    fn session(manager: &Manager) -> windows::core::Result<Option<Session>> {
-        let sessions = manager.GetSessions()?;
-        let mut ids = Vec::new();
-        for i in 0..sessions.Size()? {
-            ids.push(sessions.GetAt(i)?.SourceAppUserModelId()?.to_string());
-        }
-        if let Some(i) = choose(ids.iter().map(String::as_str)) {
-            return Ok(Some(sessions.GetAt(i as u32)?));
-        }
+    /// The session to follow ([`choose`]), or none.
+    fn session(manager: &Manager, in_use: Option<&str>) -> windows::core::Result<Option<Session>> {
         // No current session is an error here, not a session.
-        Ok(manager.GetCurrentSession().ok())
+        let current = manager.GetCurrentSession().ok();
+        let current = current.as_ref().and_then(identity);
+        let sessions = manager.GetSessions()?;
+        let mut found = Vec::new();
+        for i in 0..sessions.Size()? {
+            let session = sessions.GetAt(i)?;
+            let id = session.SourceAppUserModelId()?.to_string();
+            let playing = session
+                .GetPlaybackInfo()
+                .and_then(|info| info.PlaybackStatus())
+                .is_ok_and(|code| status(code.0) == Status::Playing);
+            let is_current = current.is_some() && identity(&session) == current;
+            found.push((session, id, playing, is_current));
+        }
+        let candidates = found.iter().map(|(_, id, playing, current)| Candidate {
+            app_id: id,
+            playing: *playing,
+            current: *current,
+        });
+        Ok(choose(candidates, in_use).map(|i| found.swap_remove(i).0))
+    }
+
+    /// The session's COM identity (its `IUnknown`'s address).
+    fn identity(session: &Session) -> Option<usize> {
+        let unknown = session.cast::<IUnknown>().ok()?;
+        Some(unknown.as_raw() as usize)
     }
 
     fn send(session: &Session, command: &Command) -> windows::core::Result<bool> {
@@ -440,16 +481,32 @@ mod tests {
 
     const MS: i64 = TICKS_PER_MS;
 
+    fn at<'a>(app_id: &'a str, playing: bool, current: bool) -> Candidate<'a> {
+        Candidate {
+            app_id,
+            playing,
+            current,
+        }
+    }
+
     #[test]
-    fn spotify_is_preferred() {
-        let ids = ["chrome", "Spotify.exe", "MSEdge"];
-        assert_eq!(choose(ids), Some(1));
-        assert_eq!(
-            choose(["SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify"]),
-            Some(0)
-        );
-        assert_eq!(choose(["chrome", "MSEdge"]), None);
-        assert_eq!(choose([]), None);
+    fn spotify_first_while_it_plays_then_whatever_plays() {
+        let spotify = "SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify";
+        // Playing: Spotify, over the current session too.
+        let all = [at("chrome", true, true), at(spotify, true, false)];
+        assert_eq!(choose(all, None), Some(1));
+        // Idle, it doesn't win over a player that plays (codex review #3),
+        // nor over the one Windows calls current.
+        let idle = [at("Spotify.exe", false, false), at("vlc.exe", true, false)];
+        assert_eq!(choose(idle, None), Some(1));
+        assert_eq!(choose(idle, Some("Spotify.exe")), Some(1));
+        let quiet = [at("Spotify.exe", false, false), at("MSEdge", false, true)];
+        assert_eq!(choose(quiet, None), Some(1));
+        // Nothing playing: the one in use keeps the keys.
+        assert_eq!(choose(quiet, Some("Spotify.exe")), Some(0));
+        let none = [at("chrome", false, false), at("MSEdge", false, false)];
+        assert_eq!(choose(none, None), Some(0));
+        assert_eq!(choose([], None), None);
     }
 
     #[test]
