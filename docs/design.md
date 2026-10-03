@@ -524,15 +524,19 @@ otherwise **2.0**. Recompute on every resize.
   round bump, with lobes fading in up to 5 px, so small lamps show round
   droplets, not torn clumps. The pool is drawn at
   least 2 sample rows deep (its mean lifted to that, mounds on top).
-* **Wax at the top** (`lamp.top_wax`, off by default): a thin, slightly
-  uneven layer of cool wax (the cool end of the wax colours) under the
-  top edge, ≈ 0.01–0.022 lamp heights, drawn 1.5–5 sample pixels deep
-  whatever the size, so it never grows into a slab. Rising blobs that
-  touch it sometimes melt in (small ones whole, big ones give a share
-  and sink); it grows hanging drips that let go and sink. Its wax comes
-  from the pool and goes back (wax is conserved). Toggling fades it in
-  or out over 1.5 s. It is part of the lamp, so widgets may sit over
-  it like over any wax.
+* **Wax at the top** (`lamp.top_wax`, off by default): the pool upside
+  down and much thinner, the same soft surface and the same melt-in and
+  budding code, in its own physical context. A thin, slightly uneven
+  layer of the coolest wax under the top edge, ≈ 0.01–0.03 lamp heights,
+  drawn 1.5–5 sample pixels deep (plus bulges) whatever the size. Cold:
+  blobs that stick seep in slowly and flatten under it. Selection:
+  sticking needs a blob that has cooled toward neutral and is not small
+  (about a third of those reaching the top). Heat: a bulge holds the
+  warmth of what melted in and cools back. Gravity: the bulge sags into
+  a teardrop drop (point up) that snaps and falls; a big blob gives a
+  share and the rest pulls away, its neck thinning. Wax is conserved
+  (from and back to the pool). Toggling fades it in or out over 1.5 s.
+  It is part of the lamp, so widgets may sit over it like over any wax.
 
 ---
 

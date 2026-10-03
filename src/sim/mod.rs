@@ -31,12 +31,15 @@
 //!   occasionally split in two.
 //! - Cooled blobs sink, settle on the pool and melt back into it.
 //! - Optionally (`lamp.top_wax`), a thin **top layer** of cool wax rests
-//!   under the top of the tank, as in a real lamp. Some rising blobs that
-//!   reach it melt up into it (a big one gives it a share and turns back;
-//!   others just turn back and sink); now and then it grows a drip that
-//!   lets go and sinks. It never drips below
-//!   [`CAP_KEEP`] deep, and the pool tops it up to that (when it is turned
-//!   on, or the lamp widens). Turned off, it thins away into the pool.
+//!   under the top of the tank, as in a real lamp: the pool, upside down
+//!   and much thinner. Blobs bud from it (drops that hang, swell and let
+//!   go) and melt into it by the same code as the pool's, mirrored (a
+//!   blob's [`End`]). About a third of the blobs that rise to it melt in;
+//!   a big one melts in only a share, then pulls away and sinks. What
+//!   melts in shows as a bulge where it joined that slowly spreads out
+//!   and evens. It never drips below [`CAP_KEEP`] deep, and the pool tops
+//!   it up to that (when it is turned on, or the lamp widens). Turned
+//!   off, it thins away into the pool.
 //! - Total wax area is conserved by every step (pool + blobs + top layer).
 //!   Only a width change adjusts it, slowly, through the pool.
 //!
@@ -52,13 +55,13 @@ mod rng;
 
 use std::f64::consts::PI;
 
-use blob::Ghost;
 pub use blob::{Blob, Phase};
+use blob::{End, Ghost};
 pub use controls::SimSpeed;
 pub use controls::{DEFAULT_HEAT, HEAT_LEVELS};
 use controls::{Pulse, Reseed};
 pub use field::{Field, SURFACE, Sample};
-use rng::{Rng, hash};
+use rng::Rng;
 
 /// Buoyancy is zero at this temperature: hotter rises, colder sinks.
 pub const NEUTRAL_TEMP: f64 = 0.5;
@@ -177,7 +180,7 @@ const MELT_SKIRT: f64 = 0.3;
 /// stop joining it past `CAP_FULL` deep. It is drawn at least
 /// `field::MIN_CAP_PIXELS` deep, and at most `field::MAX_CAP_PIXELS`.
 const CAP_KEEP: f64 = 0.01;
-const CAP_FULL: f64 = 0.022;
+const CAP_FULL: f64 = 0.03;
 /// Its temperature, and that of what melts into it or drips from it: the
 /// cool end of [`WAX_TEMP`].
 const CAP_TEMP: f64 = 0.27;
@@ -187,33 +190,62 @@ const CAP_FADE: f64 = 1.5;
 const CAP_FILL_RATE: f64 = 3.0;
 /// How uneven its underside is, as a share of its depth.
 const CAP_LUMP: f64 = 0.35;
-/// A rising blob whose top comes this close to the underside touches it,
-/// and joins it with this chance (fixed per blob): it melts in whole if
-/// the layer has room for it (up to `CAP_FULL`), else gives it up to
-/// `CAP_GIVE` of its wax and turns back.
+/// A rising blob whose top comes this close to the underside touches it.
+/// While it presses there it sticks (starts melting in) at up to
+/// `STICK_RATE` per second: not while it is still warm (above
+/// `STICK_TEMP.1`; it cools as it presses), fully once it has cooled to
+/// `STICK_TEMP.0`, and less the smaller it is (`STICK_SIZE`, in typical
+/// radii: none below the first, full from the second). A small warm blob
+/// touches, flattens a little and turns back; a big, cooling one sticks.
 const CAP_TOUCH: f64 = 0.004;
-const CAP_JOIN: f64 = 0.5;
-const CAP_GIVE: f64 = 0.15;
-/// Blobs melting in whole lose this fraction of their area per second;
-/// one giving part, this (so it lingers a few seconds).
-const CAP_MELT_RATE: f64 = 0.35;
-const CAP_GIVE_RATE: f64 = 0.06;
-/// How flat a blob melting into it gets (its stretch), and how fast (1/s)
-/// one that lets go still pressed into it flattens out of it.
-const CAP_FLATTEN: f64 = 0.7;
+const STICK_RATE: f64 = 0.08;
+const STICK_TEMP: (f64, f64) = (0.52, 0.62);
+const STICK_SIZE: (f64, f64) = (0.4, 1.2);
+/// A sticking blob melts in all of it if the layer has room for it (up
+/// to `CAP_FULL`), else up to `CAP_SHARE` of it, then pulls away.
+const CAP_SHARE: f64 = 0.4;
+/// The top layer is cold, stiff wax: what melts into it seeps in slowly
+/// (`TOP_MELT_RATE`, a fraction of its area per second, against the hot
+/// pool's [`MELT_RATE`]), rising into it no faster than `TOP_MELT_SINK`
+/// (lamp heights / s), flattening and spreading under it as it goes
+/// (to `TOP_FLATTEN`), only `TOP_MELT_DEPTH` radii into it.
+const TOP_MELT_RATE: f64 = 0.3;
+const TOP_MELT_SINK: f64 = 0.03;
+const TOP_FLATTEN: f64 = 0.6;
+const TOP_MELT_DEPTH: f64 = 0.25;
+/// A blob pulling away from the top layer lets go once this far clear of
+/// it; one that lets go still pressed into it (the layer was switched
+/// off) flattens out of it at this rate (1/s).
+const PULL_GAP: f64 = 0.01;
 const TOP_FLATTEN_RATE: f64 = 4.0;
-/// Seconds between drips (random in range): shortened in proportion to
-/// how far the layer is over `CAP_KEEP`.
-const DRIP_GAP: (f64, f64) = (6.0, 16.0);
-/// Drip sizes (multiples of the typical radius), and the seconds one takes
-/// to grow. It starts squat (`DRIP_STRETCH`) and grows long.
+/// What melts into the top layer bulges it where it joined: a bump
+/// `LUMP_WIDTH` × the blob's radius across (half-width) that spreads at
+/// `LUMP_SPREAD` (lamp heights / s) while its wax evens out into the rest
+/// of the layer at `LUMP_EVEN` (1/s). It holds the warmth of the wax that
+/// melted in, cooling to [`CAP_TEMP`] at `LUMP_COOL` (1/s).
+const LUMP_WIDTH: f64 = 3.0;
+const LUMP_SPREAD: f64 = 0.03;
+const LUMP_EVEN: f64 = 0.06;
+const LUMP_COOL: f64 = 0.35;
+/// Cool wax is heavier than the liquid: a bulge, `SAG_TIME` seconds after
+/// the last wax melted into it, sags into a hanging drop with this chance
+/// if it holds enough for one; the drop takes `SAG_SHARE` of it.
+const SAG_TIME: f64 = 2.0;
+const SAG_CHANCE: f64 = 0.85;
+const SAG_SHARE: f64 = 0.8;
+/// Now and then a drop forms anywhere, while the layer holds more than
+/// `DRIP_SPARE` × `CAP_KEEP`: seconds between tries (random in range).
+/// Drop sizes (multiples of the typical radius), and the seconds one
+/// takes to grow.
+const DRIP_GAP: (f64, f64) = (40.0, 90.0);
+const DRIP_SPARE: f64 = 2.0;
 const DRIP_SIZE: (f64, f64) = (0.3, 0.6);
 const DRIP_TIME: f64 = 5.0;
-const DRIP_STRETCH: f64 = 0.75;
-const DRIP_LENGTH: f64 = 0.45;
-
-/// Salt for each blob's fixed draw of whether it joins the top layer.
-const CAP_SALT: u64 = 0x70b_7a8;
+/// A drop hangs squat (`DROP_STRETCH`) and grows long (by `DROP_LENGTH`)
+/// as it swells, a teardrop pointing up (its taper eases to `DROP_TAPER`).
+const DROP_STRETCH: f64 = 0.8;
+const DROP_LENGTH: f64 = 0.55;
+const DROP_TAPER: f64 = -0.45;
 
 /// Cohesion: similar blobs within `COHESION_RANGE × (r1 + r2)` attract.
 const COHESION: f64 = 0.02;
@@ -321,6 +353,60 @@ fn cap_underside(depth: f64, x: f64, time: f64) -> f64 {
     1.0 - depth * (1.0 + CAP_LUMP * lumps)
 }
 
+/// A bulge in the top layer where a blob melted in (see [`LUMP_WIDTH`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct Lump {
+    pub shape: LumpShape,
+    /// Its shape at the start of the last step, for interpolation.
+    pub prev: LumpShape,
+    /// The blob melting into it, or the drop it sags into (it follows
+    /// that blob along the layer).
+    pub follow: u64,
+    /// Seconds since wax last melted into it, and whether it has had its
+    /// chance to sag into a drop.
+    pub since_fed: f64,
+    pub sagged: bool,
+}
+
+/// The part of a [`Lump`] the field draws.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(super) struct LumpShape {
+    pub x: f64,
+    pub area: f64,
+    /// Half-width.
+    pub width: f64,
+    pub temp: f64,
+}
+
+impl LumpShape {
+    pub fn lerp(self, to: LumpShape, t: f64) -> LumpShape {
+        let mix = |a: f64, b: f64| a + (b - a) * t;
+        LumpShape {
+            x: mix(self.x, to.x),
+            area: mix(self.area, to.area),
+            width: mix(self.width, to.width),
+            temp: mix(self.temp, to.temp),
+        }
+    }
+
+    /// How far it hangs below the layer at `x`: a smooth, compact bump
+    /// holding `area`.
+    #[inline]
+    pub fn depth(self, x: f64) -> f64 {
+        let u = (x - self.x) / self.width;
+        if u.abs() >= 1.0 {
+            return 0.0;
+        }
+        let bump = (1.0 - u * u) * (1.0 - u * u);
+        bump * self.area * (15.0 / 16.0) / self.width
+    }
+
+    /// Its deepest point.
+    pub fn peak(self) -> f64 {
+        self.area * (15.0 / 16.0) / self.width
+    }
+}
+
 /// Event counters, for tests and a debug HUD.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Stats {
@@ -328,11 +414,11 @@ pub struct Stats {
     pub merged: u64,
     pub split: u64,
     pub melted: u64,
-    /// Drips that let go of the top layer, blobs that melted into it, and
-    /// blobs that gave it some wax and turned back.
+    /// Drops that let go of the top layer, blobs that melted into it, and
+    /// blobs that melted into it in part and pulled away.
     pub dripped: u64,
     pub capped: u64,
-    pub kissed: u64,
+    pub pinched: u64,
 }
 
 #[derive(Debug)]
@@ -373,6 +459,8 @@ pub struct World {
     prev_cap_on: f64,
     prev_cap_depth: f64,
     drip_timer: f64,
+    /// Bulges in the top layer where blobs melted in.
+    lumps: Vec<Lump>,
 }
 
 impl World {
@@ -406,6 +494,7 @@ impl World {
             prev_cap_on: 0.0,
             prev_cap_depth: 0.0,
             drip_timer: 0.0,
+            lumps: Vec::new(),
         };
         world.scatter_initial_blobs();
         world.prev_pool_level = world.pool_level();
@@ -434,7 +523,10 @@ impl World {
 
     /// Total wax: pool, blobs and top layer.
     pub fn wax_area(&self) -> f64 {
-        self.pool_area + self.cap_area + self.blobs.iter().map(Blob::area).sum::<f64>()
+        self.pool_area
+            + self.cap_area
+            + self.lumps.iter().map(|l| l.shape.area).sum::<f64>()
+            + self.blobs.iter().map(Blob::area).sum::<f64>()
     }
 
     /// How deep the top layer is shown now (lamp heights).
@@ -480,6 +572,9 @@ impl World {
         self.prev_pool_level = self.pool_level();
         self.prev_cap_on = self.cap_on;
         self.prev_cap_depth = self.cap_mean_depth();
+        for lump in &mut self.lumps {
+            lump.prev = lump.shape;
+        }
         for blob in &mut self.blobs {
             blob.prev = blob.pose();
             blob.cooldown = (blob.cooldown - dt).max(0.0);
@@ -489,6 +584,7 @@ impl World {
 
         self.update_controls(dt);
         self.ease_cap(dt);
+        self.even_lumps(dt);
         self.ease_walls(dt);
         self.move_free(dt);
         self.move_attached(dt);
@@ -543,6 +639,17 @@ impl World {
         field::smooth(self.cap_on) * self.cap_mean_depth()
     }
 
+    /// The top layer's underside at `x` as it is now, bulges and all.
+    fn cap_under(&self, x: f64) -> f64 {
+        let lumps: f64 = self.lumps.iter().map(|l| l.shape.depth(x)).sum();
+        cap_underside(self.cap_depth(), x, self.time) - field::smooth(self.cap_on) * lumps
+    }
+
+    /// All the wax in the top layer, bulges included.
+    fn cap_total(&self) -> f64 {
+        self.cap_area + self.lumps.iter().map(|l| l.shape.area).sum::<f64>()
+    }
+
     /// The least the top layer keeps (the pool tops it up to this).
     fn cap_keep_area(&self) -> f64 {
         CAP_KEEP * self.wall_width
@@ -591,21 +698,23 @@ impl World {
             let step = dt / SKIRT_FADE;
             blob.attach += (attach - blob.attach).clamp(-step, step);
             match blob.phase {
-                Phase::Budding { target } | Phase::Dripping { target } => {
-                    blob.neck = (blob.radius / target).min(1.0);
+                Phase::Budding { target } => blob.neck = (blob.radius / target).min(1.0),
+                // Pulling away: its skirt draws in to a neck, as a bud's.
+                Phase::Melting { left } if left <= 0.0 => {
+                    relax(&mut blob.neck, 1.0, 1.0 / SKIRT_FADE, dt);
                 }
                 // A skirt not shown yet starts as it should be; one that is
                 // (a bud whose pool ran dry) eases there.
-                Phase::Melting | Phase::Capping { .. } if blob.prev.attach <= 0.0 => {
-                    blob.neck = MELT_SKIRT;
-                }
-                Phase::Melting | Phase::Capping { .. } => {
-                    relax(&mut blob.neck, MELT_SKIRT, 1.0 / SKIRT_FADE, dt);
-                }
+                Phase::Melting { .. } if blob.prev.attach <= 0.0 => blob.neck = MELT_SKIRT,
+                Phase::Melting { .. } => relax(&mut blob.neck, MELT_SKIRT, 1.0 / SKIRT_FADE, dt),
                 Phase::Free => {}
             }
-            // Rising: the tail hangs below; sinking: it trails above.
-            let taper = (TAPER * blob.vy).clamp(-MAX_TAPER, MAX_TAPER);
+            // Rising: the tail hangs below; sinking: it trails above. A
+            // drop hangs as a teardrop pointing up.
+            let taper = match (blob.phase, blob.end) {
+                (Phase::Budding { .. }, End::Top) => DROP_TAPER * blob.neck,
+                _ => (TAPER * blob.vy).clamp(-MAX_TAPER, MAX_TAPER),
+            };
             relax(&mut blob.taper, taper, TAPER_EASE, dt);
         }
         for ghost in &mut self.ghosts {
@@ -686,8 +795,9 @@ impl World {
         let cap = self.cap_depth();
         // Rising blobs may join the top layer once it is fully in, as far
         // as it has room.
-        let room = CAP_FULL * self.wall_width - self.cap_area;
+        let room = CAP_FULL * self.wall_width - self.cap_total();
         let joinable = self.top_wax && self.cap_on >= 1.0 && self.reseed.is_none() && room > 0.0;
+        let typical = self.typical_radius();
         for i in 0..self.blobs.len() {
             let blob = &self.blobs[i];
             if blob.phase != Phase::Free {
@@ -703,7 +813,7 @@ impl World {
 
             let half = self.half_width();
             let ceiling = if cap > 0.0 {
-                cap_underside(cap, blob.x, self.time)
+                self.cap_under(blob.x)
             } else {
                 1.0
             };
@@ -727,7 +837,7 @@ impl World {
             let widest = (half - blob.x.abs()) / blob.radius;
             let stretch = blob.stretch.max(1.0 / widest.max(1e-3));
             let flattest = tallest.max(WALL_FLATTEN);
-            if blob.top && stretch > flattest {
+            if blob.end == End::Top && stretch > flattest {
                 // Let go of the top layer still pressed into it (it was
                 // switched off): flattens out of it rather than snapping.
                 blob.stretch = stretch;
@@ -740,11 +850,11 @@ impl World {
             let bottom = blob.y - blob.radius * blob.stretch;
             let surface = pool_surface(level, blob.x, floor, self.time);
             if bottom < surface + 0.004 && blob.vy < 0.0 && blob.cooldown <= 0.0 {
-                blob.phase = Phase::Melting;
-                blob.top = false;
+                blob.phase = Phase::MELTING;
+                blob.end = End::Bottom;
             }
 
-            // Pressed up against the top layer: some join it.
+            // Risen to the top layer: some melt into it.
             let top = blob.y + blob.radius * blob.stretch;
             if joinable
                 && top > ceiling - CAP_TOUCH
@@ -752,182 +862,262 @@ impl World {
                 && blob.cooldown <= 0.0
                 && blob.attach <= 0.0
                 && blob.prev.attach <= 0.0
-                && joins_cap(blob.id)
+                && self.rng.unit() < stick_rate(blob, typical) * dt
             {
                 let area = blob.area();
                 let left = if area <= room {
                     f64::INFINITY
                 } else {
-                    (CAP_GIVE * area).min(room)
+                    (CAP_SHARE * area).min(room)
                 };
-                blob.phase = Phase::Capping { left };
-                blob.top = true;
+                blob.phase = Phase::Melting { left };
+                blob.end = End::Top;
             }
         }
     }
 
-    /// Buds and melting blobs are attached to the pool and move with it.
+    /// Buds and melting blobs are attached to their layer (the pool, or
+    /// the top layer) and move with it. The top layer's are the pool's
+    /// upside down.
     fn move_attached(&mut self, dt: f64) {
         let level = self.pool_level();
         let floor = self.bottom_width();
         let min_pool = self.min_pool_area();
+        let keep = self.cap_keep_area();
         let half = self.half_width();
         let (melt_rate, bud_time) = match self.reseed {
             Some(Reseed::Melting) => (controls::RESEED_MELT_RATE, BUD_TIME),
             Some(Reseed::Refill { .. }) => (MELT_RATE, BUD_TIME / controls::REFILL_BUD_SPEEDUP),
             None => (MELT_RATE, BUD_TIME / self.pool_surplus()),
         };
-        let cap_melt_rate = match self.reseed {
+        let top_melt_rate = match self.reseed {
             Some(Reseed::Melting) => controls::RESEED_MELT_RATE,
-            _ => CAP_MELT_RATE,
+            _ => TOP_MELT_RATE,
         };
-        let cap = self.cap_depth();
-        let keep = self.cap_keep_area();
-        for blob in &mut self.blobs {
+        for i in 0..self.blobs.len() {
+            let blob = &self.blobs[i];
             if blob.phase == Phase::Free {
                 continue;
             }
+            let end = blob.end;
+            let id = blob.id;
+            let out = end.outward();
             // Walls that moved in on an attached blob nudge it along the pool
             // (by its half-width, as for a free one: a tall blob settling to
             // melt beside a wall stays put).
             let inside = (half - blob.half_extents().0).max(0.0);
             let excess = blob.x.abs() - inside;
-            if excess > 0.0 {
-                blob.x -= blob.x.signum() * excess.min(MAX_SPEED * dt);
-            }
-            let surface = pool_surface(level, blob.x, floor, self.time);
-            let under = if cap > 0.0 {
-                cap_underside(cap, blob.x, self.time)
+            let x = if excess > 0.0 {
+                blob.x - blob.x.signum() * excess.min(MAX_SPEED * dt)
             } else {
-                1.0
+                blob.x
             };
+            let surface = match end {
+                End::Bottom => pool_surface(level, x, floor, self.time),
+                End::Top => self.cap_under(x),
+            };
+            // A drop draws on the bulge it sags from first.
+            let lump = self.lumps.iter().position(|l| l.follow == id);
+            let lump_wax = lump.map_or(0.0, |l| self.lumps[l].shape.area);
+            let (layer, least) = match end {
+                End::Bottom => (self.pool_area, min_pool),
+                End::Top => (self.cap_area + lump_wax, keep),
+            };
+            let blob = &mut self.blobs[i];
+            blob.x = x;
             let old_y = blob.y;
+            // Wax into (+) or out of (−) the layer, in order.
+            let mut moved = [0.0; 2];
             match blob.phase {
                 Phase::Free => unreachable!("skipped above"),
-                Phase::Dripping { target } => {
-                    let full = PI * target * target;
-                    let start = (blob.radius / (BUD_START * target)).min(1.0);
-                    let grow = (full / DRIP_TIME * start * dt).min(self.cap_area - keep);
-                    if grow <= 0.0 {
-                        // The layer ran thin: let go if it's worth it, else
-                        // melt back up.
-                        blob.phase = if blob.radius > 0.5 * target {
-                            Phase::Free
-                        } else {
-                            Phase::Capping {
-                                left: f64::INFINITY,
-                            }
-                        };
-                        blob.cooldown = COOLDOWN;
-                        continue;
-                    }
-                    self.cap_area -= grow;
-                    blob.set_area(blob.area() + grow);
-                    let g = (blob.radius / target).min(1.0);
-                    // A squat bulge under the layer that hangs lower and
-                    // longer as it swells, until only its top touches.
-                    blob.stretch = DRIP_STRETCH + DRIP_LENGTH * g * g;
-                    let end = DRIP_STRETCH + DRIP_LENGTH;
-                    blob.y = under - blob.radius * ((end + 0.75) * g - 0.75);
-                    if g >= 1.0 {
-                        blob.phase = Phase::Free;
-                        blob.cooldown = COOLDOWN;
-                        self.stats.dripped += 1;
-                    }
-                }
-                Phase::Capping { left } => {
-                    let whole = left.is_infinite();
-                    let rate = if whole { cap_melt_rate } else { CAP_GIVE_RATE };
-                    let drain = (blob.area() * rate * dt).min(left);
-                    blob.set_area(blob.area() - drain);
-                    self.cap_area += drain;
-                    blob.phase = Phase::Capping { left: left - drain };
-                    // Melting in whole, it flattens up into the layer as it
-                    // drains; giving part, it stays pressed under it.
-                    let (flat, reach) = if whole {
-                        (CAP_FLATTEN, 0.3)
-                    } else {
-                        (WALL_FLATTEN, 1.0)
-                    };
-                    relax(&mut blob.stretch, flat, STRETCH_RELAX, dt);
-                    let rest = under - reach * blob.radius * blob.stretch;
-                    let rise = (MELT_SINK_RATE * (rest - blob.y)).clamp(-MELT_SINK, MELT_SINK);
-                    relax(&mut blob.vy, rise, MELT_SINK_EASE, dt);
-                    blob.y += blob.vy * dt;
-                    blob.x += blob.vx * dt;
-                    blob.vx *= 1.0 / (1.0 + DRAG * dt);
-                    if blob.radius < MELTED_RADIUS {
-                        self.cap_area += blob.area();
-                        blob.radius = 0.0;
-                        self.stats.capped += 1;
-                    } else if left - drain <= 0.0 {
-                        // Given its share: let go and sink.
-                        blob.phase = Phase::Free;
-                        blob.cooldown = COOLDOWN;
-                        self.stats.kissed += 1;
-                    }
-                }
                 Phase::Budding { target } => {
                     let full = PI * target * target;
                     let start = (blob.radius / (BUD_START * target)).min(1.0);
-                    let grow = (full / bud_time * start * dt).min(self.pool_area - min_pool);
+                    let time = match end {
+                        End::Bottom => bud_time,
+                        End::Top => DRIP_TIME,
+                    };
+                    let grow = (full / time * start * dt).min(layer - least);
                     if grow <= 0.0 {
-                        // The pool ran dry: let go if it's worth it, else sink back.
+                        // The layer ran dry: let go if it's worth it, else sink back.
                         blob.phase = if blob.radius > 0.5 * target {
                             Phase::Free
                         } else {
-                            Phase::Melting
+                            Phase::MELTING
                         };
                         blob.cooldown = COOLDOWN;
                         continue;
                     }
-                    self.pool_area -= grow;
+                    moved[0] = -grow;
                     blob.set_area(blob.area() + grow);
                     let g = (blob.radius / target).min(1.0);
-                    // A wide, low bulge on the pool that rises and rounds out
-                    // as it swells; the field draws the neck below it.
-                    blob.y = surface + blob.radius * (1.7 * g - 0.75);
-                    blob.stretch = BUD_STRETCH + 0.4 * g * g;
+                    match end {
+                        // A wide, low bulge on the pool that rises and rounds
+                        // out as it swells; the field draws the neck below it.
+                        End::Bottom => {
+                            blob.y = surface + out * blob.radius * (1.7 * g - 0.75);
+                            blob.stretch = BUD_STRETCH + 0.4 * g * g;
+                        }
+                        // A drop sags lower and longer as it swells, until it
+                        // hangs by its tip.
+                        End::Top => {
+                            blob.stretch = DROP_STRETCH + DROP_LENGTH * g * g;
+                            let hang = DROP_STRETCH + DROP_LENGTH + 0.75;
+                            blob.y = surface - blob.radius * (hang * g - 0.75);
+                        }
+                    }
                     if g >= 1.0 {
                         blob.phase = Phase::Free;
                         blob.cooldown = COOLDOWN;
-                        self.stats.budded += 1;
+                        match end {
+                            End::Bottom => self.stats.budded += 1,
+                            End::Top => self.stats.dripped += 1,
+                        }
                     }
                 }
-                Phase::Melting => {
-                    let drain = blob.area() * melt_rate * dt;
+                Phase::Melting { left } if left > 0.0 => {
+                    // The hot pool takes wax in quickly; the cold top layer
+                    // slowly, the blob flattening and spreading under it.
+                    let (rate, flat, depth, sink_max) = match end {
+                        End::Bottom => (melt_rate, 0.85, 0.4, MELT_SINK),
+                        End::Top => (top_melt_rate, TOP_FLATTEN, TOP_MELT_DEPTH, TOP_MELT_SINK),
+                    };
+                    let drain = (blob.area() * rate * dt).min(left);
                     blob.set_area(blob.area() - drain);
-                    self.pool_area += drain;
-                    let rest = surface - 0.4 * blob.radius;
-                    let sink = (MELT_SINK_RATE * (rest - blob.y)).clamp(-MELT_SINK, MELT_SINK);
+                    moved[0] = drain;
+                    blob.phase = Phase::Melting { left: left - drain };
+                    let rest = surface - out * depth * blob.radius;
+                    let sink = (MELT_SINK_RATE * (rest - blob.y)).clamp(-sink_max, sink_max);
                     relax(&mut blob.vy, sink, MELT_SINK_EASE, dt);
                     blob.y += blob.vy * dt;
                     blob.x += blob.vx * dt;
                     blob.vx *= 1.0 / (1.0 + DRAG * dt);
-                    relax(&mut blob.stretch, 0.85, STRETCH_RELAX, dt);
+                    relax(&mut blob.stretch, flat, STRETCH_RELAX, dt);
                     if blob.radius < MELTED_RADIUS {
-                        self.pool_area += blob.area();
+                        moved[1] = blob.area();
                         blob.radius = 0.0;
-                        self.stats.melted += 1;
+                        match end {
+                            End::Bottom => self.stats.melted += 1,
+                            End::Top => self.stats.capped += 1,
+                        }
+                    }
+                }
+                Phase::Melting { .. } => {
+                    // Given its share: pulls away until clear, then lets go.
+                    let reach = blob.radius * blob.stretch + PULL_GAP;
+                    let rest = surface + out * reach;
+                    let sink =
+                        (MELT_SINK_RATE * (rest - blob.y)).clamp(-TOP_MELT_SINK, TOP_MELT_SINK);
+                    relax(&mut blob.vy, sink, MELT_SINK_EASE, dt);
+                    blob.y += blob.vy * dt;
+                    blob.x += blob.vx * dt;
+                    blob.vx *= 1.0 / (1.0 + DRAG * dt);
+                    relax(&mut blob.stretch, 1.0, STRETCH_RELAX, dt);
+                    if out * (blob.y - surface) - blob.radius * blob.stretch >= 0.5 * PULL_GAP {
+                        blob.phase = Phase::Free;
+                        blob.cooldown = COOLDOWN;
+                        self.stats.pinched += 1;
                     }
                 }
             }
-            if let Phase::Budding { .. } | Phase::Dripping { .. } = blob.phase {
+            if let Phase::Budding { .. } = blob.phase {
                 blob.vy = (blob.y - old_y) / dt;
+            }
+            let (x, radius, temp) = (blob.x, blob.radius, blob.temp);
+            for wax in moved.into_iter().filter(|&w| w != 0.0) {
+                match end {
+                    End::Bottom => self.pool_area += wax,
+                    // What melts in bulges the layer where it joined,
+                    // bringing its warmth.
+                    End::Top if wax > 0.0 => {
+                        let lump = self.lump_for(id, x, radius);
+                        let s = &mut lump.shape;
+                        s.temp = (s.temp * s.area + temp * wax) / (s.area + wax);
+                        s.area += wax;
+                        lump.since_fed = 0.0;
+                    }
+                    // A drop draws from the bulge it sags from, then the rest.
+                    End::Top => {
+                        let from_lump = lump.map_or(0.0, |l| {
+                            let take = (-wax).min(self.lumps[l].shape.area);
+                            self.lumps[l].shape.area -= take;
+                            take
+                        });
+                        self.cap_area += wax + from_lump;
+                    }
+                }
             }
         }
         self.blobs.retain(|b| b.radius > 0.0);
     }
 
+    /// The bulge blob `id` melts into at `x` (it follows the blob), new if
+    /// it has none yet.
+    fn lump_for(&mut self, id: u64, x: f64, radius: f64) -> &mut Lump {
+        let at = match self.lumps.iter().position(|l| l.follow == id) {
+            Some(at) => at,
+            None => {
+                let shape = LumpShape {
+                    x,
+                    area: 0.0,
+                    width: LUMP_WIDTH * radius,
+                    temp: CAP_TEMP,
+                };
+                self.lumps.push(Lump {
+                    shape,
+                    prev: shape,
+                    follow: id,
+                    since_fed: 0.0,
+                    sagged: false,
+                });
+                self.lumps.len() - 1
+            }
+        };
+        let lump = &mut self.lumps[at];
+        lump.shape.x = x;
+        lump
+    }
+
+    /// Bulges spread out and their wax evens out into the rest of the top
+    /// layer; one that has all but gone, with nothing melting into it, goes.
+    fn even_lumps(&mut self, dt: f64) {
+        let widest = 0.5 * self.wall_width;
+        let even = 1.0 - (-LUMP_EVEN * dt).exp();
+        for lump in &mut self.lumps {
+            lump.since_fed += dt;
+            relax(&mut lump.shape.temp, CAP_TEMP, LUMP_COOL, dt);
+            lump.shape.width =
+                (lump.shape.width + LUMP_SPREAD * dt).min(widest.max(lump.shape.width));
+            let moved = lump.shape.area * even;
+            lump.shape.area -= moved;
+            self.cap_area += moved;
+        }
+        let blobs = &self.blobs;
+        let attached = |id: u64| {
+            blobs
+                .iter()
+                .any(|b| b.id == id && b.end == End::Top && b.phase != Phase::Free)
+        };
+        let mut gone = 0.0;
+        self.lumps.retain(|l| {
+            let keep = l.shape.area > 1e-7 || attached(l.follow);
+            if !keep {
+                gone += l.shape.area;
+            }
+            keep
+        });
+        self.cap_area += gone;
+    }
+
     fn exchange_heat(&mut self, dt: f64) {
         for i in 0..self.blobs.len() {
             let blob = &self.blobs[i];
-            let (target, rate) = match blob.phase {
-                Phase::Free => self.free_heat(blob),
-                // One only giving the top layer some wax cools as if free.
-                Phase::Capping { left } if left.is_finite() => self.free_heat(blob),
-                Phase::Budding { .. } | Phase::Melting => (POOL_TEMP, POOL_HEAT_RATE),
-                Phase::Dripping { .. } | Phase::Capping { .. } => (CAP_TEMP, POOL_HEAT_RATE),
+            let (target, rate) = match (blob.phase, blob.end) {
+                (Phase::Free, _) => self.free_heat(blob),
+                // Pulling away from the top layer: cools as if free.
+                (Phase::Melting { left }, End::Top) if left <= 0.0 => self.free_heat(blob),
+                (_, End::Bottom) => (POOL_TEMP, POOL_HEAT_RATE),
+                (_, End::Top) => (CAP_TEMP, POOL_HEAT_RATE),
             };
             let blob = &mut self.blobs[i];
             blob.temp += (target - blob.temp) * (1.0 - (-rate * dt).exp());
@@ -1048,7 +1238,7 @@ impl World {
         let buds = self
             .blobs
             .iter()
-            .filter(|b| matches!(b.phase, Phase::Budding { .. }))
+            .filter(|b| matches!(b.phase, Phase::Budding { .. }) && b.end == End::Bottom)
             .count();
         let deep = self.pool_level() > self.deep_pool() * POOL_DEPTH;
         let max_buds = (1.5 * self.wall_width).round().max(1.0) as usize + usize::from(deep);
@@ -1103,36 +1293,67 @@ impl World {
         if !self.top_wax || self.cap_on < 1.0 || self.reseed.is_some() {
             return;
         }
+        self.sag();
         self.drip_timer -= dt;
         if self.drip_timer > 0.0 {
             return;
         }
         let keep = self.cap_keep_area();
-        let surplus = (self.cap_area / keep).clamp(1.0, 4.0);
-        self.drip_timer = self.rng.range(DRIP_GAP.0, DRIP_GAP.1) / surplus;
+        self.drip_timer = self.rng.range(DRIP_GAP.0, DRIP_GAP.1);
         let drips = (self.blobs.iter())
-            .filter(|b| matches!(b.phase, Phase::Dripping { .. }))
+            .filter(|b| matches!(b.phase, Phase::Budding { .. }) && b.end == End::Top)
             .count();
         let max_drips = self.wall_width.round().max(1.0) as usize;
         let target = (self.typical_radius() * self.rng.range(DRIP_SIZE.0, DRIP_SIZE.1))
             .max(MIN_BUD.min(0.5 * MAX_BUD * self.max_radius()));
         let x = self.rng.range(-1.0, 1.0) * (self.half_width() - target).max(0.0);
-        if self.blobs.len() >= MAX_BLOBS
-            || drips >= max_drips
-            || self.cap_area - keep < 0.5 * PI * target * target
+        if self.blobs.len() < MAX_BLOBS
+            && drips < max_drips
+            && self.cap_area - keep >= 0.5 * PI * target * target
+            && self.cap_total() > DRIP_SPARE * keep
         {
-            return;
+            self.cap_area -= self.start_drop(x, target, CAP_TEMP);
         }
+    }
+
+    /// Bulges left where blobs melted in sag, a while after: most draw
+    /// into a drop that hangs from where the wax joined.
+    fn sag(&mut self) {
+        // Drops stay drops, smaller than most blobs.
+        let largest = (DRIP_SIZE.1 * self.typical_radius()).min(0.5 * MAX_BUD * self.max_radius());
+        for i in 0..self.lumps.len() {
+            let lump = self.lumps[i];
+            if lump.sagged || lump.since_fed < SAG_TIME {
+                continue;
+            }
+            self.lumps[i].sagged = true;
+            let target = (SAG_SHARE * lump.shape.area / PI).sqrt().min(largest);
+            if target < MIN_BUD || self.blobs.len() >= MAX_BLOBS || self.rng.unit() >= SAG_CHANCE {
+                continue;
+            }
+            let room = (self.half_width() - target).max(0.0);
+            let x = lump.shape.x.clamp(-room, room);
+            let start = self.start_drop(x, target, lump.shape.temp);
+            let lump = &mut self.lumps[i];
+            lump.shape.area -= start;
+            lump.follow = self.next_id - 1;
+        }
+    }
+
+    /// Start a drop hanging from the top layer at `x`, growing to `target`
+    /// radius; returns the wax it starts with (the caller takes it from
+    /// the layer).
+    fn start_drop(&mut self, x: f64, target: f64, temp: f64) -> f64 {
         // Just inside the layer, where its first step puts it.
-        let under = cap_underside(self.cap_depth(), x, self.time);
-        let y = under + 0.75 * MELTED_RADIUS;
-        let mut blob = self.new_blob(x, y, MELTED_RADIUS, CAP_TEMP, Phase::Dripping { target });
-        blob.top = true;
-        blob.stretch = DRIP_STRETCH;
+        let y = self.cap_under(x) + 0.75 * MELTED_RADIUS;
+        let mut blob = self.new_blob(x, y, MELTED_RADIUS, temp, Phase::Budding { target });
+        blob.end = End::Top;
+        blob.stretch = DROP_STRETCH;
         blob.weight = 0.0;
         blob.prev = blob.pose();
-        self.cap_area -= blob.area();
+        let area = blob.area();
         self.blobs.push(blob);
+        area
     }
 
     /// Ease the top layer in or out. Coming in, the pool tops it up to
@@ -1168,9 +1389,11 @@ impl World {
             self.cap_area -= flow;
         }
         if !self.top_wax {
-            for blob in self.blobs.iter_mut().filter(|b| b.phase.at_top()) {
-                blob.phase = Phase::Free;
-                blob.cooldown = COOLDOWN;
+            // Whatever hangs from or melts into it pulls away and lets go.
+            for blob in &mut self.blobs {
+                if blob.end == End::Top && blob.phase != Phase::Free {
+                    blob.phase = Phase::Melting { left: 0.0 };
+                }
             }
         }
     }
@@ -1302,7 +1525,7 @@ impl World {
             attach: pose.attach,
             taper: pose.taper,
             neck: pose.neck,
-            top: false,
+            end: End::Bottom,
             prev: pose,
             cooldown: 0.0,
             wander_phase: self.rng.range(0.0, 2.0 * PI),
@@ -1356,11 +1579,13 @@ fn can_merge(a: &Blob, b: &Blob, max_radius: f64) -> bool {
         && a.radius.hypot(b.radius) <= cap
 }
 
-/// Whether blob `id` melts into the top layer when it touches it, rather
-/// than turning back: fixed per blob, true for [`CAP_JOIN`] of them.
-fn joins_cap(id: u64) -> bool {
-    let draw = (hash(id ^ CAP_SALT) >> 11) as f64 / (1u64 << 53) as f64;
-    draw < CAP_JOIN
+/// How readily (per second) free `blob`, pressed against the top layer,
+/// sticks to it: a cooled, heavy blob does, a small warm one doesn't.
+fn stick_rate(blob: &Blob, typical: f64) -> f64 {
+    let cooled = field::smooth((STICK_TEMP.1 - blob.temp) / (STICK_TEMP.1 - STICK_TEMP.0));
+    let size = blob.radius / typical.max(1e-6);
+    let heavy = field::smooth((size - STICK_SIZE.0) / (STICK_SIZE.1 - STICK_SIZE.0));
+    STICK_RATE * cooled * heavy
 }
 
 /// Exponential approach of `value` toward `target` at `rate` per second.

@@ -7,9 +7,13 @@ What changed in each version of LavaTUI, in plain words.
 **Lamp**
 
 - Wax at the top: like a real lava lamp, a thin layer of wax can rest
-  under the top. Some rising blobs melt into it, and now and then it lets
-  a drop fall. Turn it on in the settings (`,` › look › *wax at the
-  top*). It's off unless you turn it on.
+  under the top. A blob that rises to it and has cooled a little can
+  stick: it flattens against the layer and slowly seeps in, warming the
+  spot for a moment. A big one gives part of itself and the rest drops
+  away. Where wax joined, the layer sags into a hanging drop that
+  stretches, snaps and falls. Small, warm blobs just bump it and turn
+  back. Turn it on in the settings (`,` › look › *wax at the top*). It's
+  off unless you turn it on.
 
 **Clock**
 

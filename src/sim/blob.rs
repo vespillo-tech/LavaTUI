@@ -2,31 +2,48 @@
 
 use std::f64::consts::PI;
 
-/// Where a blob is in its life cycle.
+/// Where a blob is in its life cycle. Budding and melting happen at its
+/// [`End`]: the pool on the heater, or (upside down) the top layer.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Phase {
-    /// Swelling out of the pool at the base, still attached. Grows by drawing
-    /// wax from the pool until it reaches `target` radius, then detaches.
+    /// Swelling out of its layer, still attached (at the top: a drop
+    /// hanging from it). Grows by drawing wax from the layer until it
+    /// reaches `target` radius, then detaches.
     Budding { target: f64 },
     /// Moving freely: buoyancy, drag, cohesion, walls.
     Free,
-    /// Settled back onto the pool; its wax drains into the pool until it is
-    /// gone.
-    Melting,
-    /// Hanging from the top layer (`lamp.top_wax`), still attached: grows
-    /// by drawing wax from it until it reaches `target` radius, then lets
-    /// go and sinks.
-    Dripping { target: f64 },
-    /// Pressed up against the top layer, its wax draining into it: `left`
-    /// more (area), then it lets go and sinks (a big blob gives a little
-    /// and turns back), or all of it, if it is gone first.
-    Capping { left: f64 },
+    /// Settled into its layer; its wax drains into it, `left` more (area;
+    /// infinite: all of it, until it is gone). With none left (a big blob
+    /// that gave the top layer a share) it pulls away, its neck thinning,
+    /// and lets go.
+    Melting { left: f64 },
 }
 
 impl Phase {
-    /// Hangs from or melts into the top layer (its skirt joins that).
-    pub fn at_top(self) -> bool {
-        matches!(self, Phase::Dripping { .. } | Phase::Capping { .. })
+    /// Melting until it is gone.
+    pub const MELTING: Phase = Phase::Melting {
+        left: f64::INFINITY,
+    };
+}
+
+/// The layer a blob buds from or melts into.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum End {
+    /// The pool on the heater.
+    #[default]
+    Bottom,
+    /// The top layer (`lamp.top_wax`).
+    Top,
+}
+
+impl End {
+    /// Which way is out of the layer, into the liquid: up from the pool,
+    /// down from the top layer.
+    pub(super) fn outward(self) -> f64 {
+        match self {
+            End::Bottom => 1.0,
+            End::Top => -1.0,
+        }
     }
 }
 
@@ -52,15 +69,15 @@ pub struct Blob {
     /// merge or split fades in while what it replaced fades out (a
     /// [`Ghost`]), so the outline morphs instead of snapping.
     pub(super) weight: f64,
-    /// How fully the skirt joining it to the pool is drawn, 0 … 1: it
+    /// How fully the skirt joining it to its layer is drawn, 0 … 1: it
     /// grows in as a blob settles to melt and fades as a bud lets go.
     pub(super) attach: f64,
     /// How far that skirt has drawn in to a neck, 0 (a broad bulge) … 1:
     /// a bud's grows with it, a melting blob's eases to its own.
     pub(super) neck: f64,
-    /// The skirt joins the top layer rather than the pool. Only changes
-    /// while no skirt is drawn, so it never moves one.
-    pub(super) top: bool,
+    /// The layer it buds from or melts into, which its skirt joins. Only
+    /// changes while no skirt is drawn, so it never moves one.
+    pub(super) end: End,
     /// Teardrop taper, `> 0` with the tail below (rising): eases toward
     /// what the blob's speed asks for, so the shape never swings with a
     /// sudden change of speed.
@@ -114,6 +131,12 @@ pub(super) struct Ghost {
 }
 
 impl Blob {
+    /// Buds from or melts into the top layer (or did last).
+    #[cfg(test)]
+    pub fn at_top(&self) -> bool {
+        self.end == End::Top
+    }
+
     /// Wax area (the 2D "volume"). Stretch preserves it.
     pub fn area(&self) -> f64 {
         PI * self.radius * self.radius
