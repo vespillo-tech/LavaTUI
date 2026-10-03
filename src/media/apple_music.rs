@@ -161,6 +161,7 @@ fn command_word(command: &Command) -> String {
         Command::Seek(to) => format!("seek {}", to.as_millis()),
         Command::SetShuffle(on) => format!("shuffle {on}"),
         Command::SetRepeat(on) => format!("repeat {on}"),
+        // Exact, except that Music reads 1 back as 0 (macOS 26.6).
         Command::SetVolume(volume) => format!("volume {}", (*volume).min(100)),
         // Never offered (`capabilities`): nothing to do.
         Command::PlayUri(_) | Command::PlayInContext { .. } => String::new(),
@@ -645,8 +646,10 @@ mod tests {
 
     /// Against the real Music app, which must be open (it's never opened
     /// for you). Read-only unless `LAVATUI_LIVE_CHANGES=1`: then volume,
-    /// play/pause, shuffle and repeat are each changed and put back, and
-    /// whether Music honoured them is printed. No song names are printed.
+    /// shuffle and repeat are each changed and put back (and play/pause,
+    /// only with a song loaded and playing or paused: from stopped it would
+    /// start something), whether Music honoured them is printed, and
+    /// everything must be as it was at the end. No song names are printed.
     /// `cargo test --release -- --ignored --nocapture live_music`
     #[test]
     #[ignore = "reads (and with LAVATUI_LIVE_CHANGES=1 drives) the real Music app"]
@@ -697,7 +700,7 @@ mod tests {
         if first.status != Status::Playing {
             println!("nothing is playing in Music");
         }
-        if std::env::var("LAVATUI_LIVE_CHANGES").as_deref() != Ok("1") || first.track.is_none() {
+        if std::env::var("LAVATUI_LIVE_CHANGES").as_deref() != Ok("1") {
             return;
         }
         let mut changed =
@@ -713,21 +716,29 @@ mod tests {
                 sleep(SETTLE);
                 read(music, "  settled", &[]);
             };
-        let quieter = first.volume.saturating_sub(10).max(1);
+        // Music reads 1 back as 0 (every other level is exact): stay clear.
+        let quieter = if first.volume > 12 {
+            first.volume - 10
+        } else {
+            first.volume + 10
+        };
         changed(
             "volume",
             Command::SetVolume(quieter),
             Command::SetVolume(first.volume),
             &|s| s.volume == quieter,
         );
-        let other = if first.status == Status::Playing {
-            Status::Paused
-        } else {
-            Status::Playing
+        let other = match first.status {
+            Status::Playing => Some(Status::Paused),
+            Status::Paused => Some(Status::Playing),
+            _ => None,
         };
-        changed("play/pause", Command::PlayPause, Command::PlayPause, &|s| {
-            s.status == other
-        });
+        match other.filter(|_| first.track.is_some()) {
+            Some(other) => changed("play/pause", Command::PlayPause, Command::PlayPause, &|s| {
+                s.status == other
+            }),
+            None => println!("  play/pause: skipped (no song loaded, or stopped)"),
+        }
         let shuffle = !first.shuffle;
         changed(
             "shuffle",
@@ -741,6 +752,12 @@ mod tests {
             Command::SetRepeat(repeat),
             Command::SetRepeat(first.repeat),
             &|s| s.repeat == repeat,
+        );
+        let last = read(music, "end", &[]);
+        assert_eq!(
+            (&last.status, last.volume, last.shuffle, last.repeat),
+            (&first.status, first.volume, first.shuffle, first.repeat),
+            "left as it was found"
         );
     }
 }
