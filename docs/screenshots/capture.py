@@ -441,46 +441,51 @@ TILES |= {f"palette-{p}": Shot(34, 30, TILE + f'style="solid";[theme];palette="{
 
 # Loops (`capture.py loops [name ...]`): the README pictures as short GIFs
 # that repeat seamlessly. Only the wax moves (a cinemagraph): the timer
-# isn't started, the big clock has no seconds, the demo player is paused
-# and every toast has gone before the loop starts. Each frame the app
-# draws is kept (split on its DEC 2026 frame ends); the loop is the
-# >= LOOP_SECS stretch whose end is most like the frame before its start,
-# all inside one wall-clock minute, with its last LOOP_FADE seconds
-# crossfaded into the frames that lead into the start. Sheet tiles are
-# separate runs of the same seed: frame k is the same wax in each.
+# isn't started, the big clock has no seconds and reads LOOP_CLOCK, the
+# demo player is paused, and every toast has gone before the loop starts.
+# Runs use the hidden --frame-clock, so every run draws the same frames
+# (and sheet tiles, separate runs of one seed, show the same wax at frame
+# k). Each frame is kept (split on the app's DEC 2026 frame ends).
+#
+# Two ways round: a feature picture *swings*: it drifts forward through a
+# gently moving stretch of wax and back again, easing to a stop at each
+# end (seamless whatever the wax does; reversed lava still looks like
+# lava). A sheet *fades*: its last LOOP_FADE s crossfade into the frames
+# leading into its start (small tiles hide the blend), at a fixed moment.
 # Encoded with ffmpeg (one palette, no dither) + gifsicle; written to
 # $LAVATUI_LOOP_OUT (default: here, as <name>.gif).
-LOOP_FPS, LOOP_SECS = 10, 6.0
-LOOP_FADE = float(os.environ.get("LAVATUI_LOOP_FADE", 1.0))
-LOOP_RECORD = float(os.environ.get("LAVATUI_LOOP_RECORD", 54.0))
+LOOP_FPS, LOOP_SECS, LOOP_FADE, LOOP_RECORD = 10, 6.0, 1.0, 54.0
+LOOP_CLOCK = "21:47"
 PAUSE = "3:A,3.2: ,3.4:A"  # music controls on, pause, off again
 
 
 class Loop:
-    def __init__(self, shot=None, tiles=None, ncols=0, scale=0.65, colours=96, clock=True):
+    def __init__(self, shot=None, tiles=None, ncols=0, scale=0.65, colours=96, start=None):
         self.shot, self.tiles, self.ncols = shot, tiles, ncols
-        self.scale, self.colours, self.clock = scale, colours, clock
+        self.scale, self.colours, self.start = scale, colours, start
 
 
-def still(shot, keys=None):
-    """`shot` recorded for a loop: LOOP_RECORD s at LOOP_FPS, no seconds on
-    the clock, and `keys` instead of its own (None keeps them)."""
+def looped(shot, toml="", keys=None):
+    """`shot` recorded for a loop: LOOP_RECORD s at LOOP_FPS on the frame
+    clock, `toml` added, and `keys` instead of its own (None keeps them)."""
     return Shot(
-        shot.cols, shot.rows, shot.toml + ";[clock];seconds=false",
-        shot.keys if keys is None else keys,
-        " ".join(shot.app) + f" --fps {LOOP_FPS}",
+        shot.cols, shot.rows, shot.toml + toml, shot.keys if keys is None else keys,
+        " ".join(shot.app) + f" --fps {LOOP_FPS} --frame-clock {LOOP_CLOCK}",
         frames=int(LOOP_RECORD * LOOP_FPS) + 5, welcome=shot.welcome,
     )
 
 
-def tile(shot):
-    return Shot(shot.cols, shot.rows, shot.toml, shot.keys, " ".join(shot.app) + f" --fps {LOOP_FPS}",
-                frames=int(LOOP_RECORD * LOOP_FPS) + 5)
+def still(shot, keys=None):
+    return looped(shot, ";[clock];seconds=false", keys)
 
 
+# The sheets loop at the moment of the approved palettes proof (16.4 s in).
+SHEET_START = 164
 LOOPS = {
-    "palettes": Loop(tiles=[(p, tile(TILES[f"palette-{p}"])) for p in PALETTES], ncols=4, clock=False),
-    "styles": Loop(tiles=[(n, tile(TILES[f"style-{n}"])) for n in STYLES], ncols=5, clock=False),
+    "palettes": Loop(tiles=[(p, looped(TILES[f"palette-{p}"])) for p in PALETTES], ncols=4, start=SHEET_START),
+    # One palette (lava) across all nine: 64 colours is plenty; a little
+    # smaller, as the matrix rain changes every frame.
+    "styles": Loop(tiles=[(n, looped(TILES[f"style-{n}"])) for n in STYLES], ncols=5, scale=0.6, colours=64, start=SHEET_START),
     "music": Loop(still(SHOTS["music"], PAUSE)),
     "music-lava": Loop(still(SHOTS["music-lava"], PAUSE)),
     "overlay": Loop(still(SHOTS["overlay"], "")),
@@ -501,36 +506,13 @@ def last_key(shot):
     return max([float(k.split(":", 1)[0]) for k in filter(None, shot.keys.split(","))] or [0.0])
 
 
-def record(shot, clock):
-    """Every frame of `shot`, started early in a minute when a clock shows
-    (so a whole loop fits before it turns)."""
-    while clock and time.localtime().tm_sec > 1:
-        time.sleep(0.2)
+def record(shot):
     snaps = []
     run(shot, snaps)
     return snaps
 
 
-def seam(snaps, warm, clock):
-    """(start, length) of the best loop in `snaps`: frames from `warm` on."""
-    thumbs = [draw(s).convert("L").reduce(4) for s in snaps]
-    n, c = len(snaps), int(LOOP_FADE * LOOP_FPS)
-    minute = [int(s.at // 60) for s in snaps]
-    best = None
-    for length in range(int(LOOP_SECS * LOOP_FPS), int(LOOP_SECS * LOOP_FPS) + 11, 5):
-        for i in range(max(int(warm * LOOP_FPS), c), n - length + 1):
-            if clock and minute[i - c] != minute[i + length - 1]:
-                continue
-            cost = ImageStat.Stat(ImageChops.difference(thumbs[i - 1], thumbs[i + length - 1])).mean[0]
-            if best is None or cost < best[0]:
-                best = (cost, i, length)
-    if best is None:
-        raise SystemExit("no loop fits: record longer")
-    steps = sorted(ImageStat.Stat(ImageChops.difference(a, b)).mean[0] for a, b in zip(thumbs, thumbs[1:]))
-    return best[1], best[2], best[0], steps[len(steps) // 2]
-
-
-def loop_frames(images, start, length):
+def fade_frames(images, start, length):
     """The loop's frames from `images(k)` (frame k): the last LOOP_FADE s
     crossfaded into the frames just before `start`."""
     c = int(LOOP_FADE * LOOP_FPS)
@@ -543,7 +525,10 @@ def loop_frames(images, start, length):
     return out
 
 
-def swing_at(u, ease=0.2):
+SWING_EASE = 0.2
+
+
+def swing_at(u, ease=SWING_EASE):
     """Where a swing is (0..1..0) at `u` (0..1) of its loop: out and back,
     at an even pace but for an `ease` share of each leg at its ends, where
     it slows to a stop (no jolt as it turns)."""
@@ -560,6 +545,12 @@ def swing_at(u, ease=0.2):
     return dist(v)
 
 
+def swing_span(n):
+    """Frames a swing of `n` frames covers: its even pace is real time, so
+    between the turns every frame is one the app drew."""
+    return round(n / 2 * (1 - SWING_EASE))
+
+
 def swing_frames(images, start, span, n):
     """`n` frames that drift forward through frames start..start+span and
     back again, easing to a stop at both ends; in-between times blend the
@@ -567,29 +558,30 @@ def swing_frames(images, start, span, n):
     out = []
     for j in range(n):
         t = start + span * swing_at(j / n)
-        k = int(t)
+        k = int(t + 1e-6)
         f = t - k
         a = images(k)
         out.append(a if f < 0.01 else Image.blend(a, images(k + 1), f))
     return out
 
 
-def liveliest(snaps, warm, span, clock):
-    """The start of the `span`-frame stretch (from `warm` s on, inside one
-    minute when a clock shows) where the wax moves most."""
+# How lively a swing's stretch is, as a share of the way from the calmest
+# stretch to the busiest: alive, but gentle (and lighter to download).
+SWING_MOTION = 0.4
+
+
+def gentle(snaps, warm, span):
+    """The start of a `span`-frame stretch (from `warm` s on) whose wax
+    moves at the SWING_MOTION point between the calmest and the busiest."""
     thumbs = [draw(s).convert("L").reduce(4) for s in snaps]
     steps = [ImageStat.Stat(ImageChops.difference(a, b)).mean[0] for a, b in zip(thumbs, thumbs[1:])]
-    minute = [int(s.at // 60) for s in snaps]
-    best = None
-    for i in range(int(warm * LOOP_FPS), len(snaps) - span - 1):
-        if clock and minute[i] != minute[i + span + 1]:
-            continue
-        motion = sum(steps[i:i + span])
-        if best is None or motion > best[0]:
-            best = (motion, i)
-    if best is None:
+    first = int(warm * LOOP_FPS)
+    starts = range(first, len(snaps) - span - 1)
+    if not starts:
         raise SystemExit("no stretch fits: record longer")
-    return best[1]
+    motion = {i: sum(steps[i:i + span]) for i in starts}
+    ranked = sorted(starts, key=motion.get)
+    return ranked[round(SWING_MOTION * (len(ranked) - 1))]
 
 
 def encode(frames, out, scale, colours):
@@ -609,13 +601,10 @@ def encode(frames, out, scale, colours):
 def make_loop(name):
     lp = LOOPS[name]
     out = os.path.join(os.environ.get("LAVATUI_LOOP_OUT", HERE), name + ".gif")
+    n = int(LOOP_SECS * LOOP_FPS)
     if lp.tiles:
         with ThreadPoolExecutor(len(lp.tiles)) as ex:
-            runs = list(ex.map(lambda t: record(t[1], False), lp.tiles))
-        n = min(len(r) for r in runs)
-        if max(len(r) for r in runs) - n > 2:
-            print(f"{name}: tiles drew {[len(r) for r in runs]} frames: out of step, run it alone")
-        start, length, cost, step = seam(runs[0][:n], 3.0, False)
+            runs = list(ex.map(lambda t: record(t[1]), lp.tiles))
         cache = {}
 
         def sheet(k):
@@ -633,34 +622,25 @@ def make_loop(name):
                 cache[k] = m
             return cache[k]
 
-        frames = loop_frames(sheet, start, length)
-    elif os.environ.get("LAVATUI_LOOP_KIND", "swing") == "swing":
-        snaps = record(lp.shot, lp.clock)
-        n = int(LOOP_SECS * LOOP_FPS)
-        span = n // 2  # each leg at about real speed
-        start = liveliest(snaps, last_key(lp.shot) + 4.5, span, lp.clock)
+        start, how = lp.start, "fade"
+        frames = fade_frames(sheet, start, n)
+    else:
+        snaps = record(lp.shot)
+        span = swing_span(n)
+        start, how = gentle(snaps, last_key(lp.shot) + 4.5, span), "swing"
         cache = {}
         frames = swing_frames(lambda k: cache.setdefault(k, draw(snaps[k])), start, span, n)
-        length, cost, step = n, 0.0, 0.0
-    else:
-        snaps = record(lp.shot, lp.clock)
-        start, length, cost, step = seam(snaps, last_key(lp.shot) + 4.5, lp.clock)
-        frames = loop_frames(lambda k: draw(snaps[k]), start, length)
     w, h = encode(frames, out, lp.scale, lp.colours)
     print(f"{out} {os.path.getsize(out)} B {round(w * lp.scale)}x{round(h * lp.scale)} "
-          f"{length / LOOP_FPS:.1f} s from {start / LOOP_FPS:.1f} s, seam {cost:.2f} (median step {step:.2f})")
+          f"{n / LOOP_FPS:.1f} s, {how} from {start / LOOP_FPS:.1f} s", flush=True)
     return out
 
 
 def main(names):
     if names[:1] == ["loops"]:
         want = names[1:] or list(LOOPS)
-        # Sheets alone: a busy machine makes the app skip late frames,
-        # and then frame k is no longer the same wax in every tile.
-        for name in [n for n in want if LOOPS[n].tiles]:
-            make_loop(name)
         with ThreadPoolExecutor(3) as ex:
-            list(ex.map(make_loop, [n for n in want if not LOOPS[n].tiles]))
+            list(ex.map(make_loop, want))
         return
     tmp = tempfile.mkdtemp()
     want = names or list(SHOTS) + ["styles", "palettes"]
