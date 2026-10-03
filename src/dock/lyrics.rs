@@ -528,7 +528,13 @@ impl Pen<'_, '_> {
             Some(line.text.as_str())
         };
         let current = match cursor.current(synced).filter(|l| !l.is_gap()) {
-            Some(current) => Current::Karaoke(current, cursor),
+            Some(current) if model.settings.lyrics.karaoke.shows(current) => {
+                Current::Karaoke(current, cursor)
+            }
+            // Word by word off: the whole line, brightening as it comes in.
+            Some(current) => {
+                Current::Line(&current.text, self.tint(k).add_modifier(Modifier::BOLD))
+            }
             // A gap, or the intro.
             None => Current::Dots(cursor.progress),
         };

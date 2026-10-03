@@ -70,6 +70,10 @@ What changed in each version of LavaTUI, in plain words.
   all the time until the next line, so when a singer sang the line and
   then paused, the highlight fell a few words behind. Now it follows the
   song's usual singing speed.
+- Word by word can be turned off: settings (`,`) › music & lyrics ›
+  word by word. Off lights up the whole line at once, as before. A middle
+  choice uses it only for lyrics that time every word, which are exact
+  but rare.
 - Pausing or jumping with LavaTUI's keys no longer flickers back for a
   moment when Spotify announces the change.
 - Performance info (`d`) also shows the lyrics' timing while they play:

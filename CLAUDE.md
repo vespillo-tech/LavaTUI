@@ -439,7 +439,9 @@ the layout/visual contract.
                 line), `sync.rs` (`Syncer`: extrapolated `Playback` →
                 `Cursor` line/progress + word being sung, 150 ms line /
                 50 ms word lead, small step back holds still, seek flag,
-                `next_change` for frozen-frame wakeups), `client.rs` (`Lrclib` over an `Http` trait: ureq in
+                `next_change` for frozen-frame wakeups; `Karaoke`:
+                `lyrics.karaoke` on / timed / off, word by word or the
+                whole line), `client.rs` (`Lrclib` over an `Http` trait: ureq in
                 the app, `client::tests::Mock` in tests; `/api/get` then
                 `/api/search`), `cache.rs` (JSON per track, negative
                 results too, TTLs, stale used offline), `worker.rs`

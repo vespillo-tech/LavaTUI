@@ -77,6 +77,8 @@ pub struct Syncer {
     /// position (sooner if negative), applied to the extrapolated
     /// position, so it holds from the first moment of a song.
     pub delay_ms: i32,
+    /// Which lines go word by word (others wake nobody at word times).
+    pub karaoke: super::Karaoke,
     last: Option<Last>,
 }
 
@@ -100,6 +102,7 @@ impl Syncer {
             lead,
             word_lead,
             delay_ms: 0,
+            karaoke: super::Karaoke::On,
             last: None,
         }
     }
@@ -193,9 +196,11 @@ impl Syncer {
                     word = Some(sung - 1);
                     sung -= 1;
                 }
-                match line.words.get(sung + usize::from(word.is_some())) {
-                    Some(w) => soonest(w.at, self.word_lead),
-                    None => soonest(line.end, self.word_lead),
+                if self.karaoke.shows(line) {
+                    match line.words.get(sung + usize::from(word.is_some())) {
+                        Some(w) => soonest(w.at, self.word_lead),
+                        None => soonest(line.end, self.word_lead),
+                    }
                 }
             }
             // A gap or the intro: its dots light at each third.
@@ -425,6 +430,10 @@ mod tests {
         assert_eq!(next(&mut s, 5.5), Some(secs(6.0)));
         assert_eq!(next(&mut s, 7.5), Some(secs(8.0)), "the line's end");
         assert_eq!(next(&mut s, 8.5), Some(secs(10.0)), "the next line");
+        // Word by word off: no wakeups for words, just the next line.
+        let mut off = Syncer::new(Duration::ZERO, Duration::ZERO);
+        off.karaoke = crate::lyrics::Karaoke::Off;
+        assert_eq!(next(&mut off, 5.5), Some(secs(10.0)));
         // With leads, each comes that much sooner.
         let mut led = Syncer::new(Duration::from_millis(150), Duration::from_millis(50));
         assert_eq!(next(&mut led, 5.5), Some(Duration::from_millis(5950)));

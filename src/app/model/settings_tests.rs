@@ -506,3 +506,25 @@ fn lyrics_timing_steps_by_50_ms_within_a_second_and_saves() {
     again.update(Action::Change(true), t0);
     assert_eq!(again.settings.lyrics.delay_ms, 50);
 }
+
+#[test]
+fn word_by_word_steps_on_timed_off_and_saves() {
+    use crate::lyrics::Karaoke;
+    let path = temp_config("word-by-word");
+    let (mut m, t0) = model_at(path.clone());
+    assert_eq!(m.settings.lyrics.karaoke, Karaoke::On, "on by default");
+    open(&mut m, t0, 3);
+    to(&mut m, t0, Item::WordByWord);
+    assert_eq!(row(&m, Item::WordByWord).value, "on");
+    m.update(Action::Change(true), t0);
+    assert_eq!(m.settings.lyrics.karaoke, Karaoke::Timed);
+    assert_eq!(
+        row(&m, Item::WordByWord).value,
+        "when the lyrics time words"
+    );
+    m.update(Action::Change(true), t0);
+    assert_eq!(row(&m, Item::WordByWord).value, "off");
+    m.save();
+    let (again, _) = model_at(path);
+    assert_eq!(again.settings.lyrics.karaoke, Karaoke::Off);
+}

@@ -97,6 +97,9 @@ delay_ms = 0             # lyrics timing, by ear: positive shows lyrics (lines a
                          # later, negative sooner; -1000..=1000, the settings screen
                          # steps by 50 ("lyrics timing"). Bluetooth headphones often
                          # want a little later.
+karaoke = "on"           # word by word: on | timed (only lyrics that time each word,
+                         # which lrclib.net almost never has) | off (the whole line
+                         # lights up, as before karaoke); true / false work too
 
 [spotify]
 client_id = ""           # for the Spotify library, see spotify.md

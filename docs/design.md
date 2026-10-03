@@ -1417,7 +1417,10 @@ before it; when it takes fewer than R rows, the lines after it move up.
 **Look: no backing needed.** Role colours only, so it reads with or
 without the soft backing (none by default: the floating text's ink adapts
 to the wax, §4.6 "The backing"), lined up by the anchor (centred at the
-bottom). The current line is karaoke: the words sung so far bold `text`,
+bottom). The current line is karaoke (*word by word*, `lyrics.karaoke`,
+on by default; `timed`: only lyrics that time each word; `off`: the
+whole line bold `text`, brightening from `dim` as it comes in, as before
+karaoke, line timing unchanged): the words sung so far bold `text`,
 the word being sung bold `accent`, the words still to come `dim` (not
 bold); once the line is sung, all of it bold `text`. The other lines are
 `dim`. With no colour (`NO_COLOR`) the word being sung is underlined
@@ -1461,7 +1464,8 @@ keys do; `ui/settings.rs` places and draws it.
   focus / break lengths, long break after, sound at the end), *widgets*
   (each widget beside the lamp / on the lamp / off, its position while on
   the lamp, what things on the lamp sit on), *music & lyrics* (Spotify,
-  lyrics with what lrclib.net is sent, lyrics timing (`on time`, `0.25 s
+  lyrics with what lrclib.net is sent, word by word (`on`, `when the
+  lyrics time words`, `off`), lyrics timing (`on time`, `0.25 s
   later`, `0.1 s sooner`: ±1 s in 50 ms steps, by ear), cover picture /
   size, small cover with music), *controls* (mouse), *window* (lamp only, hint line,
   smoothness, lamp-only clock). Each ends with *reset this page*, which
