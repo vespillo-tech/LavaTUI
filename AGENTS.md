@@ -216,7 +216,9 @@ the layout/visual contract.
                 hook that restores the terminal), run app, `ratatui::restore`.
 - `cli.rs`    — clap derive flags (`-m/--minimal`, `--fps`, `--style`,
                 `--palette`, `--color`, `--seed`, `--config`, hidden
-                `--frames`, `--trace`, `--panic-after`, `--demo`) →
+                `--frames`, `--trace`, `--panic-after`, `--demo`,
+                `--frame-clock HH:MM`: time moves one frame a frame, for
+                recordings cut from several takes, `trailer.py`) →
                 `config::Session` (session-only overrides).
 - `demo.rs`   — `--demo`: invented songs (`FakeSource`), an original
                 cover per album (`assets/demo/`, `art::stash`ed), invented synced lyrics

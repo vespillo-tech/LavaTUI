@@ -44,11 +44,11 @@ captures always show text cells. `tools/kitty_check.py` checks pixels.
 Fonts default to macOS Menlo; set LAVATUI_SHOT_FONT to a .ttf/.ttc
 elsewhere (e.g. DejaVuSansMono.ttf).
 """
-import fcntl, os, pty, select, struct, sys, tempfile, termios, time
+import fcntl, os, pty, select, struct, subprocess, sys, tempfile, termios, time
 from concurrent.futures import ThreadPoolExecutor
 
 import pyte
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageStat
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BIN = os.path.join(HERE, "..", "..", "target", "release", "lavatui")
@@ -94,7 +94,20 @@ def with_welcome(toml, welcome):
     return f"{toml};[ui];{flag}"
 
 
-def run(args):
+FRAME_END = b"\x1b[?2026l"  # the app wraps every frame in DEC 2026
+
+
+class Snap:
+    """The screen as one frame left it (what `draw` reads), and when."""
+
+    def __init__(self, screen, at):
+        self.columns, self.lines, self.at = screen.columns, screen.lines, at
+        self.buffer = [[screen.buffer[y][x] for x in range(screen.columns)] for y in range(screen.lines)]
+
+
+def run(args, snaps=None):
+    """Run `args` in a pty and return its last screen. With `snaps` (a
+    list), also append a `Snap` at the end of every frame."""
     cfg = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False)
     cfg.write(with_welcome(args.toml, args.welcome).replace(";", "\n"))
     cfg.close()
@@ -104,8 +117,12 @@ def run(args):
         t, s = k.split(":", 1)
         keys.append((float(t), s.encode().decode("unicode_escape").encode()))
     env = dict(os.environ, TERM="xterm-256color", COLORTERM="truecolor")
-    for k in ("NO_COLOR", "TERM_PROGRAM", "GHOSTTY_RESOURCES_DIR", "KITTY_WINDOW_ID", "TMUX"):
+    # A plain terminal: nothing from the one capture.py runs in (inside
+    # Ghostex / zmx the app would draw its safe symbols).
+    for k in ("NO_COLOR", "TERM_PROGRAM", "GHOSTTY_RESOURCES_DIR", "KITTY_WINDOW_ID", "TMUX", "ZMX_SESSION"):
         env.pop(k, None)
+    for k in [k for k in env if k.startswith("GHOSTEX_")]:
+        env.pop(k)
     for e in args.env:
         k, v = e.split("=", 1)
         if v:
@@ -136,10 +153,16 @@ def run(args):
             if not done:
                 i = data.find(b"\x1b[?1049l")
                 if i >= 0:
-                    stream.feed(data[:i])
-                    done = True
-                else:
+                    data, done = data[:i], True
+                if snaps is None:
                     stream.feed(data)
+                else:
+                    buf += data
+                    while (j := buf.find(FRAME_END)) >= 0:
+                        j += len(FRAME_END)
+                        stream.feed(buf[:j])
+                        buf = buf[j:]
+                        snaps.append(Snap(screen, time.time()))
         if el > 60:
             os.kill(pid, 9)
             break
@@ -188,6 +211,17 @@ def mix(a, b, t):
 
 
 def render(screen, out, pad=0):
+    img = draw(screen)
+    if pad:
+        framed = Image.new("RGB", (img.width + 2 * pad, img.height + 2 * pad), DEF_BG)
+        framed.paste(img, (pad, pad))
+        img = framed
+    img = img.quantize(colors=256, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
+    img.save(out, optimize=True)
+
+
+def draw(screen):
+    """`screen` as an RGB picture, CW × CH px a cell."""
     w, h = screen.columns * CW, screen.lines * CH
     img = Image.new("RGB", (w, h), DEF_BG)
     d = ImageDraw.Draw(img)
@@ -250,12 +284,7 @@ def render(screen, out, pad=0):
             else:
                 f = pick_font(ch, c.bold)
                 d.text((px + CW / 2, py + CH / 2 + 1), ch, font=f, fill=fg, anchor="mm")
-    if pad:
-        framed = Image.new("RGB", (w + 2 * pad, h + 2 * pad), DEF_BG)
-        framed.paste(img, (pad, pad))
-        img = framed
-    img = img.quantize(colors=256, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
-    img.save(out, optimize=True)
+    return img
 
 
 def montage(out, ncols, items):
@@ -400,7 +429,229 @@ TILES = {f"style-{s}": Shot(34, 30, TILE + f'style="{s}"') for s in STYLES}
 TILES |= {f"palette-{p}": Shot(34, 30, TILE + f'style="solid";[theme];palette="{p}"') for p in PALETTES}
 
 
+# Loops (`capture.py loops [name ...]`): the README pictures as short GIFs
+# that repeat seamlessly. Only the wax moves (a cinemagraph): the timer
+# isn't started, the big clock has no seconds, the demo player is paused
+# and every toast has gone before the loop starts. Each frame the app
+# draws is kept (split on its DEC 2026 frame ends); the loop is the
+# >= LOOP_SECS stretch whose end is most like the frame before its start,
+# all inside one wall-clock minute, with its last LOOP_FADE seconds
+# crossfaded into the frames that lead into the start. Sheet tiles are
+# separate runs of the same seed: frame k is the same wax in each.
+# Encoded with ffmpeg (one palette, no dither) + gifsicle; written to
+# $LAVATUI_LOOP_OUT (default: here, as <name>.gif).
+LOOP_FPS, LOOP_SECS = 10, 6.0
+LOOP_FADE = float(os.environ.get("LAVATUI_LOOP_FADE", 1.0))
+LOOP_RECORD = float(os.environ.get("LAVATUI_LOOP_RECORD", 54.0))
+PAUSE = "3:A,3.2: ,3.4:A"  # music controls on, pause, off again
+
+
+class Loop:
+    def __init__(self, shot=None, tiles=None, ncols=0, scale=0.65, colours=96, clock=True):
+        self.shot, self.tiles, self.ncols = shot, tiles, ncols
+        self.scale, self.colours, self.clock = scale, colours, clock
+
+
+def still(shot, keys=None):
+    """`shot` recorded for a loop: LOOP_RECORD s at LOOP_FPS, no seconds on
+    the clock, and `keys` instead of its own (None keeps them)."""
+    return Shot(
+        shot.cols, shot.rows, shot.toml + ";[clock];seconds=false",
+        shot.keys if keys is None else keys,
+        " ".join(shot.app) + f" --fps {LOOP_FPS}",
+        frames=int(LOOP_RECORD * LOOP_FPS) + 5, welcome=shot.welcome,
+    )
+
+
+def tile(shot):
+    return Shot(shot.cols, shot.rows, shot.toml, shot.keys, " ".join(shot.app) + f" --fps {LOOP_FPS}",
+                frames=int(LOOP_RECORD * LOOP_FPS) + 5)
+
+
+LOOPS = {
+    "palettes": Loop(tiles=[(p, tile(TILES[f"palette-{p}"])) for p in PALETTES], ncols=4, clock=False),
+    "styles": Loop(tiles=[(n, tile(TILES[f"style-{n}"])) for n in STYLES], ncols=5, clock=False),
+    "music": Loop(still(SHOTS["music"], PAUSE)),
+    "music-lava": Loop(still(SHOTS["music-lava"], PAUSE)),
+    "overlay": Loop(still(SHOTS["overlay"], "")),
+    "overlay-mix": Loop(still(SHOTS["overlay-mix"], "")),
+    "settings": Loop(still(SHOTS["settings"])),
+    "spotify-setup": Loop(still(SHOTS["spotify-setup"])),
+    "help": Loop(still(SHOTS["help"])),
+    "picker": Loop(still(SHOTS["picker"])),
+    "minimal": Loop(still(SHOTS["minimal"])),
+    "welcome": Loop(still(SHOTS["welcome"])),
+    "portrait": Loop(still(SHOTS["portrait"], "")),
+    "tiny": Loop(still(SHOTS["tiny"]), scale=1.0),
+    "color16": Loop(still(SHOTS["color16"]), colours=16),
+}
+
+
+def last_key(shot):
+    return max([float(k.split(":", 1)[0]) for k in filter(None, shot.keys.split(","))] or [0.0])
+
+
+def record(shot, clock):
+    """Every frame of `shot`, started early in a minute when a clock shows
+    (so a whole loop fits before it turns)."""
+    while clock and time.localtime().tm_sec > 1:
+        time.sleep(0.2)
+    snaps = []
+    run(shot, snaps)
+    return snaps
+
+
+def seam(snaps, warm, clock):
+    """(start, length) of the best loop in `snaps`: frames from `warm` on."""
+    thumbs = [draw(s).convert("L").reduce(4) for s in snaps]
+    n, c = len(snaps), int(LOOP_FADE * LOOP_FPS)
+    minute = [int(s.at // 60) for s in snaps]
+    best = None
+    for length in range(int(LOOP_SECS * LOOP_FPS), int(LOOP_SECS * LOOP_FPS) + 11, 5):
+        for i in range(max(int(warm * LOOP_FPS), c), n - length + 1):
+            if clock and minute[i - c] != minute[i + length - 1]:
+                continue
+            cost = ImageStat.Stat(ImageChops.difference(thumbs[i - 1], thumbs[i + length - 1])).mean[0]
+            if best is None or cost < best[0]:
+                best = (cost, i, length)
+    if best is None:
+        raise SystemExit("no loop fits: record longer")
+    steps = sorted(ImageStat.Stat(ImageChops.difference(a, b)).mean[0] for a, b in zip(thumbs, thumbs[1:]))
+    return best[1], best[2], best[0], steps[len(steps) // 2]
+
+
+def loop_frames(images, start, length):
+    """The loop's frames from `images(k)` (frame k): the last LOOP_FADE s
+    crossfaded into the frames just before `start`."""
+    c = int(LOOP_FADE * LOOP_FPS)
+    out = []
+    for j in range(length):
+        a = images(start + j)
+        if j >= length - c:
+            a = Image.blend(a, images(start + j - length), (j - (length - c) + 1) / (c + 1))
+        out.append(a)
+    return out
+
+
+def swing_at(u, ease=0.2):
+    """Where a swing is (0..1..0) at `u` (0..1) of its loop: out and back,
+    at an even pace but for an `ease` share of each leg at its ends, where
+    it slows to a stop (no jolt as it turns)."""
+    v = 2 * u if u < 0.5 else 2 - 2 * u
+    peak = 1 / (1 - ease)  # the even pace, so the leg still ends at 1
+
+    def dist(x):  # distance after x of a leg, its pace ramping 0 → peak → 0
+        if x < ease:
+            return peak * x * x / (2 * ease)
+        if x > 1 - ease:
+            return 1 - peak * (1 - x) ** 2 / (2 * ease)
+        return peak * (x - ease / 2)
+
+    return dist(v)
+
+
+def swing_frames(images, start, span, n):
+    """`n` frames that drift forward through frames start..start+span and
+    back again, easing to a stop at both ends; in-between times blend the
+    two nearest frames."""
+    out = []
+    for j in range(n):
+        t = start + span * swing_at(j / n)
+        k = int(t)
+        f = t - k
+        a = images(k)
+        out.append(a if f < 0.01 else Image.blend(a, images(k + 1), f))
+    return out
+
+
+def liveliest(snaps, warm, span, clock):
+    """The start of the `span`-frame stretch (from `warm` s on, inside one
+    minute when a clock shows) where the wax moves most."""
+    thumbs = [draw(s).convert("L").reduce(4) for s in snaps]
+    steps = [ImageStat.Stat(ImageChops.difference(a, b)).mean[0] for a, b in zip(thumbs, thumbs[1:])]
+    minute = [int(s.at // 60) for s in snaps]
+    best = None
+    for i in range(int(warm * LOOP_FPS), len(snaps) - span - 1):
+        if clock and minute[i] != minute[i + span + 1]:
+            continue
+        motion = sum(steps[i:i + span])
+        if best is None or motion > best[0]:
+            best = (motion, i)
+    if best is None:
+        raise SystemExit("no stretch fits: record longer")
+    return best[1]
+
+
+def encode(frames, out, scale, colours):
+    tmp = tempfile.mkdtemp()
+    for j, im in enumerate(frames):
+        if scale != 1:
+            im = im.resize((round(im.width * scale), round(im.height * scale)), Image.LANCZOS)
+        im.save(f"{tmp}/f{j:03d}.png")
+    raw = f"{tmp}/raw.gif"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-framerate", str(LOOP_FPS), "-i", f"{tmp}/f%03d.png",
+                    "-vf", f"split[a][b];[a]palettegen=max_colors={colours}:stats_mode=full[p];"
+                    "[b][p]paletteuse=dither=none", "-loop", "0", raw], check=True)
+    subprocess.run(["gifsicle", "-O3", raw, "-o", out], check=True)
+    return frames[0].size
+
+
+def make_loop(name):
+    lp = LOOPS[name]
+    out = os.path.join(os.environ.get("LAVATUI_LOOP_OUT", HERE), name + ".gif")
+    if lp.tiles:
+        with ThreadPoolExecutor(len(lp.tiles)) as ex:
+            runs = list(ex.map(lambda t: record(t[1], False), lp.tiles))
+        n = min(len(r) for r in runs)
+        if max(len(r) for r in runs) - n > 2:
+            print(f"{name}: tiles drew {[len(r) for r in runs]} frames: out of step, run it alone")
+        start, length, cost, step = seam(runs[0][:n], 3.0, False)
+        cache = {}
+
+        def sheet(k):
+            if k not in cache:
+                ims = [draw(r[k]) for r in runs]
+                w, h = ims[0].size
+                lab, gap = 30, 6
+                rows = (len(ims) + lp.ncols - 1) // lp.ncols
+                m = Image.new("RGB", (lp.ncols * w + (lp.ncols - 1) * gap, rows * (h + lab) + (rows - 1) * gap), DEF_BG)
+                d = ImageDraw.Draw(m)
+                for i, (im, (label, _)) in enumerate(zip(ims, lp.tiles)):
+                    x, y = (i % lp.ncols) * (w + gap), (i // lp.ncols) * (h + lab + gap)
+                    m.paste(im, (x, y))
+                    d.text((x + w / 2, y + h + lab / 2), label, font=FONT, fill=(150, 140, 130), anchor="mm")
+                cache[k] = m
+            return cache[k]
+
+        frames = loop_frames(sheet, start, length)
+    elif os.environ.get("LAVATUI_LOOP_KIND", "swing") == "swing":
+        snaps = record(lp.shot, lp.clock)
+        n = int(LOOP_SECS * LOOP_FPS)
+        span = n // 2  # each leg at about real speed
+        start = liveliest(snaps, last_key(lp.shot) + 4.5, span, lp.clock)
+        cache = {}
+        frames = swing_frames(lambda k: cache.setdefault(k, draw(snaps[k])), start, span, n)
+        length, cost, step = n, 0.0, 0.0
+    else:
+        snaps = record(lp.shot, lp.clock)
+        start, length, cost, step = seam(snaps, last_key(lp.shot) + 4.5, lp.clock)
+        frames = loop_frames(lambda k: draw(snaps[k]), start, length)
+    w, h = encode(frames, out, lp.scale, lp.colours)
+    print(f"{out} {os.path.getsize(out)} B {round(w * lp.scale)}x{round(h * lp.scale)} "
+          f"{length / LOOP_FPS:.1f} s from {start / LOOP_FPS:.1f} s, seam {cost:.2f} (median step {step:.2f})")
+    return out
+
+
 def main(names):
+    if names[:1] == ["loops"]:
+        want = names[1:] or list(LOOPS)
+        # Sheets alone: a busy machine makes the app skip late frames,
+        # and then frame k is no longer the same wax in every tile.
+        for name in [n for n in want if LOOPS[n].tiles]:
+            make_loop(name)
+        with ThreadPoolExecutor(3) as ex:
+            list(ex.map(make_loop, [n for n in want if not LOOPS[n].tiles]))
+        return
     tmp = tempfile.mkdtemp()
     want = names or list(SHOTS) + ["styles", "palettes"]
     jobs = {n: s for n, s in SHOTS.items() if n in want}

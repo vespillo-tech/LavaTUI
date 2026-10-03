@@ -554,6 +554,9 @@ pub struct Session {
     /// `--demo`: the made-up player, covers, lyrics and account
     /// (`crate::demo`); no settings file unless `config_path` names one.
     pub demo: bool,
+    /// Hidden `--frame-clock`: the clock's start, in seconds into the day;
+    /// time then moves one frame period a frame (`app::FrameClock`).
+    pub frame_clock: Option<u32>,
 }
 
 /// A setting the CLI overrode for this session. Once the user changes it
