@@ -56,6 +56,10 @@ pub trait Backend: Send + 'static {
     }
 }
 
+/// Re-reads after an event while readings still disagree (a track that
+/// starts a moment after it's announced settles within these).
+const FOLLOWUPS: u8 = 3;
+
 /// Polls brought on by change events are at least this far apart.
 const EVENT_GAP: Duration = Duration::from_millis(250);
 
@@ -182,6 +186,13 @@ impl Baseline {
             Some(d) => d.as_nanos() as i128,
             None => -(self.epoch.duration_since(t).as_nanos() as i128),
         }
+    }
+
+    /// Playing, on a window only one reading has set: where playback is
+    /// isn't confirmed yet (a track just started, a seek: Spotify holds
+    /// the new position still for a moment before it runs).
+    fn unsettled(&self) -> bool {
+        self.window.is_some() && !self.agreed
     }
 
     /// Put `fresh` (asked for at `sent`) where the window says, after
@@ -369,6 +380,8 @@ impl<B: Backend> Worker<B> {
         let mut evented: Option<Instant> = None;
         let mut held = false;
         let mut reread: Option<Instant> = None;
+        // Re-reads left while readings after an event disagree.
+        let mut followups = 0;
         loop {
             let gap = evented.filter(|_| held).map(|at| at + EVENT_GAP);
             let due = [Some(scheduled), gap, reread].into_iter().flatten().min();
@@ -391,6 +404,7 @@ impl<B: Backend> Worker<B> {
             // reads the new way.
             if changed {
                 reread = Some(now + self.cadence.after_event);
+                followups = FOLLOWUPS;
             }
             let event = changed && batch.is_empty();
             if event && evented.is_some_and(|at| now < at + EVENT_GAP) {
@@ -402,10 +416,22 @@ impl<B: Backend> Worker<B> {
                 evented = Some(now);
                 held = false;
             }
-            if reread.is_some_and(|at| now >= at) {
+            let rereading = reread.is_some_and(|at| now >= at);
+            if rereading {
                 reread = None;
             }
             scheduled = Instant::now() + self.turn(batch);
+            // After an event, until two readings agree on where playback
+            // is (a new track that starts a moment after it's announced),
+            // read again soon rather than at the cadence.
+            if (rereading || event)
+                && reread.is_none()
+                && followups > 0
+                && self.baseline.unsettled()
+            {
+                followups -= 1;
+                reread = Some(Instant::now() + self.cadence.after_event);
+            }
         }
     }
 
@@ -591,18 +617,67 @@ mod tests {
     }
 
     /// A backend that hands its [`Nudge`] to the test and counts reads.
-    struct Evented(Arc<Mutex<Option<Nudge>>>, Arc<Mutex<Vec<Instant>>>);
+    /// Playing in real time from when it's made (or, with a `stall`
+    /// after its first read, held still until then, as Spotify holds a
+    /// track that has just started).
+    struct Evented(
+        Arc<Mutex<Option<Nudge>>>,
+        Arc<Mutex<Vec<Instant>>>,
+        Instant,
+        Option<Duration>,
+    );
+
+    impl Evented {
+        fn new(nudge: &Arc<Mutex<Option<Nudge>>>, reads: &Arc<Mutex<Vec<Instant>>>) -> Self {
+            Self(Arc::clone(nudge), Arc::clone(reads), Instant::now(), None)
+        }
+    }
 
     impl Backend for Evented {
         fn exchange(&mut self, _: &[Command]) -> Snapshot {
-            self.1.lock().unwrap().push(Instant::now());
-            playing("a", MS, Instant::now())
+            let now = Instant::now();
+            let mut reads = self.1.lock().unwrap();
+            reads.push(now);
+            let from = match self.3 {
+                Some(stall) => reads[0] + stall,
+                None => self.2,
+            };
+            playing("a", now.saturating_duration_since(from), now)
         }
 
         fn listen(&mut self, nudge: Nudge) -> Option<Box<dyn Send>> {
             *self.0.lock().unwrap() = Some(nudge);
             None
         }
+    }
+
+    #[test]
+    fn after_an_event_it_reads_again_until_readings_agree() {
+        // A track announced, then held at 0 for 250 ms before it plays.
+        let (nudge, reads) = (Arc::default(), Arc::default());
+        let mut backend = Evented::new(&nudge, &reads);
+        backend.3 = Some(MS * 250);
+        let slow = Cadence {
+            playing: Duration::from_secs(60),
+            after_event: MS * 100,
+            ..testing::fast()
+        };
+        let source = Polled::spawn(backend, slow);
+        let nudge = loop {
+            if let Some(n) = nudge.lock().unwrap().clone() {
+                break n;
+            }
+            thread::sleep(MS);
+        };
+        assert!(nudge.changed());
+        thread::sleep(MS * 700);
+        let n = reads.lock().unwrap().len();
+        // The first read, the event's, then re-reads until two agree
+        // (~100 ms apart, a few at most), not one more at the cadence.
+        assert!((4..=6).contains(&n), "{n} reads");
+        let at = source.snapshot().position_at(Instant::now());
+        let truth = Instant::now().saturating_duration_since(reads.lock().unwrap()[0] + MS * 250);
+        assert!(at.abs_diff(truth) < MS * 30, "{at:?} vs {truth:?}");
     }
 
     #[test]
@@ -613,7 +688,7 @@ mod tests {
             after_event: MS * 50,
             ..testing::fast()
         };
-        let source = Polled::spawn(Evented(Arc::clone(&nudge), Arc::clone(&reads)), slow);
+        let source = Polled::spawn(Evented::new(&nudge, &reads), slow);
         let count = || reads.lock().unwrap().len();
         let wait = |n: usize| {
             let deadline = Instant::now() + Duration::from_secs(5);

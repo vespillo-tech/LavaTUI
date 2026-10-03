@@ -217,8 +217,16 @@ sometimes trailing the voice by a few words. Taken apart:
   4+ on one in ten. Now each line is sung at the song's 35th-percentile
   pace: 2+ words behind on 2 %; if a singer instead draws lines out, the
   highlight runs ahead (2+ words on 7 %).
-- *Position*: within a few ms in steady playback (above). Two event
-  races fixed: the read a change event brought on right after
+- *Position*: not it. 30 minutes of real listening (13 track changes,
+  a pause): steady error median −0.2 ms, 99th percentile +2 ms; pause
+  and resume shown within 22-29 ms. After a track change Spotify
+  announces it, then holds the new track at 0:00 for ~0.5 s: the
+  position ran ~0.12 s early for ~0.95 s (lyrics early, not late). Now
+  the worker re-reads every 300 ms after an event until two readings
+  agree (up to 3): 20 more minutes of listening (6 track changes) had
+  each settle within 150-245 ms. Spotify's position also drifts for the
+  last ~2 s of a song (seen at every change; after the last line, as a
+  rule). Two event races fixed too: the read a change event brought on right after
   LavaTUI's own pause or seek could briefly undo it (Spotify announces
   the pause before its state reads paused); and only the first poll of
   a burst of events got its 300 ms re-read. *Lyrics timing* was applied

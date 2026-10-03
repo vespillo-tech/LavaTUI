@@ -421,7 +421,9 @@ the layout/visual contract.
                 request and reply); polls every 1 s (paused 2 s), and at
                 once when the player says it changed (`Backend::listen` →
                 `Nudge`; event polls ≥ 250 ms apart, one re-read 300 ms
-                after a burst's last; reads asked for before a command's
+                after a burst's last, more while readings disagree (a
+                track held still before it plays, up to 3); reads asked
+                for before a command's
                 re-read aren't published, `settle_until`):
                 macOS `notify.rs` (a JXA `osascript` hearing Spotify's
                 distributed notification: they reach only a main-thread
