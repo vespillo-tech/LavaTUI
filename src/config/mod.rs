@@ -65,6 +65,8 @@ pub struct Lamp {
     pub heat: u8,
     /// 0.25 | 0.5 | 1 | 2 | 4 (snapped to the nearest).
     pub speed: f64,
+    /// A thin layer of wax resting under the top, as in a real lamp.
+    pub top_wax: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -223,6 +225,7 @@ impl Default for Lamp {
             style: "solid".into(),
             heat: 3,
             speed: 1.0,
+            top_wax: false,
         }
     }
 }

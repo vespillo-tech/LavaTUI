@@ -40,6 +40,7 @@ cells = "auto"           # auto | opaque | translucent | background ("stripe fix
 style = "solid"          # solid | outline | ascii | braille | halftone | synthwave | matrix | topo | chrome
 heat = 3                 # 1..=5
 speed = 1.0              # 0.25 | 0.5 | 1 | 2 | 4
+top_wax = false          # a thin layer of wax under the top (see below)
 
 [theme]
 palette = "lava"         # lava | ultraviolet | abyss | toxic | synthwave | mono | paper | ansi
@@ -114,6 +115,18 @@ logged_in = false        # kept up to date by the app: a login is saved
 | `matrix` | Digital rain that only shows where it crosses the wax. |
 | `topo` | A topographic map of the wax, with contour lines. |
 | `chrome` | Glossy blown glass with a glint and a rim. (`glass` still works as an old name.) |
+
+### Wax at the top (`lamp.top_wax`)
+
+Real lava lamps often have a thin layer of wax resting under the top.
+`top_wax = true` (settings › look › *wax at the top*) adds one: a thin,
+slightly uneven layer of the coolest wax colour. Some of the blobs that
+rise all the way melt into it (a big one gives it a little wax and
+sinks again), and now and then it grows a drop that lets go and sinks.
+It takes its wax from the pool and gives it back, so the lamp holds the
+same amount of wax. Turning it on or off fades it in or out over a
+second or two. It's drawn at least 1.5 and at most 5 sample pixels deep,
+so it stays a thin layer at any window size. Off by default.
 
 ### Colour themes
 

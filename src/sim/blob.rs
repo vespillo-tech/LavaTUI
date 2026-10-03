@@ -13,6 +13,21 @@ pub enum Phase {
     /// Settled back onto the pool; its wax drains into the pool until it is
     /// gone.
     Melting,
+    /// Hanging from the top layer (`lamp.top_wax`), still attached: grows
+    /// by drawing wax from it until it reaches `target` radius, then lets
+    /// go and sinks.
+    Dripping { target: f64 },
+    /// Pressed up against the top layer, its wax draining into it: `left`
+    /// more (area), then it lets go and sinks (a big blob gives a little
+    /// and turns back), or all of it, if it is gone first.
+    Capping { left: f64 },
+}
+
+impl Phase {
+    /// Hangs from or melts into the top layer (its skirt joins that).
+    pub fn at_top(self) -> bool {
+        matches!(self, Phase::Dripping { .. } | Phase::Capping { .. })
+    }
 }
 
 /// A wax blob. World units: `y` is 0 at the base and 1 at the top, `x` is 0
@@ -43,6 +58,9 @@ pub struct Blob {
     /// How far that skirt has drawn in to a neck, 0 (a broad bulge) … 1:
     /// a bud's grows with it, a melting blob's eases to its own.
     pub(super) neck: f64,
+    /// The skirt joins the top layer rather than the pool. Only changes
+    /// while no skirt is drawn, so it never moves one.
+    pub(super) top: bool,
     /// Teardrop taper, `> 0` with the tail below (rising): eases toward
     /// what the blob's speed asks for, so the shape never swings with a
     /// sudden change of speed.

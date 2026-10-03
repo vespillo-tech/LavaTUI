@@ -513,15 +513,31 @@ fn interpolation_moves_between_steps() {
 fn steps_join_up_through_every_event() {
     let (cols, rows) = (48, 36);
     let mut events = Stats::default();
-    for (seed, aspect) in [(5, 1.4), (9, 0.6)] {
+    for (seed, aspect, top) in [(5, 1.4, false), (9, 0.6, false), (3, 1.0, true)] {
         let mut world = World::new(seed, aspect);
         world.set_heat(5);
+        world.set_top_wax(top);
         world.prewarm(600, DT);
+        if top {
+            // A thick layer drips soon; just under it, a small blob melts
+            // in whole and a big one gives it some wax.
+            world.cap_area = 0.8 * CAP_FULL * world.wall_width;
+            world.drip_timer = 0.0;
+            for (x, radius) in [(0.1, 0.03), (-0.25, 0.1)] {
+                world.next_id = (world.next_id..).find(|&id| joins_cap(id)).unwrap();
+                world.add(x, 0.95 - radius, radius, 0.9);
+            }
+            world.wax_target = world.wax_area();
+        }
         let mut field = Field::default();
         let mut end = vec![Sample::default(); cols * rows];
         let mut start = end.clone();
         let before = world.stats();
-        for _ in 0..7200 {
+        for i in 0..7200 {
+            // The top layer goes and comes back.
+            if top && (i == 4800 || i == 5400) {
+                world.set_top_wax(i == 5400);
+            }
             field.prepare(&world, 1.0);
             field.fill(&mut end, cols, rows);
             world.step(DT);
@@ -539,20 +555,29 @@ fn steps_join_up_through_every_event() {
         events.merged += after.merged - before.merged;
         events.split += after.split - before.split;
         events.melted += after.melted - before.melted;
+        events.dripped += after.dripped - before.dripped;
+        events.capped += after.capped - before.capped;
+        events.kissed += after.kissed - before.kissed;
     }
     assert!(
         events.budded > 0 && events.merged > 0 && events.split > 0 && events.melted > 0,
         "{events:?}"
     );
+    assert!(
+        events.dripped > 0 && events.capped > 0 && events.kissed > 0,
+        "{events:?}"
+    );
 }
 
 /// `cargo test --release -- --ignored --nocapture bench_fill`
+/// (`TOP_WAX=1`: with the top layer)
 #[test]
 #[ignore = "benchmark"]
 fn bench_fill() {
     use std::time::Instant;
     for (aspect, cols, rows) in [(0.83, 200, 120), (1.5, 300, 200), (1.33, 80, 48)] {
         let mut world = World::new(7, aspect);
+        world.set_top_wax(std::env::var("TOP_WAX").is_ok_and(|s| s == "1"));
         world.prewarm(1200, DT);
         let mut field = Field::default();
         let mut grid = vec![Sample::default(); cols * rows];
@@ -776,4 +801,150 @@ fn same_seed_and_controls_same_lamp() {
     assert_eq!(a.blobs, b.blobs);
     assert_eq!(a.pool_area.to_bits(), b.pool_area.to_bits());
     assert_ne!(a.blobs, c.blobs);
+}
+
+// --- top layer -------------------------------------------------------------
+
+/// Turned on, the top layer eases in from the pool; turned off, it thins
+/// back into it. Wax is conserved every step and its shown depth never
+/// jumps.
+#[test]
+fn top_wax_eases_in_and_out_conserving_wax() {
+    let mut world = World::new(4, 1.3);
+    world.prewarm(600, DT);
+    // (A pool at its least has none to spare: the layer then fills as
+    // blobs melt back into it.)
+    world.pool_area += 2.0 * CAP_KEEP * world.wall_width;
+    world.wax_target = world.wax_area();
+    let wax = world.wax_area();
+    let mut last = world.cap_depth();
+    assert_eq!(last, 0.0);
+    let mut biggest_step: f64 = 0.0;
+    let mut run = |world: &mut World, secs: f64| {
+        for _ in 0..(secs * 120.0) as u32 {
+            world.step(DT);
+            assert_close(world.wax_area(), wax, 1e-9);
+            biggest_step = biggest_step.max((world.cap_depth() - last).abs());
+            last = world.cap_depth();
+        }
+    };
+    world.set_top_wax(true);
+    run(&mut world, 0.5);
+    let early = world.cap_depth();
+    assert!(early > 0.0 && early < 0.5 * CAP_KEEP, "eases in: {early}");
+    run(&mut world, CAP_FADE);
+    assert_eq!(world.cap_on, 1.0);
+    assert!(world.cap_depth() > 0.95 * CAP_KEEP, "{}", world.cap_depth());
+
+    world.set_top_wax(false);
+    run(&mut world, 0.5);
+    assert!(
+        world.cap_depth() > 0.5 * CAP_KEEP,
+        "eases out: {}",
+        world.cap_depth()
+    );
+    run(&mut world, CAP_FADE);
+    assert_eq!(world.cap_depth(), 0.0);
+    run(&mut world, 6.0);
+    assert_eq!(world.cap_area, 0.0, "all back in the pool");
+    assert!(world.blobs.iter().all(|b| !b.phase.at_top()));
+    assert!(
+        biggest_step < 0.02 * CAP_KEEP,
+        "depth stepped by {biggest_step}"
+    );
+}
+
+/// With the top layer on, rising blobs give it wax and it lets drops fall,
+/// and it stays a thin layer at every aspect, even after the lamp narrows.
+#[test]
+fn top_wax_takes_wax_and_drips_staying_thin() {
+    let mut events = Stats::default();
+    for (seed, aspect) in [(5, 1.4), (3, 2.5), (7, 1.0), (2, 0.4)] {
+        let mut world = World::new(seed, aspect);
+        world.set_top_wax(true);
+        let mut deepest: f64 = 0.0;
+        for step in 0..120 * 300 {
+            if step == 120 * 240 {
+                world.set_aspect(0.5 * aspect);
+            }
+            world.step(DT);
+            if step > 120 * 3 {
+                deepest = deepest.max(world.cap_depth());
+                assert!(world.cap_depth() >= 0.9 * CAP_KEEP, "{seed}: ran thin");
+            }
+        }
+        let stats = world.stats();
+        println!("seed {seed}: deepest {deepest:.4}, {stats:?}");
+        // Narrowing the lamp thickens it for a moment.
+        assert!(deepest < 1.6 * CAP_FULL, "seed {seed}: {deepest}");
+        assert!(world.cap_depth() <= 1.01 * CAP_FULL, "seed {seed}");
+        (events.dripped, events.kissed) =
+            (events.dripped + stats.dripped, events.kissed + stats.kissed);
+        assert_close(world.wax_area(), FILL * 0.5 * aspect, 0.02);
+        assert_sane(&world);
+    }
+    // About one of each a minute (fewer in a narrow lamp, whose blobs
+    // seldom reach the top).
+    assert!(events.dripped >= 12 && events.kissed >= 12, "{events:?}");
+}
+
+/// A small blob that reaches the layer melts into it whole (when it
+/// joins at all), and the layer keeps the wax.
+#[test]
+fn small_blob_melts_into_the_top_layer() {
+    let mut world = World::bare(1.0);
+    world.set_top_wax(true);
+    world.pool_area *= 2.0;
+    world.wax_target = world.wax_area();
+    world.run(120 * 3);
+    let id = (0..).find(|&id| joins_cap(id)).unwrap();
+    let blob = world.add(0.0, 0.85, 0.04, 0.95);
+    world.blobs.last_mut().unwrap().id = id;
+    let wax = world.wax_area();
+    let cap = world.cap_area;
+    world.run(120 * 30);
+    assert_eq!(world.stats().capped, 1, "{:?}", world.blobs);
+    assert!(world.blobs.iter().all(|b| b.id != blob && b.id != id));
+    assert!(world.cap_area > cap, "{} vs {cap}", world.cap_area);
+    assert_close(world.wax_area(), wax, 1e-9);
+}
+
+#[test]
+fn same_seed_same_lamp_with_top_wax() {
+    let play = |seed| {
+        let mut world = World::new(seed, 1.1);
+        world.set_top_wax(true);
+        world.run(120 * 90);
+        world.reseed(seed ^ 0xABCD);
+        world.run(1500);
+        world.set_top_wax(false);
+        world.run(500);
+        world
+    };
+    let (a, b) = (play(42), play(42));
+    assert_eq!(a.blobs, b.blobs);
+    assert_eq!(a.pool_area.to_bits(), b.pool_area.to_bits());
+    assert_eq!(a.cap_area.to_bits(), b.cap_area.to_bits());
+}
+
+/// How often the top layer takes wax and drips, and how deep it gets.
+#[test]
+#[ignore = "tuning report"]
+fn top_wax_report() {
+    for (seed, aspect) in [(5, 1.4), (9, 0.6), (3, 2.5), (7, 1.0)] {
+        let mut world = World::new(seed, aspect);
+        world.set_top_wax(true);
+        let mut depths = Vec::new();
+        for _ in 0..600 {
+            world.run(120);
+            depths.push(world.cap_mean_depth());
+        }
+        let lo = depths.iter().copied().fold(f64::MAX, f64::min);
+        let hi = depths.iter().copied().fold(0.0, f64::max);
+        let mean = depths.iter().sum::<f64>() / depths.len() as f64;
+        println!(
+            "seed {seed} aspect {aspect}: {:?}, depth {lo:.4}..{hi:.4} mean {mean:.4}",
+            world.stats()
+        );
+    }
 }

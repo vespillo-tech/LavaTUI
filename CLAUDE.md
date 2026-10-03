@@ -242,6 +242,11 @@ the layout/visual contract.
                 a straight-walled tank whose walls ease to a new width.
                 Pool on the heater buds blobs; heat/buoyancy/drag/cohesion,
                 merge + split, melt back into the pool; wax area conserved.
+                Optional top layer (`lamp.top_wax`, `set_top_wax`):
+                `cap_area` fed by the pool up to `CAP_KEEP`, blobs that
+                touch it melt in or give a share (`Phase::Capping`), drips
+                hang from it (`Phase::Dripping`); `Blob::top` says which
+                end a skirt joins; `cap_on` eases toggles.
                 Nothing the field draws may snap between frames: a merge or
                 split leaves `Ghost`s (the old blobs, fading out, carried by
                 the blob that replaced them) while the new blob's `weight`
