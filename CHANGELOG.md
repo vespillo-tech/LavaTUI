@@ -2,123 +2,103 @@
 
 What changed in each version of LavaTUI, in plain words.
 
-## Unreleased
+## 1.3.0 — YYYY-MM-DD
 
-**Lamp**
+Lyrics now light up word by word, Apple Music works on a Mac, and the
+lamp can grow a layer of wax at the top. Covers, timing and many small
+things got smoother too.
 
-- Showing or hiding the side panel (or pressing `m` for just the lamp)
-  no longer makes the wax jump sideways. The wax stays where it is, and
-  the lamp grows or shrinks on the panel's side, the wax slowly settling
-  into the new space. Resizing the window works the same way.
-- Wax at the top: like a real lava lamp, a thin layer of wax can rest
-  under the top. A blob that rises to it and has cooled a little can
-  stick: it flattens against the layer and slowly seeps in, warming the
-  spot for a moment. A big one gives part of itself and the rest drops
-  away. Where wax joined, the layer sags into a hanging drop that
-  stretches, snaps and falls. Small, warm blobs just bump it and turn
-  back. Turn it on in the settings (`,` › look › *wax at the top*). It's
-  off unless you turn it on.
+**Lyrics**
 
-**Clock**
-
-- The clock's seconds can be turned off: settings (`,`) › clock & timer ›
-  seconds. Off, the big clock shows just hours and minutes at every size
-  (no second hand on the analog face), and a paused lamp wakes once a
-  minute instead of every second. On is still the default.
+- Lyrics light up word by word, like karaoke. The words already sung
+  are bright, the word being sung is in the accent colour, and the rest
+  of the line waits in grey. Without colours, the word being sung is
+  underlined. Most lyrics only say when each line starts, so LavaTUI
+  guesses when each word comes from its syllables, its commas and the
+  singer's usual pace. The guess is close but not exact. Lyrics that
+  time every word are followed exactly. Don't want it? Settings (`,`) ›
+  music & lyrics › word by word.
+- Lyrics keep time with Spotify to within a few milliseconds. Before,
+  they could be up to a tenth of a second off for a whole song. When you
+  pause, play or skip in the player itself, the lyrics follow straight
+  away.
+- Lyrics a little early or late for your ears? (Bluetooth headphones
+  often play a bit late.) Move them up to a second either way: settings
+  (`,`) › music & lyrics › lyrics timing.
+- Lyrics on the lamp stay easy to read, even over busy looks like
+  synthwave. Each word keeps one colour, and over bright wax the words
+  turn dark. The clock and music on the lamp get the same care.
+- Lyrics beside the lamp never cut off the line being sung. Long lines
+  wrap onto more rows, and on big screens the panel widens to fit them.
+  Lyrics in Chinese, Japanese, Korean or Thai wrap too.
+- When a song has no lyrics, LavaTUI says so plainly: "no lyrics on
+  lrclib.net for this song", or "instrumental".
 
 **Music**
 
 - Apple Music works on a Mac. LavaTUI shows the song, the cover and the
   lyrics, and you can play, pause, skip, seek, change the volume, and
   turn shuffle and repeat on or off. With both Spotify and Music open,
-  LavaTUI follows the one that's playing, Spotify first. It never opens
-  either app. The first time, your Mac asks if your terminal may control
-  Music.
-- Liking songs and adding them to playlists say they're for Spotify
-  songs only when another app is playing. Playing a playlist from your
-  library pauses that app, and Spotify takes over.
-- A short hiccup no longer hides a song's cover, lyrics or like and add
-  buttons until the next song. If Spotify is slow to answer for a moment,
-  the music stays on screen. A cover or lyrics that couldn't load are
-  tried again while the song plays.
-- The add-to-playlist button shows for every Spotify song right away.
-- Cover quality (`O`, or in settings) is now sharp, small pixels, medium
-  pixels or big pixels, and each one looks clearly different. Sharp is
-  the real picture where your terminal can show it. The three pixel
-  sizes turn the cover into pixel art with bigger and bigger squares, in
-  every terminal. Before, the choices often looked the same. Your old
-  choice carries over.
-- In terminals that show pictures, the cover no longer flashes a rougher,
-  blockier version while a new picture loads (a new song, a new quality,
-  a new size). The old picture stays until the new one is ready, or the
-  spot stays plain for a moment.
+  LavaTUI follows the one that's playing. It never opens either app. The
+  first time, your Mac asks if your terminal may control Music.
+- On every system, LavaTUI follows whatever is playing. Spotify comes
+  first only while it plays, and when you pause, the keys stay with the
+  player you paused.
 - Adding a song to a playlist that already has it now asks first:
   "already in Lamplight Mix · add it again?" Press `Enter` to add it
   again, or `Esc` to pick another playlist. In the add list, playlists
-  that have the song show a `✓`. If LavaTUI can't check, it adds the song
-  as before and says it couldn't check.
-- Lyrics beside the lamp never cut off the line being sung: long lines
-  wrap onto more rows, nearby lines are shortened after a whole word, and
-  on big screens the panel widens to fit them.
-- Lyrics in Chinese, Japanese, Korean or Thai are no longer cut off.
-  Lines written without spaces now wrap onto more rows like any other,
-  and still light up word by word.
-- When a song has no lyrics, the lyrics widget now says whose shelf is
-  bare: "no lyrics on lrclib.net for this song" (just "not on
-  lrclib.net" where space is tight). Songs that are instrumental say
-  "instrumental", including ones where lrclib.net only has a note saying
-  so.
-- Lyrics on the lamp stay easy to read over busy looks like synthwave.
-  Each word keeps one colour, so no letter goes dark in the middle of a
-  word, and the words already sung, the word being sung and the words
-  still to come keep looking different. Where a line of the background
-  runs behind a letter, it fades just behind that letter. Over bright
-  wax the words turn dark: the word being sung is underlined and the
-  words still to come are a softer grey. The clock and music on the lamp
-  get the same care.
-- Lyrics light up word by word, like karaoke: the words already sung are
-  bright, the word being sung is in the accent colour, and the rest of
-  the line waits in grey. Without colours, the word being sung is
-  underlined. Most lyrics only say when each line starts, so LavaTUI
-  guesses when each word comes from its syllables and the line's commas
-  and full stops. The guess is close but not exact. Lyrics that do time
-  every word are followed exactly.
-- Lyrics keep better time with Spotify: within a few milliseconds of
-  where the song really is, where before they could be up to a tenth of
-  a second early or late for a whole song. When you pause, play or skip
-  in the player itself, LavaTUI hears about it straight away and the
-  lyrics follow; it still checks once a second for anything else.
-- Browsing a playlist that has removed songs no longer shows some songs
-  twice when you scroll to the next batch.
-- When Spotify asks LavaTUI to slow down, it now waits as long as asked
-  before asking again, everywhere. Before, a few lookups kept asking,
-  which kept Spotify saying no. A song list that didn't load is tried
-  again a few seconds later.
-- If lyrics come too early or too late for your ears (Bluetooth
-  headphones often play a little late), move them: settings (`,`) ›
-  music & lyrics › lyrics timing, up to a second sooner or later.
-- The highlighted word keeps up with the singer. Most lyrics only say
-  when each line starts, and LavaTUI used to spread a line's words over
-  all the time until the next line, so when a singer sang the line and
-  then paused, the highlight fell a few words behind. Now it follows the
-  song's usual singing speed.
-- Word by word can be turned off: settings (`,`) › music & lyrics ›
-  word by word. Off lights up the whole line at once, as before. A middle
-  choice uses it only for lyrics that time every word, which are exact
-  but rare.
+  that have the song show a `✓`.
+- Liking songs and adding them to playlists say they're for Spotify
+  songs when another app is playing. The add button shows for every
+  Spotify song right away.
+- A short hiccup no longer hides a song's cover, lyrics or buttons until
+  the next song. A cover or lyrics that couldn't load are tried again
+  while the song plays.
+- Performance info (`d`) also shows the lyrics' timing: where the song
+  is, the line and word, and whether the word times are exact or a
+  guess. Handy for telling us what you see.
+
+**Lamp**
+
+- Wax at the top: like a real lava lamp, a thin layer of wax can rest
+  under the top. A blob that rises and cools a little can stick to it
+  and slowly seep in. Where wax joined, the layer sags into a drop that
+  stretches, snaps and falls. It's off unless you turn it on: settings
+  (`,`) › look › wax at the top.
+- Showing or hiding the side panel, pressing `m` for just the lamp, or
+  resizing the window no longer makes the wax jump. The wax stays where
+  it is and slowly settles into the new space.
+- A paused lamp with music or lyrics on screen uses much less of your
+  computer.
+
+**Covers**
+
+- Cover quality (`O`, or in settings) is now sharp, small pixels, medium
+  pixels or big pixels, and each one looks clearly different. Sharp is
+  the real picture where your terminal can show it. The pixel sizes turn
+  the cover into pixel art, in every terminal. Your old choice carries
+  over.
+- In terminals that show pictures, the cover no longer flashes a
+  blocky version while a new picture loads.
+
+**Clock**
+
+- The clock's seconds can be turned off: settings (`,`) › clock & timer
+  › seconds. The big clock then shows just hours and minutes (no second
+  hand on the analog face), and a paused lamp wakes once a minute
+  instead of every second.
+
+**Fixes**
+
 - Pausing or jumping with LavaTUI's keys no longer flickers back for a
-  moment when Spotify announces the change.
-- Performance info (`d`) also shows the lyrics' timing while they play:
-  where the song is, the line and word, and whether the word times are
-  exact or a guess. Handy for telling us what you see.
-- On Linux and Windows, a paused Spotify no longer takes the music
-  controls away from another app that is playing. LavaTUI follows
-  whatever is playing, Spotify first only while it plays. When you pause,
-  the keys stay with the player you paused.
-- On Windows, after you quit and reopen your music app, LavaTUI again
-  hears about play, pause and skip straight away, instead of up to a
-  second late. Lyrics also keep better time when the app is slow to
-  share a song's details.
+  moment.
+- Browsing a playlist that has removed songs no longer shows some songs
+  twice.
+- When Spotify asks LavaTUI to slow down, it now waits as long as asked,
+  everywhere. A song list that didn't load is tried again a few seconds
+  later.
+- On Windows, after you quit and reopen your music app, play, pause and
+  skip show up straight away again.
 
 ## 1.2.0 — 2026-10-02 — first public release
 
