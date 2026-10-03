@@ -1590,3 +1590,161 @@ fn reading_ahead_stops_at_its_budget_and_when_spotify_says_wait() {
     settle(&mut m, t0 + Duration::from_secs(31));
     assert!(reads(&account) > 1);
 }
+
+/// `--demo`'s model with music beside the lamp and the player keys on.
+fn demo_model(name: &str) -> (Model, Instant) {
+    let t0 = Instant::now();
+    let session = Session {
+        demo: true,
+        ..Session::default()
+    };
+    let mut m = Model::new(
+        &session,
+        Store::new(Some(temp_config(name))),
+        Rect::new(0, 0, 100, 30),
+        None,
+        local(),
+        1,
+        t0,
+    );
+    m.welcome = false;
+    m.update(Action::Place("music"), t0);
+    settle(&mut m, t0);
+    m.update(Action::PlayerKeys, t0);
+    (m, t0)
+}
+
+#[test]
+fn the_demo_is_logged_in_to_a_made_up_account() {
+    let (mut m, t0) = demo_model("demo-account");
+    assert!(m.library.demo);
+    assert_eq!(m.library.account(), Account::LoggedIn);
+    assert_eq!(m.liked(), Some(true), "the first song is liked");
+    key(&mut m, t0, P::Playlists);
+    settle(&mut m, t0);
+    assert_eq!(
+        names(&m, ListKind::Playlists),
+        [
+            "Late Night Lava",
+            "Slow Sunday",
+            "Pomodoro Focus",
+            "Rising Heat"
+        ]
+    );
+    m.update(Action::Keep, t0);
+    settle(&mut m, t0);
+    assert_eq!(
+        names(&m, ListKind::Tracks)[..2],
+        ["Slow Rise", "Warm Light Falling"]
+    );
+    // Set up, as far as the settings screen goes, with no Client ID.
+    assert!(m.spotify_set_up());
+
+    // Logging out and in needs no browser, and the config never hears.
+    m.update(Action::Close, t0);
+    let saved = m.settings.spotify.logged_in;
+    key(&mut m, t0, P::Account);
+    key(&mut m, t0, P::Account);
+    settle(&mut m, t0);
+    assert_eq!(m.library.account(), Account::LoggedOut);
+    key(&mut m, t0, P::Account);
+    settle(&mut m, t0);
+    assert_eq!(m.library.account(), Account::LoggedIn);
+    assert_eq!(toast(&m), "logged in to Spotify");
+    assert_eq!(m.settings.spotify.logged_in, saved);
+}
+
+/// [`demo_model`] with the demo's player and account kept to look at.
+fn demo_rig(name: &str) -> (Model, Instant, FakeSource, FakeWeb) {
+    let (mut m, t0) = demo_model(name);
+    let (source, account) = (crate::demo::source(t0), crate::demo::account());
+    let (s, a) = (source.clone(), account.clone());
+    m.music.connect_with(
+        move || Box::new(s.clone()),
+        crate::media::art::ArtLoader::start,
+    );
+    m.library
+        .connect_with(move || Some(Box::new(a.clone()) as Box<dyn Web>));
+    settle(&mut m, t0);
+    (m, t0, source, account)
+}
+
+#[test]
+fn the_demo_asks_before_adding_its_first_song_again() {
+    let (mut m, t0, _, account) = demo_rig("demo-again");
+    assert_eq!(m.library.account(), Account::LoggedIn);
+    key(&mut m, t0, P::AddToPlaylist);
+    settle(&mut m, t0);
+    assert_eq!(
+        names(&m, ListKind::AddTo),
+        [
+            "Late Night Lava",
+            "Slow Sunday",
+            "Pomodoro Focus",
+            "Rising Heat"
+        ]
+    );
+    assert_eq!(m.list_row(ListKind::AddTo, 0).unwrap().detail, "✓ 5");
+    m.update(Action::Keep, t0);
+    assert_eq!(stage(&m), Some(super::Stage::Confirm));
+    m.update(Action::Back, t0);
+
+    // Another playlist takes it at once, as the song it is.
+    m.update(Action::Down, t0);
+    m.update(Action::Keep, t0);
+    tick(&mut m, t0);
+    assert_eq!(toast(&m), "added to Slow Sunday");
+    let s = account.state();
+    let added = s
+        .tracks
+        .values()
+        .flatten()
+        .filter(|t| t.name == "Slow Rise");
+    assert_eq!(added.count(), 2, "Late Night Lava's and the new one");
+    // Everything asked went to the fake.
+    assert!(
+        s.requests
+            .iter()
+            .any(|r| matches!(r, Request::AddToPlaylist { .. }))
+    );
+}
+
+#[test]
+fn the_demo_plays_from_the_browser_and_likes() {
+    let (mut m, t0, source, account) = demo_rig("demo-play");
+    // Slow Sunday's second song, then on through Slow Sunday.
+    key(&mut m, t0, P::Playlists);
+    settle(&mut m, t0);
+    m.update(Action::Down, t0);
+    m.update(Action::Keep, t0);
+    settle(&mut m, t0);
+    m.update(Action::Down, t0);
+    m.update(Action::Keep, t0);
+    let name = |s: &FakeSource| s.snapshot_at(t0).track.unwrap().name.clone();
+    assert_eq!(name(&source), "Convection");
+    source.send_at(Command::Next, t0);
+    assert_eq!(name(&source), "Blob Merge");
+    // `p`: Pomodoro Focus from the top.
+    m.update(Action::Close, t0);
+    key(&mut m, t0, P::Playlists);
+    m.update(Action::Down, t0);
+    m.update(Action::Down, t0);
+    m.update(Action::PlayAll, t0);
+    assert_eq!(name(&source), "Convection");
+    source.send_at(Command::Next, t0);
+    assert_eq!(name(&source), "Ninety Minutes to Warm");
+    m.update(Action::Close, t0);
+
+    // Like it, then unlike it.
+    settle(&mut m, t0);
+    assert_eq!(m.liked(), Some(false));
+    key(&mut m, t0, P::Like);
+    settle(&mut m, t0);
+    assert_eq!(m.liked(), Some(true));
+    let uri = m.playing_uri().unwrap();
+    assert!(account.state().liked.contains(&uri));
+    key(&mut m, t0, P::Like);
+    settle(&mut m, t0);
+    assert_eq!(m.liked(), Some(false));
+    assert!(!account.state().liked.contains(&uri));
+}

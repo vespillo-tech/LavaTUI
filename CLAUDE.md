@@ -141,12 +141,16 @@ the layout/visual contract.
                 `--palette`, `--color`, `--seed`, `--config`, hidden
                 `--frames`, `--trace`, `--panic-after`, `--demo`) →
                 `config::Session` (session-only overrides).
-- `demo.rs`   — `--demo`: invented songs (`FakeSource`), abstract covers
-                drawn as PNG and `art::stash`ed, invented synced lyrics
+- `demo.rs`   — `--demo`: invented songs (`FakeSource`), an original
+                cover per album (`assets/demo/`, `art::stash`ed), invented synced lyrics
                 from a canned LRCLIB (`Canned`, no cache); `Model::new`
                 injects them (`Music::connect_with`,
-                `LyricsState::start_with`) and keeps the Spotify library
-                off. For screenshots and the README GIF.
+                `LyricsState::start_with`). The Spotify library is a
+                made-up account (`account`: a `FakeWeb`, logged in, a few
+                invented playlists; `Library::connect_with`, `Library::demo`
+                keeps its login out of the config); the `FakeSource` plays
+                its playlists (`with_contexts`). No network, keyring or
+                Client ID. For screenshots and the README GIF.
 - `config/`   — `Settings`: the persisted TOML surface of design §9 (serde,
                 every field defaulted, `sanitized()` clamps). `Session` layers
                 CLI flags on top; `to_persist` puts the file's values back for
@@ -355,7 +359,8 @@ the layout/visual contract.
                 player-keys mode; `sync` once a frame and after keys;
                 `connect_with` injects a fake in tests). `spotify_web/`:
                 Web API client (worker thread; `Web` trait, `fake::FakeWeb`
-                + `fake::demo()` account for tests); its Client ID
+                for tests and `--demo`, + `fake::demo()` account for
+                tests); its Client ID
                 is `Settings::spotify_client_id` (`[spotify] client_id`,
                 else `LAVATUI_SPOTIFY_CLIENT_ID`). `app/model/library.rs`
                 (`Library`): the client only while music is placed and a

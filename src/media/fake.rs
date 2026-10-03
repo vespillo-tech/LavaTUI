@@ -3,6 +3,7 @@
 //! to the next track at the end of one. For tests, and for building the
 //! UI without a real player.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -23,6 +24,8 @@ struct Inner {
     index: usize,
     sent: Vec<Command>,
     capabilities: Capabilities,
+    /// Playlists it can play, by URI (`PlayUri` / `PlayInContext`).
+    contexts: HashMap<String, Vec<Arc<Track>>>,
 }
 
 impl FakeSource {
@@ -45,8 +48,19 @@ impl FakeSource {
                 index,
                 sent: Vec::new(),
                 capabilities: Capabilities::ALL,
+                contexts: HashMap::new(),
             })),
         }
+    }
+
+    /// Knows these playlists (URI, tracks): playing one, or a track in
+    /// one, walks through it from then on.
+    pub fn with_contexts(self, contexts: Vec<(String, Vec<Track>)>) -> Self {
+        self.lock().contexts = contexts
+            .into_iter()
+            .map(|(uri, tracks)| (uri, tracks.into_iter().map(Arc::new).collect()))
+            .collect();
+        self
     }
 
     /// Something to look at: three tracks, the first playing.
@@ -116,15 +130,29 @@ impl FakeSource {
             Command::Previous if inner.snapshot.position_at(now) < RESTART_AFTER => {
                 inner.skip(-1, now);
             }
+            Command::PlayUri(uri) if inner.contexts.contains_key(uri) => {
+                inner.playlist = inner.contexts[uri].clone();
+                inner.load(0, now);
+                inner.snapshot.status = Status::Playing;
+            }
             Command::PlayUri(uri) | Command::PlayInContext { track: uri, .. } => {
+                if let Command::PlayInContext { context, .. } = &command
+                    && let Some(tracks) = inner.contexts.get(context)
+                {
+                    inner.playlist = tracks.clone();
+                }
                 let found = inner.playlist.iter().position(|t| &t.id == uri);
                 let index = found.unwrap_or_else(|| {
-                    inner.playlist.push(Arc::new(Track {
-                        id: uri.clone(),
-                        uri: super::spotify_track_uri(uri),
-                        name: uri.clone(),
-                        ..Track::default()
-                    }));
+                    let known = inner.contexts.values().flatten().find(|t| &t.id == uri);
+                    let track = known.cloned().unwrap_or_else(|| {
+                        Arc::new(Track {
+                            id: uri.clone(),
+                            uri: super::spotify_track_uri(uri),
+                            name: uri.clone(),
+                            ..Track::default()
+                        })
+                    });
+                    inner.playlist.push(track);
                     inner.playlist.len() - 1
                 });
                 inner.load(index, now);

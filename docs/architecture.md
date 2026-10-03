@@ -271,8 +271,19 @@ gifsicle; the tape has the exact commands and the size budget).
 Pictures with music use the hidden `--demo` flag (`src/demo.rs`): a
 made-up player with invented songs and artists, original covers embedded
 from `assets/demo/` and invented lyrics served by a canned LRCLIB.
-Nothing goes to the network, no account is touched, and no real album
-art or song ends up in a committed image.
+The Spotify library is a made-up account too (`demo::account`, a
+`spotify_web::fake::FakeWeb`, plugged in with `Library::connect_with`):
+already logged in (logging out and in again needs no browser), four
+invented playlists of the demo songs plus a few more invented ones
+(`MORE`, no lyrics), liked songs, and add-to: "Late Night Lava" already
+has the first song, so adding it shows the "add it again?" question.
+Playing from the browser plays in the `FakeSource`, which knows the
+playlists (`FakeSource::with_contexts`). `Library::demo` keeps its login
+out of the config (`spotify.logged_in`) and counts as set up with no
+Client ID. Nothing goes to the network, no account or keyring is
+touched, and no real album art or song ends up in a committed image.
+`capture.py library` draws the browser, a playlist, the add list and
+the question over it.
 
 ```sh
 cargo build --release

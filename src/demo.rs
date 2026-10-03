@@ -1,14 +1,22 @@
 //! `--demo` (hidden): a made-up player for screenshots and the README
 //! demo, so no real song, cover or lyric ever lands in a committed image.
 //!
-//! Five invented tracks by invented artists, sharing one original cover
-//! embedded here (handed to the art worker through [`art::stash`], so nothing
+//! Five invented tracks by invented artists, with an original cover per
+//! album embedded here (Heat Rises: `suspended-melt.jpg`, Lamplight:
+//! `waxwood-hymns.jpg`; handed to the art worker through [`art::stash`], so nothing
 //! is downloaded) and, for three of them, invented synced lyrics served by
 //! a canned LRCLIB ([`Canned`]: nothing goes to lrclib.net and nothing is
 //! cached). The last two show the lyrics widget's fallbacks: LRCLIB marks
 //! one instrumental and has nothing for the other. The
 //! player is a [`FakeSource`]: it plays in real time and every player key
-//! works. The Spotify library stays off (no Client ID, no keyring).
+//! works.
+//!
+//! The Spotify library is a made-up account ([`account`], a [`FakeWeb`]:
+//! no Client ID, no network, no keyring, its login never saved): a few
+//! playlists of the demo songs and some more invented ones ([`MORE`], no
+//! lyrics), liked songs, add-to (the first playlist has the first song
+//! already, so adding it asks first). Playing from the browser plays in the
+//! [`FakeSource`], which knows the playlists.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -16,6 +24,8 @@ use std::time::{Duration, Instant};
 use crate::lyrics::LyricsService;
 use crate::lyrics::client::{Http, Lrclib, Reply};
 use crate::media::{FakeSource, Snapshot, Status, Track, art};
+use crate::spotify_web::fake::{FakeWeb, playlist};
+use crate::spotify_web::{self as web, User};
 
 /// What the canned LRCLIB knows about a song.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -89,7 +99,7 @@ const SONGS: &[Song] = &[
         artist: "Wax and Wane",
         album: "Lamplight",
         secs: 402,
-        cover: include_bytes!("../assets/demo/suspended-melt.jpg"),
+        cover: include_bytes!("../assets/demo/waxwood-hymns.jpg"),
         kind: Kind::Sung,
         words: &[
             "Late at night the room is blue",
@@ -117,34 +127,200 @@ const SONGS: &[Song] = &[
         artist: "Wax and Wane",
         album: "Lamplight",
         secs: 196,
-        cover: include_bytes!("../assets/demo/suspended-melt.jpg"),
+        cover: include_bytes!("../assets/demo/waxwood-hymns.jpg"),
         kind: Kind::Missing,
         words: &[],
     },
 ];
 
-/// The demo player: the first song playing, 42 s in.
-pub fn source(now: Instant) -> FakeSource {
-    let playlist: Vec<Track> = SONGS
+/// Songs only the made-up account has, after [`SONGS`] (their album's
+/// cover, else Heat Rises'; no lyrics): title, artist, album, length in seconds.
+const MORE: &[(&str, &str, &str, u64)] = &[
+    ("Lamp Left On", "Wax and Wane", "Lamplight", 233),
+    ("Amber Drift", "The Paraffins", "Heat Rises", 205),
+    ("Paraffin Dreams", "Glass Bottom", "Low Heat", 251),
+    ("Convection", "Wax and Wane", "Lamplight", 198),
+    ("Cooling at the Top", "Molten Hour", "Bubble Theory", 222),
+    ("Ninety Minutes to Warm", "Glass Bottom", "Low Heat", 176),
+    ("Little Blob, Big Room", "Molten Hour", "Bubble Theory", 164),
+    ("Tidal Wax", "Glass Bottom", "Low Heat", 239),
+];
+
+/// The made-up account's playlists: name, owner, collaborative, songs by
+/// title. The first has the first song (the one playing at the start).
+const PLAYLISTS: &[(&str, &str, bool, &[&str])] = &[
+    (
+        "Late Night Lava",
+        ME,
+        false,
+        &[
+            "Slow Rise",
+            "Warm Light Falling",
+            "Amber Drift",
+            "Paraffin Dreams",
+            "Cooling at the Top",
+        ],
+    ),
+    (
+        "Slow Sunday",
+        ME,
+        false,
+        &[
+            "Lamp Left On",
+            "Convection",
+            "Blob Merge",
+            "Tidal Wax",
+            "Long Cooldown",
+        ],
+    ),
+    (
+        "Pomodoro Focus",
+        ME,
+        false,
+        &[
+            "Convection",
+            "Ninety Minutes to Warm",
+            "Little Blob, Big Room",
+            "Tidal Wax",
+            "Lamp Left On",
+            "Bare Wax",
+        ],
+    ),
+    (
+        "Rising Heat",
+        "glass.bottom.fan",
+        true,
+        &["Little Blob, Big Room", "Blob Merge", "Paraffin Dreams"],
+    ),
+];
+
+/// Liked at the start, by title.
+const LIKED: &[&str] = &["Slow Rise", "Amber Drift"];
+
+/// The made-up account's user id.
+const ME: &str = "wax.collector";
+
+/// One song as both the player and the Web API see it.
+struct Tune {
+    title: &'static str,
+    artist: &'static str,
+    album: &'static str,
+    secs: u64,
+}
+
+/// Every song: [`SONGS`], then [`MORE`].
+fn tunes() -> impl Iterator<Item = Tune> {
+    let songs = SONGS.iter().map(|s| Tune {
+        title: s.title,
+        artist: s.artist,
+        album: s.album,
+        secs: s.secs,
+    });
+    let more = MORE.iter().map(|&(title, artist, album, secs)| Tune {
+        title,
+        artist,
+        album,
+        secs,
+    });
+    songs.chain(more)
+}
+
+/// A made-up Spotify id: 22 letters and digits, like a real one.
+fn id(kind: &str, i: usize) -> String {
+    format!("lavatuidemo{kind}{i:0w$}", w = 11 - kind.len())
+}
+
+/// The `n`th song's (in [`tunes`] order) track URI.
+fn uri(n: usize) -> String {
+    format!("spotify:track:{}", id("t", n))
+}
+
+/// Where `title` is in [`tunes`].
+fn index(title: &str) -> usize {
+    tunes()
+        .position(|t| t.title == title)
+        .unwrap_or_else(|| panic!("no demo song {title:?}"))
+}
+
+/// Every song as the player has it: its album's cover where a demo song
+/// is on that album, else the first song's.
+fn player_tracks() -> Vec<Track> {
+    let cover = |album: &str| {
+        let song = SONGS.iter().find(|s| s.album == album).unwrap_or(&SONGS[0]);
+        art::stash(song.cover.to_vec()).unwrap_or_default()
+    };
+    tunes()
+        .enumerate()
+        .map(|(n, tune)| Track {
+            id: uri(n),
+            uri: Some(uri(n)),
+            name: tune.title.into(),
+            artist: tune.artist.into(),
+            album: tune.album.into(),
+            duration: Duration::from_secs(tune.secs),
+            artwork_url: cover(tune.album),
+        })
+        .collect()
+}
+
+/// The playlists' URIs and songs.
+fn playlists<T: Clone>(tracks: &[T]) -> Vec<(web::Playlist, Vec<T>)> {
+    PLAYLISTS
         .iter()
         .enumerate()
-        .map(|(i, song)| Track {
-            id: format!("demo:track:{i}"),
-            uri: None,
-            name: song.title.into(),
-            artist: song.artist.into(),
-            album: song.album.into(),
-            duration: Duration::from_secs(song.secs),
-            artwork_url: art::stash(song.cover.to_vec()).unwrap_or_default(),
+        .map(|(i, &(name, owner, collaborative, titles))| {
+            let list = playlist(&id("p", i), name, owner, collaborative, titles.len() as u32);
+            let songs = titles.iter().map(|t| tracks[index(t)].clone()).collect();
+            (list, songs)
         })
+        .collect()
+}
+
+/// The demo player: the first song playing, 42 s in. Next / previous walk
+/// [`SONGS`]; it can play the made-up account's playlists.
+pub fn source(now: Instant) -> FakeSource {
+    let tracks = player_tracks();
+    let contexts = playlists(&tracks)
+        .into_iter()
+        .map(|(p, songs)| (p.uri, songs))
         .collect();
     let snapshot = Snapshot {
-        track: Some(Arc::new(playlist[0].clone())),
+        track: Some(Arc::new(tracks[0].clone())),
         position: Duration::from_secs(42),
         volume: 70,
         ..Snapshot::new(Status::Playing, now)
     };
-    FakeSource::new(snapshot, playlist)
+    FakeSource::new(snapshot, tracks[..SONGS.len()].to_vec()).with_contexts(contexts)
+}
+
+/// The made-up Spotify account, logged in. Logging out and in again
+/// needs no browser.
+pub fn account() -> FakeWeb {
+    let tracks: Vec<web::Track> = tunes()
+        .enumerate()
+        .map(|(n, tune)| web::Track {
+            id: Some(id("t", n)),
+            uri: uri(n),
+            name: tune.title.into(),
+            artists: vec![tune.artist.into()],
+            album: tune.album.into(),
+            duration_ms: (tune.secs * 1000) as u32,
+            is_local: false,
+            image_url: None,
+        })
+        .collect();
+    let me = User {
+        id: ME.into(),
+        display_name: Some("Wax Collector".into()),
+        uri: format!("spotify:user:{ME}"),
+    };
+    let fake = FakeWeb::account(me, playlists(&tracks));
+    {
+        let mut s = fake.state();
+        s.instant_login = true;
+        s.liked = LIKED.iter().map(|t| uri(index(t))).collect();
+    }
+    fake
 }
 
 /// The lyrics service, answered by [`Canned`] (no cache, no retries).
@@ -245,6 +421,20 @@ mod tests {
             duration: None,
         };
         assert_eq!(client.fetch(&other), Ok(None));
+    }
+
+    #[test]
+    fn each_album_has_its_own_cover() {
+        let tracks = player_tracks();
+        let cover = |name: &str| {
+            let track = tracks.iter().find(|t| t.name == name).expect(name);
+            track.artwork_url.clone()
+        };
+        assert_eq!(cover("Slow Rise"), cover("Blob Merge"));
+        assert_eq!(cover("Warm Light Falling"), cover("Bare Wax"));
+        assert_eq!(cover("Warm Light Falling"), cover("Convection"));
+        assert_ne!(cover("Slow Rise"), cover("Warm Light Falling"));
+        assert_eq!(cover("Slow Rise"), cover("Tidal Wax"), "other albums");
     }
 
     #[test]
