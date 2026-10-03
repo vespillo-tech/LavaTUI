@@ -374,6 +374,22 @@ impl Theme {
         }
     }
 
+    /// `c`, an already drawn colour, moved `t` of the way toward `to`, as
+    /// this depth draws it (truecolor: quantised RGB; 256 colours: the
+    /// nearest xterm index): what floating text knocks a cell's background
+    /// back to behind a letter that wouldn't read (§4.6). `None` where
+    /// colours don't blend or either colour can't be told.
+    pub fn toward(&self, c: Color, to: Color, t: f32) -> Option<Color> {
+        if !self.blend {
+            return None;
+        }
+        let rgb = seen(c)?.lerp(seen(to)?, t);
+        Some(match self.depth {
+            ColorDepth::Ansi256 => Color::Indexed(xterm::nearest(rgb)),
+            _ => quantised(rgb),
+        })
+    }
+
     /// The two inks for glyphs drawn straight onto the lava (widgets with
     /// no backing, §4.6), `(light, dark)`: the palette's `text` and `bg`,
     /// lighter first (paper's text is the dark one), white and black
@@ -575,6 +591,14 @@ fn seen(c: Color) -> Option<Rgb> {
     })
 }
 
+/// A blended truecolor colour, its channels rounded to
+/// [`TRUECOLOR_QUANT`].
+#[inline]
+fn quantised(Rgb(r, g, b): Rgb) -> Color {
+    let q = |c: u8| c.saturating_add(TRUECOLOR_QUANT / 2) / TRUECOLOR_QUANT * TRUECOLOR_QUANT;
+    Color::Rgb(q(r), q(g), q(b))
+}
+
 /// The WCAG contrast ratio (1..=21) of two relative luminances.
 pub fn contrast(a: f32, b: f32) -> f32 {
     (a.max(b) + 0.05) / (a.min(b) + 0.05)
@@ -675,12 +699,7 @@ impl Paint<'_> {
             },
             // Unmixed roles stay exact; blends are quantised.
             _ if self.index.is_some() => Color::Rgb(r, g, b),
-            _ => {
-                let q = |c: u8| {
-                    c.saturating_add(TRUECOLOR_QUANT / 2) / TRUECOLOR_QUANT * TRUECOLOR_QUANT
-                };
-                Color::Rgb(q(r), q(g), q(b))
-            }
+            _ => quantised(self.rgb),
         }
     }
 }

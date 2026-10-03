@@ -288,7 +288,7 @@ Like a real lava lamp, yours can have a thin layer of wax resting at
 the top. Turn on *wax at the top* on the *look* page.
 
 Text on the lamp (the clock, music or lyrics) picks light or dark for
-each letter, so it stands out from the wax behind it. Want it one colour
+each word, so it stands out from the wax behind it. Want it one colour
 all the time? On the *widgets* page, set *text on the lamp* to *light*
 or *dark*.
 

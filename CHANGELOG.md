@@ -55,6 +55,14 @@ What changed in each version of LavaTUI, in plain words.
   lrclib.net" where space is tight). Songs that are instrumental say
   "instrumental", including ones where lrclib.net only has a note saying
   so.
+- Lyrics on the lamp stay easy to read over busy looks like synthwave.
+  Each word keeps one colour, so no letter goes dark in the middle of a
+  word, and the words already sung, the word being sung and the words
+  still to come keep looking different. Where a line of the background
+  runs behind a letter, it fades just behind that letter. Over bright
+  wax the words turn dark: the word being sung is underlined and the
+  words still to come are a softer grey. The clock and music on the lamp
+  get the same care.
 - Lyrics light up word by word, like karaoke: the words already sung are
   bright, the word being sung is in the accent colour, and the rest of
   the line waits in grey. Without colours, the word being sung is
