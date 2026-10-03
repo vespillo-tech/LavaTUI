@@ -32,7 +32,7 @@ use crate::graphics::Kitty;
 use crate::graphics::inline::Inline;
 use crate::graphics::probe::Probe;
 use crate::render::StyleId;
-use crate::sim::{Field, HEAT_LEVELS, SimSpeed, World};
+use crate::sim::{Field, Frame, HEAT_LEVELS, SimSpeed, World};
 use crate::theme::{ColorDepth, Palette, Theme};
 use crate::timing::{FixedStep, Quality};
 use crate::ui::keymap::InputMode;
@@ -345,8 +345,10 @@ impl Model {
     fn warm_up(&mut self, area: Rect, seed: u64) {
         self.sync_music();
         self.relayout(area);
-        if let Some(aspect) = self.lamp_aspect() {
+        if let (Some(lamp), Some(frame)) = (self.layout.lamp, self.lamp_frame()) {
+            let aspect = layout::visual_aspect(lamp.width, lamp.height, self.cell_aspect);
             self.world = World::new(seed, aspect);
+            self.world.set_frame(frame);
             self.world.set_heat(self.settings.lamp.heat);
             self.world.set_top_wax(self.settings.lamp.top_wax);
         }
@@ -560,8 +562,8 @@ impl Model {
 
         self.relayout(area);
         self.sync_pictures();
-        if let Some(aspect) = self.lamp_aspect() {
-            self.world.set_aspect(aspect);
+        if let Some(frame) = self.lamp_frame() {
+            self.world.set_frame(frame);
         }
         // Whatever changed it (the settings screen, a page reset), the
         // world eases the top layer in or out.
@@ -630,14 +632,17 @@ impl Model {
         layout::layout(area, &input)
     }
 
-    /// The laid-out lamp's visual aspect, which the sim's world follows.
-    fn lamp_aspect(&self) -> Option<f64> {
-        let lamp = self.layout.lamp?;
-        Some(layout::visual_aspect(
-            lamp.width,
-            lamp.height,
-            self.cell_aspect,
-        ))
+    /// Where the laid-out lamp is on screen, which the sim's view follows
+    /// (its aspect is `layout::visual_aspect`'s).
+    fn lamp_frame(&self) -> Option<Frame> {
+        let lamp = self.layout.lamp.filter(|l| !l.is_empty())?;
+        let across = |cols: u16| f64::from(cols) / self.cell_aspect;
+        Some(Frame {
+            x: across(lamp.x),
+            y: f64::from(lamp.y),
+            width: across(lamp.width),
+            height: f64::from(lamp.height),
+        })
     }
 
     fn phase_ended(&mut self, end: PhaseEnd, now: Instant) {

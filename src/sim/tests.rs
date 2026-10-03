@@ -197,7 +197,7 @@ fn assert_sane(world: &World) {
         }
         let half = 0.5 * world.wall_width;
         assert!(
-            b.x.abs() <= half + 0.02 && (0.0..=1.0).contains(&b.y),
+            (b.x - world.wall_centre).abs() <= half + 0.02 && (0.0..=1.0).contains(&b.y),
             "{b:?}"
         );
         assert!(b.vx.hypot(b.vy) <= MAX_SPEED + 1e-9);
@@ -374,7 +374,7 @@ fn pool_is_dense_at_the_base() {
     assert!(f64::from(s.temp) > 0.85 && f64::from(s.temp) <= POOL_TEMP);
     let skin = world.sample(
         0.5,
-        1.0 - pool_surface(world.pool_level(), 0.0, world.bottom_width(), world.time) + 0.01,
+        1.0 - pool_surface(world.pool_level(), 0.0, world.floor(), world.time) + 0.01,
     );
     assert!(
         skin.density > SURFACE && skin.temp < s.temp - 0.15,
@@ -428,6 +428,18 @@ fn pool_surface_stays_under_its_ceiling() {
                 let time = f64::from(t) * 0.37;
                 for k in 0..=64 {
                     let x = (f64::from(k) / 64.0 - 0.5) * floor;
+                    let mounds = Mounds {
+                        centre: 0.0,
+                        width: floor,
+                        humps: (floor / POOL_HUMP).round().max(1.0),
+                    };
+                    let floor = Floor {
+                        width: floor,
+                        from: mounds,
+                        to: mounds,
+                        blend: 1.0,
+                        ..Floor::default()
+                    };
                     let surface = pool_surface(level, x, floor, time);
                     assert!(surface <= pool_ceiling(level), "{level} {x} {time}");
                     highest = highest.max((surface - level - POOL_WAVE * 1.6) / mound);
@@ -535,10 +547,28 @@ fn steps_join_up_through_every_event() {
         let mut end = vec![Sample::default(); cols * rows];
         let mut start = end.clone();
         let before = world.stats();
+        // The lamp at 20 rows, a side panel coming and going, lamp only
+        // (a row more, no panel) and a panel under it, each in turn.
+        let lamp = |cols: f64, rows: f64| Frame {
+            x: 0.0,
+            y: 0.0,
+            width: cols * aspect * 20.0,
+            height: rows,
+        };
+        let frames = [
+            lamp(1.0, 20.0),
+            lamp(0.7, 20.0),
+            lamp(1.0, 21.0),
+            lamp(1.0, 14.0),
+        ];
+        world.set_frame(frames[0]);
         for i in 0..7200 {
             // The top layer goes and comes back.
             if top && (i == 4800 || i == 5400) {
                 world.set_top_wax(i == 5400);
+            }
+            if i % 450 == 0 {
+                world.set_frame(frames[i / 450 % frames.len()]);
             }
             field.prepare(&world, 1.0);
             field.fill(&mut end, cols, rows);
@@ -569,6 +599,110 @@ fn steps_join_up_through_every_event() {
         events.dripped > 0 && events.capped > 0 && events.pinched > 0,
         "{events:?}"
     );
+}
+
+/// A lamp at `cells` (x, y, width, height; cells half as wide as tall),
+/// its [`Frame`].
+fn cells_frame((x, y, w, h): (u16, u16, u16, u16)) -> Frame {
+    Frame {
+        x: f64::from(x) / 2.0,
+        y: f64::from(y),
+        width: f64::from(w) / 2.0,
+        height: f64::from(h),
+    }
+}
+
+/// The field drawn as half blocks on a lamp at `cells`: density by
+/// screen pixel (column, row × 2).
+fn on_screen(field: &Field, cells: (u16, u16, u16, u16)) -> Vec<((u16, u16), f32)> {
+    let (x, y, w, h) = cells;
+    let (cols, rows) = (usize::from(w), usize::from(h) * 2);
+    let mut samples = vec![Sample::default(); cols * rows];
+    field.fill(&mut samples, cols, rows);
+    let at = |i: usize| (x + (i % cols) as u16, y * 2 + (i / cols) as u16);
+    samples
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (at(i), s.density))
+        .collect()
+}
+
+/// When the lamp changes size or place on screen, every cell it kept shows
+/// the wax it showed; then the view settles on the whole lamp, keeping in
+/// place the side edge that stayed put (the middle when both or neither
+/// did) and the top, and the walls follow.
+#[test]
+fn resizes_keep_the_wax_on_screen() {
+    // (from, to) in cells, and the point across the new lamp (0 its left
+    // edge, 1 its right) that keeps its place.
+    let cases = [
+        // A side panel comes, goes (100 columns, 30 rows).
+        ((0, 0, 100, 30), (0, 0, 70, 30), 0.0),
+        ((0, 0, 70, 30), (0, 0, 100, 30), 0.0),
+        // Lamp only: the panel and the status row go, come back.
+        ((0, 0, 70, 29), (0, 0, 100, 30), 0.0),
+        ((0, 0, 100, 30), (0, 0, 70, 29), 0.0),
+        // Portrait: a panel under the lamp.
+        ((0, 0, 40, 60), (0, 0, 40, 42), 0.5),
+        // A panel on the left; a tiny window.
+        ((0, 0, 100, 30), (30, 0, 70, 30), 1.0),
+        ((0, 0, 24, 6), (0, 0, 16, 5), 0.0),
+    ];
+    for (from, to, keep) in cases {
+        let mut world = World::new(5, f64::from(from.2) / f64::from(from.3) / 2.0);
+        world.set_frame(cells_frame(from));
+        world.prewarm(600, DT);
+        let mut field = Field::default();
+        field.prepare(&world, 0.5);
+        let before: std::collections::HashMap<_, _> = on_screen(&field, from).into_iter().collect();
+        world.set_frame(cells_frame(to));
+        field.prepare(&world, 0.5);
+        let mut shared = 0;
+        for (at, d) in on_screen(&field, to) {
+            if let Some(was) = before.get(&at) {
+                assert!(
+                    (d - was).abs() < 1e-3,
+                    "{from:?} -> {to:?} at {at:?}: {was} -> {d}"
+                );
+                shared += 1;
+            }
+        }
+        assert!(shared > 0, "{from:?} -> {to:?}");
+
+        let pinned = world.view;
+        world.run(120 * 6);
+        let aim = world.aim;
+        assert_eq!(world.view, aim, "{from:?} -> {to:?}: settled");
+        assert_close(world.wall_width, aim.width, 1e-6);
+        assert_close(world.wall_centre, aim.centre(), 1e-6);
+        assert_eq!((aim.y, aim.height), (0.0, 1.0));
+        let at = |v: View| v.x + keep * v.width;
+        assert_close(at(aim), at(pinned), 1e-9);
+        assert_close(aim.top(), pinned.top(), 1e-9);
+        assert_sane(&world);
+    }
+}
+
+/// The view glides from rest to rest: no frame jumps, and it neither
+/// overshoots nor stops short.
+#[test]
+fn view_glides_without_a_jerk() {
+    let mut world = World::new(5, 100.0 / 60.0);
+    world.set_frame(cells_frame((0, 0, 100, 30)));
+    world.set_frame(cells_frame((0, 0, 100, 20)));
+    let (start, aim) = (world.view, world.aim);
+    let mut steps = Vec::new();
+    for _ in 0..240 {
+        let was = world.view.height;
+        world.step(DT);
+        steps.push(world.view.height - was);
+        let h = world.view.height;
+        assert!((start.height..=aim.height).contains(&h), "{h}");
+    }
+    assert_eq!(world.view, aim);
+    // It starts gently: the first step is a small part of the fastest.
+    let fastest = steps.iter().fold(0.0_f64, |a, s| a.max(s.abs()));
+    assert!(steps[0].abs() < 0.01 * fastest, "{} of {fastest}", steps[0]);
 }
 
 /// `cargo test --release -- --ignored --nocapture bench_fill`
@@ -870,7 +1004,9 @@ fn top_wax_takes_wax_and_drips_staying_thin() {
         let mut world = World::new(seed, aspect);
         world.set_top_wax(true);
         let mut deepest: f64 = 0.0;
-        for step in 0..120 * 300 {
+        // The lamp halves at 4 minutes; its spare wax melts away within
+        // about two more (as in `resize_eases_walls_without_teleporting`).
+        for step in 0..120 * 360 {
             if step == 120 * 240 {
                 world.set_aspect(0.5 * aspect);
             }

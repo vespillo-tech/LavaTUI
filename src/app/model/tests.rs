@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use super::*;
 use crate::dock::{Anchor, Clock, DockWidget, Place, Pomodoro};
+use crate::sim::SURFACE;
 use crate::ui::keymap::Action;
 use crate::ui::picker::{self, Placement};
 
@@ -609,9 +610,15 @@ fn resize_reshapes_the_lamp() {
         Rect::new(0, 0, 60, 12),
         local(),
     );
-    // The sim's view follows the new lamp at once (its walls ease after).
+    // The sim's view first keeps every cell where it was, then eases to
+    // the new lamp (and its walls with it).
     let lamp = m.layout.lamp.unwrap();
     let aspect = crate::ui::layout::visual_aspect(lamp.width, lamp.height, m.cell_aspect);
+    assert_ne!(m.field.aspect(), aspect as f32);
+    let area = m.layout.area;
+    for i in 2..120 {
+        m.tick(t0 + Duration::from_millis(16 * i), area, local());
+    }
     assert_eq!(m.field.aspect(), aspect as f32);
     assert_ne!(m.field.aspect(), before);
 }
@@ -2247,4 +2254,74 @@ fn the_face_picker_previews_a_clock_that_isnt_shown_and_leaves_it_off() {
     let (mut m, t0) = model("face-preview-shown");
     m.update(Action::FacePicker, t0);
     assert!(face_preview(m.layout.area, &m.layout, &m).is_none());
+}
+
+/// The lamp's half-block wax on screen: each pixel (column, row × 2) the
+/// lamp covers, and its density up to 1 (all wax; [`SURFACE`] is its edge).
+fn wax_on_screen(m: &Model) -> std::collections::HashMap<(u16, u16), f32> {
+    let lamp = m.layout.lamp.unwrap();
+    let (w, h) = (usize::from(lamp.width), usize::from(lamp.height) * 2);
+    let mut samples = vec![crate::sim::Sample::default(); w * h];
+    m.field.fill(&mut samples, w, h);
+    let mut out = std::collections::HashMap::new();
+    for (i, s) in samples.iter().enumerate() {
+        let (x, y) = ((i % w) as u16, (i / w) as u16);
+        out.insert((lamp.x + x, lamp.y * 2 + y), s.density.min(1.0));
+    }
+    out
+}
+
+/// Pressing `m` with the clock beside the lamp leaves the wax where it
+/// was: the frame it is pressed in shows the same wax in every cell the
+/// lamp kept, and each frame after differs from the one before only a
+/// little (the view and the walls ease; nothing jumps). Before, every
+/// blob moved sideways by half the panel's width at once.
+#[test]
+fn lamp_only_leaves_the_wax_in_place() {
+    let session = Session {
+        seed: Some(7),
+        ..Session::default()
+    };
+    for top in [false, true] {
+        let (mut m, t0) = model_with(session.clone(), temp_config("lamp-only-wax"), 100, 30);
+        m.settings.dock.set(&Clock, Place::Side);
+        m.settings.lamp.top_wax = top;
+        let at = |ms: u64| t0 + Duration::from_millis(ms);
+        for ms in (16..=3200).step_by(16) {
+            tick(&mut m, at(ms));
+        }
+        assert!(m.layout.panel.is_some(), "the clock is beside the lamp");
+        for (press, from) in [(true, 3200), (false, 4800)] {
+            // `m`, then the frames of the glide; then `m` back.
+            tick(&mut m, at(from));
+            let mut last = wax_on_screen(&m);
+            m.update(Action::ToggleMinimal, at(from));
+            for (i, ms) in (from..from + 1600).step_by(16).enumerate() {
+                let area = m.layout.area;
+                m.tick(at(ms), area, local());
+                assert_eq!(m.layout.panel.is_none(), press);
+                let now = wax_on_screen(&m);
+                let (mut most, mut flips) = (0.0_f32, 0);
+                for (cell, d) in &last {
+                    if let Some(e) = now.get(cell) {
+                        most = most.max((d - e).abs());
+                        flips += usize::from((*d >= SURFACE) != (*e >= SURFACE));
+                    }
+                }
+                if i == 0 {
+                    assert!(most < 1e-3, "top {top}: `m` moved the wax by {most}");
+                } else {
+                    assert!(
+                        most < 0.25,
+                        "top {top} at {ms} ms: a pixel changed by {most}"
+                    );
+                    assert!(
+                        flips * 100 <= last.len(),
+                        "top {top} at {ms} ms: {flips} flipped"
+                    );
+                }
+                last = now;
+            }
+        }
+    }
 }

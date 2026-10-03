@@ -37,7 +37,7 @@
 use super::blob::End;
 use super::rng::hash;
 use super::{
-    Blob, CAP_LUMP, CAP_TEMP, LumpShape, MELTED_RADIUS, World, ambient_temp, cap_underside,
+    Blob, CAP_LUMP, CAP_TEMP, Floor, LumpShape, MELTED_RADIUS, World, ambient_temp, cap_underside,
     pool_ceiling, pool_surface,
 };
 
@@ -54,6 +54,13 @@ const PEAK: f32 = {
 };
 /// Half-thickness of the pool's soft surface.
 const POOL_BAND: f32 = 0.035;
+/// Past a wall (one gliding out after a resize: §2.2), the pool and the
+/// top layer end in a slope this steep rather than a sheer cut, so their
+/// ends move smoothly; settled, the walls are the lamp's edges.
+const WALL_END: f32 = 0.3;
+/// How far past the floor (or the top) the pool (or the top layer) fades
+/// out, while a resized view shows past them (lamp heights).
+const PAST_TANK: f32 = 0.1;
 /// The pool's colour: a cooler skin at the surface, glowing up to the
 /// pool's own temperature this deep (lamp heights).
 const POOL_SKIN_TEMP: f32 = 0.66;
@@ -138,14 +145,17 @@ pub(super) struct BlobSnap {
 /// A frame's snapshot of the wax, ready to sample. Keep one around and call
 /// [`Field::prepare`] each frame: it reuses its buffers, so steady-state
 /// sampling never allocates. Equal fields draw the same lamp.
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct Field {
     pub(super) blobs: Vec<BlobSnap>,
+    /// The view (world units): its left edge, top, width and height.
+    left: f32,
+    top: f32,
     view_width: f32,
-    wall_width: f64,
+    view_height: f32,
     pool_level: f64,
-    /// Width of the container's floor, under the pool.
-    floor: f64,
+    /// The container's floor, under the pool (its width is the walls').
+    floor: Floor,
     time: f64,
     /// How far the top layer is shown (0 … 1, eased), its mean depth,
     /// and its bulges.
@@ -163,7 +173,7 @@ impl Field {
         let time = world.time - (1.0 - alpha) * world.last_dt;
         let pool_level =
             world.prev_pool_level + (world.pool_level() - world.prev_pool_level) * alpha;
-        let floor = world.bottom_width();
+        let floor = world.prev_floor.lerp(world.floor(), alpha);
         let cap_on = world.prev_cap_on + (world.cap_on - world.prev_cap_on) * alpha;
         let cap = smooth(cap_on);
         let cap_depth =
@@ -230,8 +240,11 @@ impl Field {
             .extend(world.blobs.iter().chain(ghosts).map(snap));
         self.lumps = lumps;
         self.blobs.retain(|b| b.weight > 0.0);
-        self.view_width = world.view_width as f32;
-        self.wall_width = world.wall_width;
+        let view = world.prev_view.lerp(world.view, alpha);
+        self.left = view.x as f32;
+        self.top = view.top() as f32;
+        self.view_width = view.width as f32;
+        self.view_height = view.height as f32;
         self.pool_level = pool_level;
         self.time = time;
         self.floor = floor;
@@ -239,7 +252,20 @@ impl Field {
         self.cap_depth = cap_depth;
     }
 
-    /// Viewport width in world units (the lamp's visual aspect).
+    /// This field seen through `other`'s view (tests: comparing fields
+    /// with the camera held still).
+    #[cfg(test)]
+    pub fn seen_as(&self, other: &Field) -> Field {
+        Field {
+            left: other.left,
+            top: other.top,
+            view_width: other.view_width,
+            view_height: other.view_height,
+            ..self.clone()
+        }
+    }
+
+    /// Viewport width in world units (settled: the lamp's visual aspect).
     #[cfg(test)]
     pub fn aspect(&self) -> f32 {
         self.view_width
@@ -259,8 +285,8 @@ impl Field {
 
     #[cfg(test)]
     fn sample_at(&self, u: f32, v: f32, px: Pixel) -> Sample {
-        let x = (u - 0.5) * self.view_width;
-        let y = 1.0 - v;
+        let x = self.left + u * self.view_width;
+        let y = self.top - v * self.view_height;
         let mut acc = Sample::default();
         self.for_each_kernel(px, |k| {
             let (dx, dy) = (x - k.x, y - k.y);
@@ -268,15 +294,20 @@ impl Field {
                 add_kernel(&mut acc, k, dx * dx * k.inv_x2 + k.qy(dy));
             }
         });
-        if self.in_container(f64::from(x)) {
-            add_pool(
+        let end = WALL_END * outside(x, self.walls());
+        add_pool(
+            &mut acc,
+            self.pool_surface_at(x, px, self.pool_lift(px)) - end - y,
+            in_tank(y),
+        );
+        if self.cap > 0.0 {
+            let (under, temp) = self.cap_at(self.cap_drawn(px), f64::from(x));
+            add_cap(
                 &mut acc,
-                self.pool_surface_at(x, px, self.pool_lift(px)) - y,
+                y - under as f32 - end,
+                self.cap as f32 * in_tank(y),
+                temp as f32,
             );
-            if self.cap > 0.0 {
-                let (under, temp) = self.cap_at(self.cap_drawn(px), f64::from(x));
-                add_cap(&mut acc, y - under as f32, self.cap as f32, temp as f32);
-            }
         }
         finish(&mut acc, ambient_temp(f64::from(y)) as f32);
         acc
@@ -284,7 +315,10 @@ impl Field {
 
     /// Sample pixel size for a `cols × rows` grid over the viewport.
     fn pixel(&self, cols: usize, rows: usize) -> Pixel {
-        let (w, h) = (self.view_width / cols as f32, 1.0 / rows as f32);
+        let (w, h) = (
+            self.view_width / cols as f32,
+            self.view_height / rows as f32,
+        );
         Pixel {
             size: f64::from(w.max(h)),
             height: h,
@@ -393,10 +427,10 @@ impl Field {
         }
         let px = self.pixel(detail.0.max(1), detail.1.max(1));
         let px_w = self.view_width / cols as f32;
-        let px_h = 1.0 / rows as f32;
-        let left = -0.5 * self.view_width;
+        let px_h = self.view_height / rows as f32;
+        let (left, view_top) = (self.left, self.top);
         let x_at = |i: usize| left + (i as f32 + 0.5) * px_w;
-        let y_at = |j: usize| 1.0 - (j as f32 + 0.5) * px_h;
+        let y_at = |j: usize| view_top - (j as f32 + 0.5) * px_h;
 
         self.for_each_kernel(px, |k| {
             let Some((i0, i1)) = span(
@@ -407,8 +441,8 @@ impl Field {
                 return;
             };
             let Some((j0, j1)) = span(
-                (1.0 - k.y - k.reach_up) / px_h,
-                (1.0 - k.y + k.reach_down) / px_h,
+                (view_top - k.y - k.reach_up) / px_h,
+                (view_top - k.y + k.reach_down) / px_h,
                 rows,
             ) else {
                 return;
@@ -431,21 +465,32 @@ impl Field {
         let ceiling =
             (pool_ceiling(self.pool_level) as f32 + lift).max(MIN_POOL_PIXELS * px.height);
         let top = ceiling + POOL_BAND;
-        if let Some((j0, _)) = span((1.0 - top) / px_h, rows as f32, rows) {
+        if let Some((j0, _)) = span((view_top - top) / px_h, rows as f32, rows) {
+            let walls = self.walls();
+            // The view shows past the floor only while it glides (§2.2).
+            let past_floor = y_at(rows - 1) < 0.0;
             for i in 0..cols {
                 let x = x_at(i);
-                if !self.in_container(f64::from(x)) {
+                let end = WALL_END * outside(x, walls);
+                if top - end < y_at(rows - 1) {
                     continue;
                 }
-                let surface = self.pool_surface_at(x, px, lift);
-                for j in j0..rows {
-                    add_pool(&mut out[j * cols + i], surface - y_at(j));
+                let surface = self.pool_surface_at(x, px, lift) - end;
+                if past_floor {
+                    for j in j0..rows {
+                        let y = y_at(j);
+                        add_pool(&mut out[j * cols + i], surface - y, in_tank(y));
+                    }
+                } else {
+                    for j in j0..rows {
+                        add_pool(&mut out[j * cols + i], surface - y_at(j), 1.0);
+                    }
                 }
             }
         }
 
         if self.cap > 0.0 {
-            self.fill_cap(out, (cols, rows), px, (left, px_w, px_h));
+            self.fill_cap(out, (cols, rows), px, (left, view_top, px_w, px_h));
         }
 
         for (j, row) in out.chunks_exact_mut(cols).enumerate() {
@@ -465,33 +510,45 @@ impl Field {
         out: &mut [Sample],
         (cols, rows): (usize, usize),
         px: Pixel,
-        (left, px_w, px_h): (f32, f32, f32),
+        (left, view_top, px_w, px_h): (f32, f32, f32, f32),
     ) {
         let depth = self.cap_drawn(px);
         let shown = self.cap as f32;
         let bulge: f64 = self.lumps.iter().map(|l| l.peak()).sum();
         let reach = (depth * (1.0 + CAP_LUMP) + self.cap * bulge) as f32 + CAP_BAND;
-        let Some((_, j1)) = span(0.0, reach / px_h, rows) else {
+        // Rows from the view's top down to `reach` below the lamp's.
+        let Some((_, j1)) = span(0.0, (view_top - 1.0 + reach) / px_h, rows) else {
             return;
         };
+        let walls = self.walls();
+        let past_top = view_top > 1.0;
         for i in 0..cols {
             let x = left + (i as f32 + 0.5) * px_w;
-            if !self.in_container(f64::from(x)) {
+            let end = WALL_END * outside(x, walls);
+            if 1.0 - reach + end > view_top {
                 continue;
             }
             let (under, temp) = self.cap_at(depth, f64::from(x));
-            let (under, temp) = (under as f32, temp as f32);
+            let (under, temp) = (under as f32 + end, temp as f32);
             for j in 0..=j1 {
-                let y = 1.0 - (j as f32 + 0.5) * px_h;
+                let y = view_top - (j as f32 + 0.5) * px_h;
+                let shown = if past_top { shown * in_tank(y) } else { shown };
                 add_cap(&mut out[j * cols + i], y - under, shown, temp);
             }
         }
     }
 
-    /// Whether `x` is between the walls (which lag the view on a resize).
-    fn in_container(&self, x: f64) -> bool {
-        x.abs() <= 0.5 * self.wall_width
+    /// Where the walls are (which lag the view on a resize).
+    fn walls(&self) -> (f32, f32) {
+        let (centre, half) = (self.floor.centre, 0.5 * self.floor.width);
+        ((centre - half) as f32, (centre + half) as f32)
     }
+}
+
+/// How far `x` is past the `walls`, 0 between them.
+#[inline]
+fn outside(x: f32, (left, right): (f32, f32)) -> f32 {
+    (left - x).max(x - right).max(0.0)
 }
 
 impl Kernel {
@@ -545,11 +602,26 @@ fn add_kernel(s: &mut Sample, k: &Kernel, q2: f32) {
     }
 }
 
-/// `depth` = how far below the pool surface (negative above it). The pool
-/// glows hot where it is deep, over the heater, and shows a cooler skin.
+/// How much of the tank's height `y` is in: 1 inside, fading to 0 within
+/// [`PAST_TANK`] past its floor or top. A view gliding after a resize can
+/// show past them for a moment: the pool runs on a little (a row freed
+/// under the lamp shows pool at once), then liquid, not a slab of wax
+/// (§2.2).
 #[inline]
-fn add_pool(s: &mut Sample, depth: f32) {
-    let w = smooth01(depth / POOL_BAND * 0.5 + 0.5);
+fn in_tank(y: f32) -> f32 {
+    if (0.0..=1.0).contains(&y) {
+        1.0
+    } else {
+        smooth01(1.0 - (y - y.clamp(0.0, 1.0)).abs() / PAST_TANK)
+    }
+}
+
+/// `depth` = how far below the pool surface (negative above it); `share`
+/// of it is drawn ([`in_tank`]). The pool glows hot where it is deep, over
+/// the heater, and shows a cooler skin.
+#[inline]
+fn add_pool(s: &mut Sample, depth: f32, share: f32) {
+    let w = smooth01(depth / POOL_BAND * 0.5 + 0.5) * share;
     let hot = super::POOL_TEMP as f32;
     let temp = POOL_SKIN_TEMP + (hot - POOL_SKIN_TEMP) * smooth01(depth / POOL_GLOW_DEPTH);
     s.density += w;

@@ -487,9 +487,29 @@ The sim lives in **world units**, independent of the terminal:
 * Blob radii, velocities and the heat field are in world units. A
   terminal resize changes **sampling density only**, never the physics.
   A blob that's 10 % of lamp height stays 10 % at 30 rows or 120.
-* World width follows the region. On resize the walls **ease** to
-  the new width over 250 ms (the sim pushes blobs, so nothing teleports),
-  and total wax volume is kept at a constant **≈ 30 % of world area** by
+* World width follows the region. **A resize never moves the wax on
+  screen.** When the lamp changes size or place (a window resize, `m`,
+  a widget joining or leaving the panel, the panel wrapping below a
+  portrait lamp), the view first moves with it, so every cell the lamp
+  kept shows exactly the wax it showed. Then:
+  * the tank grows or shrinks **on the side that moved**: the side edge
+    that stayed put keeps its place in the world (the left edge with the
+    panel on the right, the right edge if only the left moved, the middle
+    if both or neither did). With the panel on the right, the wax at the
+    left stays where it is and the right wall moves;
+  * the walls **glide** there over ~1.2 s (critically damped: they start
+    and stop gently), pushing blobs along. A wall closing in always comes
+    from beyond the lamp's edge, so the push happens out of sight, and a
+    blob it reaches is squeezed gradually, never at once. A wall moving
+    out lets the pool (and the top layer) spread after it, ending in a
+    gentle slope rather than a sheer cut;
+  * if the height changed too (the status row, a panel below), the view
+    then **zooms** to the whole lamp height over ~0.45 s (it starts
+    without a jerk), keeping the top edge in place when only the bottom
+    moved: the world is always one lamp tall;
+  * the pool's mounds cross-fade to the new width's layout over 0.8 s
+    instead of sliding.
+  Total wax volume is kept at a constant **≈ 30 % of world area** by
   slowly growing/shrinking the bottom pool (no blobs pop in or out).
 
 ### 2.3 Cell aspect
@@ -1825,7 +1845,8 @@ double-click to keep / open. Every click has a key.
 * Handle `Event::Resize` at once: recompute `layout()`, re-derive
   `cell_aspect`, and draw the new geometry on the **next frame**. Never
   draw a frame with stale geometry, and do one full clear + repaint.
-* The sim's walls ease to the new width over 250 ms (§2.2).
+* The wax stays where it is on screen; the tank then grows or shrinks
+  on the side that moved, the walls gliding there (§2.2).
 * Coalesce resize storms: when multiple resize events arrive in one poll
   batch, only the last one counts.
 
