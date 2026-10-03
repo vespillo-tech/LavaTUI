@@ -6,16 +6,17 @@
 //! Nothing here waits on the player: [`Music::sync`] reads the source's
 //! latest snapshot once a frame (a short lock) and commands are queued.
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use super::Model;
 use super::library::{Account, ListKind};
 use crate::dock::cover::{self, Drawn, Grain};
 use crate::dock::{self, DockWidget, Place};
+use crate::graphics::Protocol;
 use crate::graphics::inline::Wish;
 use crate::graphics::probe::Verdict;
-use crate::graphics::{self, Protocol};
-use crate::media::art::{ArtLoader, ArtState};
+use crate::media::art::{Art, ArtLoader, ArtState};
 use crate::media::{self, Capabilities, Command, MediaSource, Snapshot};
 use crate::theme::Rgb;
 use crate::ui::keymap::PlayerKey;
@@ -45,7 +46,13 @@ pub struct Music {
     own_modes: bool,
     connect: Connect,
     load_art: LoadArt,
+    /// The last pixel-art picture made: of which cover, how many blocks.
+    pixel_art: Option<PixelArt>,
 }
+
+/// A pixel-art picture ready to send: the cover, its blocks across and
+/// down, the PNG (base64).
+type PixelArt = (Arc<Art>, (u16, u16), Arc<String>);
 
 impl Default for Music {
     fn default() -> Self {
@@ -58,11 +65,26 @@ impl Default for Music {
             own_modes: false,
             connect: Box::new(media::detect),
             load_art: Box::new(ArtLoader::start),
+            pixel_art: None,
         }
     }
 }
 
 impl Music {
+    /// `art` as pixel art `grid` blocks across and down, ready to send:
+    /// made once, then kept while the cover and grid stay.
+    fn pixel_art(&mut self, art: &Arc<Art>, grid: (u16, u16)) -> Option<Arc<String>> {
+        if let Some((made, at, png)) = &self.pixel_art
+            && Arc::ptr_eq(made, art)
+            && *at == grid
+        {
+            return Some(Arc::clone(png));
+        }
+        let png = art.pixel_art(grid)?;
+        self.pixel_art = Some((Arc::clone(art), grid, Arc::clone(&png)));
+        Some(png)
+    }
+
     /// Use `connect` for the player (tests and `--demo`: a `FakeSource`) and `load_art`
     /// for covers, from the next time the widget is placed.
     pub fn connect_with(
@@ -265,14 +287,12 @@ impl Model {
             let ArtState::Ready(art) = self.music.art() else {
                 return None;
             };
-            let png = art.png(grain.blocks())?;
             let track = self.music.snapshot.as_ref()?.track.as_ref()?;
             let r = dock::cover_at(&self.layout)?;
-            let key = graphics::Key {
-                source: track.artwork_url.clone(),
-                cols: r.width,
-                rows: r.height,
-                blocks: grain.blocks(),
+            let key = cover::picture_key(self, &track.artwork_url, r, grain);
+            let png = match key.grid {
+                None => art.hires.clone()?,
+                Some(grid) => self.music.pixel_art(&art, grid)?,
             };
             let Rgb(red, green, blue) = art.mean();
             Some(Wish {

@@ -10,8 +10,9 @@
 //! (2 × 3 pixels a cell, Unicode 13) where they're known to be drawn, else
 //! quadrants (2 × 2). `small-pixels`, `medium-pixels` and `big-pixels` are
 //! pixel art, the cover in flat square blocks, about 32, 16 and 10
-//! across: sent as a picture where the terminal shows pictures, else drawn
-//! in whole and half cells ([`super::picture`]). `auto` is `sharp`. Text cells need 256 colours or
+//! across (fewer on a small cover): drawn in whole and half cells
+//! ([`super::picture`]), and where the terminal shows pictures sent as one
+//! too, with the same blocks. `auto` is `sharp`. Text cells need 256 colours or
 //! more; pixels any colour at all. With no way to show it the widget is
 //! one calm line.
 //!
@@ -36,7 +37,7 @@ use super::{Anchor, Backdrop, ChipText, DockWidget, Look, Place, WidgetForm, ali
 use crate::app::Model;
 use crate::graphics::{self, Protocol};
 use crate::media::Status;
-use crate::media::art::{ArtState, PIXEL_ART};
+use crate::media::art::ArtState;
 use crate::theme::{ColorDepth, Ink, Rgb, Role};
 
 pub struct Cover;
@@ -119,11 +120,12 @@ impl Detail {
     }
 }
 
-/// The pixel-art sizes, as the user reads them (by `PIXEL_ART` level).
+/// The pixel-art sizes, as the user reads them (by `picture::PIXEL_ART`
+/// level).
 const PIXEL_NAMES: [&str; 3] = ["small pixels", "medium pixels", "big pixels"];
 
 /// How coarse a cover is drawn: as sharp as it can be, or pixel art at a
-/// level of [`PIXEL_ART`] (0 the finest).
+/// level of [`picture::PIXEL_ART`] (0 the finest).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Grain {
     Sharp,
@@ -135,15 +137,6 @@ impl Grain {
         match self {
             Grain::Sharp => "sharp",
             Grain::Pixels(level) => PIXEL_NAMES[level.min(PIXEL_NAMES.len() - 1)],
-        }
-    }
-
-    /// Pixel-art blocks across a picture sent in pixels; `None`: the sharp
-    /// picture.
-    pub fn blocks(self) -> Option<u16> {
-        match self {
-            Grain::Sharp => None,
-            Grain::Pixels(level) => PIXEL_ART.get(level).copied(),
         }
     }
 
@@ -452,12 +445,7 @@ pub(super) fn draw_cover(model: &Model, r: Rect, buf: &mut Buffer) {
     };
     let text = match model.pictures() {
         Drawn::Pixels(protocol, grain) => {
-            let key = graphics::Key {
-                source: url.to_owned(),
-                cols: r.width,
-                rows: r.height,
-                blocks: grain.blocks(),
-            };
+            let key = picture_key(model, url, r, grain);
             let Rgb(red, green, blue) = art.mean();
             let bg = Color::Rgb(red, green, blue);
             match protocol {
@@ -472,7 +460,8 @@ pub(super) fn draw_cover(model: &Model, r: Rect, buf: &mut Buffer) {
                     }
                 }
             }
-            // Until the picture is all there: the same in text cells.
+            // Until the picture is all there: the same in text cells (pixel
+            // art with the same blocks, `picture_key`).
             grain.text(model.caps)
         }
         Drawn::Text(mode) => mode,
@@ -489,6 +478,18 @@ pub(super) fn draw_cover(model: &Model, r: Rect, buf: &mut Buffer) {
         );
     } else {
         placeholder(model, r, buf);
+    }
+}
+
+/// The picture in pixels of the cover at `source`, drawn in `r` at
+/// `grain`: pixel art has the blocks its text cells show.
+pub fn picture_key(model: &Model, source: &str, r: Rect, grain: Grain) -> graphics::Key {
+    let text = grain.text(model.caps);
+    graphics::Key {
+        source: source.to_owned(),
+        cols: r.width,
+        rows: r.height,
+        grid: picture::pixel_grid(text, r.width, r.height, model.translucent_cells()),
     }
 }
 
@@ -609,10 +610,15 @@ mod tests {
             resolve(Detail::Sharp, PLAIN, TrueColor),
             Drawn::Text(TextMode::Quadrant)
         );
-        let blocks = Detail::ALL.map(|d| d.grain().blocks());
         assert_eq!(
-            blocks,
-            [Option::None, Option::None, Some(32), Some(16), Some(10)]
+            Detail::ALL.map(Detail::grain),
+            [
+                Grain::Sharp,
+                Grain::Sharp,
+                Grain::Pixels(0),
+                Grain::Pixels(1),
+                Grain::Pixels(2)
+            ]
         );
     }
 

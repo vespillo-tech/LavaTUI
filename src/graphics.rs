@@ -187,8 +187,9 @@ pub struct Key {
     pub source: String,
     pub cols: u16,
     pub rows: u16,
-    /// Pixel art this many blocks across, or (`None`) the sharp picture.
-    pub blocks: Option<u16>,
+    /// Pixel art this many blocks across and down, or (`None`) the sharp
+    /// picture.
+    pub grid: Option<(u16, u16)>,
 }
 
 /// Our first image id, once any is used (for [`cleanup`] on any way out,
@@ -375,7 +376,7 @@ mod tests {
             source: "https://i.example/a".into(),
             cols,
             rows: cols / 2,
-            blocks: None,
+            grid: None,
         }
     }
 

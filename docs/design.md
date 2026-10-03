@@ -1167,17 +1167,20 @@ here, e.g. `cover quality · auto · sharp`:
 | detail | with pictures | in text cells (256 colours+) |
 |---|---|---|
 | `sharp` | the real picture, at the terminal's resolution | the finest text: sextants (2 × 3 pixels a cell, two colours each, U+1FB00..1FB3B) where the terminal draws them, else quadrants (2 × 2, `▘▝▀▖▌▞▛▗▚▐▜▄▙▟█`) |
-| `small-pixels` | pixel art: 32 × 32 flat squares | flat square blocks, about 32 across: k columns × k half rows (`▀`, exact colours), k whole |
-| `medium-pixels` | pixel art: 16 × 16 flat squares | the same, about 16 across, always bigger blocks than `small-pixels` |
-| `big-pixels` | pixel art: 10 × 10 flat squares | the same, about 10 across, always bigger blocks than `medium-pixels` |
+| `small-pixels` | pixel art: the same flat squares as in text cells | flat square blocks, about 32 across: k columns × k half rows (`▀`, exact colours), k whole |
+| `medium-pixels` | the same | the same, about 16 across, always bigger blocks than `small-pixels` |
+| `big-pixels` | the same | the same, about 10 across, always bigger blocks than `medium-pixels` |
 | `auto` (default) | `sharp` | `sharp` |
 
 Pictures need a pixel protocol: kitty graphics with Unicode placeholders
 (kitty, Ghostty), iTerm2 inline images (iTerm2, WezTerm, mintty, Rio) or
 sixel (foot, mlterm, Konsole ≥ 22.04, Contour); any colour depth but
-none. Pixel art is made with the sharp copy, on the art worker
-(`Art::pixel_art`, each block a box-filtered mean, drawn ~400 px square
-so the terminal's scaling keeps edges crisp; sixel scales it nearest).
+none. A pixel-art picture has exactly the blocks the text cells show
+(`picture::pixel_grid`), so nothing moves when it takes over from them
+once it has arrived: `Art::pixel_art` makes it from the cover when the
+cover, its size or the quality changes (about a millisecond; kept),
+each block a box-filtered mean, drawn ~400 px on its longer side so the
+terminal's scaling keeps edges crisp (sixel scales it nearest).
 In text cells a block is `round(cols / n)` columns wide (so blocks are
 all one size), bumped where needed so each size's blocks are bigger than
 the one before's on small covers; where cell backgrounds are see-through

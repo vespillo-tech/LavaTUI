@@ -1358,20 +1358,36 @@ mod music {
             String::from_utf8(out).unwrap()
         };
         assert!(sent(&mut m).contains(";QUJD\x1b\\"), "the sharp picture");
-        for (detail, png) in [
-            (Detail::SmallPixels, "QUJD32"),
-            (Detail::MediumPixels, "QUJD16"),
-            (Detail::BigPixels, "QUJD10"),
+        let art = Art::solid(Rgb(200, 120, 40));
+        let mut grids = Vec::new();
+        for (detail, level) in [
+            (Detail::SmallPixels, 0),
+            (Detail::MediumPixels, 1),
+            (Detail::BigPixels, 2),
         ] {
             m.settings.art.detail = detail;
             let out = sent(&mut m);
-            assert!(
-                out.contains(&format!(";{png}\x1b\\")),
-                "{detail:?}: {out:?}"
-            );
+            // lava-jop: the blocks its text cells show, so nothing moves
+            // when the picture takes over.
+            let r = crate::dock::cover_at(&m.layout).unwrap();
+            let text = crate::dock::picture::TextMode::Pixels(level);
+            let grid = crate::dock::picture::pixel_grid(text, r.width, r.height, false).unwrap();
+            // The chunks' payloads, joined.
+            let payload: String = out
+                .split("\x1b_G")
+                .filter_map(|c| c.split_once(';')?.1.split_once("\x1b\\"))
+                .map(|(data, _)| data)
+                .collect();
+            let png = art.pixel_art(grid).unwrap();
+            assert_eq!(payload, *png, "{detail:?}");
             assert!(sent(&mut m).contains("a=d,d=I"), "the old one goes");
             assert!(sent(&mut m).is_empty(), "and nothing more");
+            grids.push(grid);
         }
+        assert!(
+            grids[0].0 > grids[1].0 && grids[1].0 > grids[2].0,
+            "{grids:?}"
+        );
         // While it's on its way: the same grain in text cells.
         m.settings.art.detail = Detail::MediumPixels;
         tick(&mut m, t0);
