@@ -9,6 +9,8 @@ a monospace font. Clock times are whatever the local time is.
     python3 -m venv /tmp/v && /tmp/v/bin/pip install pyte pillow
     /tmp/v/bin/python docs/screenshots/capture.py            # all
     /tmp/v/bin/python docs/screenshots/capture.py hero help  # some
+    /tmp/v/bin/python docs/screenshots/capture.py loops      # the README loops (GIF)
+    /tmp/v/bin/python docs/screenshots/capture.py loops music help  # some
     /tmp/v/bin/python docs/screenshots/capture.py live       # needs Spotify playing
     /tmp/v/bin/python docs/screenshots/capture.py lyrics     # Spotify + lrclib.net
     /tmp/v/bin/python docs/screenshots/capture.py library    # --demo's made-up account

@@ -463,10 +463,55 @@ signed with the same Developer ID keep the answer.
 
 ## The README's pictures
 
-The screenshots are drawn from the release binary in sized ptys, with a
-fixed seed and a scratch config, by `docs/screenshots/capture.py` (pyte +
-Pillow). The animated demo is `docs/screenshots/demo.tape` (vhs, then
-gifsicle; the tape has the exact commands and the size budget).
+Every picture is drawn from the release binary in sized ptys, with a
+fixed seed and a scratch config, by pyte + Pillow: no window is filmed.
+The README shows the trailer (`demo.gif`), the hero (a still PNG) and
+15 short loops (GIFs). The stills (`capture.py` with no arguments) are
+kept for the docs and as a fallback.
+
+**The frame clock.** The hidden `--frame-clock HH:MM` makes a run
+reproducible to the pixel: frame *n* is drawn at exactly *n* frame
+periods after the start, however fast the machine is, the clock face
+reads HH:MM plus that time, and adaptive quality stays at full. The
+wax only follows the time it's given, so two runs with the same seed
+and lamp size show the same wax at the same frame, whatever the style,
+colours or widgets.
+
+**Frames, not screenshots.** The app wraps every frame in a DEC 2026
+synchronized update; `capture.run(shot, snaps)` splits the pty stream on
+those frame ends and keeps the screen at each one (`Snap`), so no
+half-drawn frame is ever kept. Keys can be timed by frame: `f42:x` is
+sent as soon as frame 42 is drawn, so the app handles it before frame
+43 in every run.
+
+**The trailer** (`docs/screenshots/trailer.py`, about 60 s, under 5 MB):
+a tour told as one continuous recording. Each scene state is its own run
+(a *take*) with the same seed, window and frame clock; the film is
+frames of one take, then the next, cut at exact frame numbers. At a cut
+the style, colours and widgets change in one frame while the wax carries
+on unbroken (a match cut). Anything that changes the wax itself (wax at
+the top, the side panel emptying) is replayed at the same frames in
+every later take, so the worlds stay identical. Keys a take needs before
+its first frame in the film fade before the cut, so no toast lands on
+one. `trailer.py check` also writes the frames either side of every cut;
+look at them. Each part gets its own palette (ffmpeg, no dither), joined
+by gifsicle; the loop dissolves back into the first frame.
+
+**The loops** (`capture.py loops [name ...]`, 6 s each at 10 fps): only
+the wax moves (timer not started, clock without seconds at a fixed time,
+demo player paused, every toast gone). A feature picture *swings*: it
+drifts forward through a gently moving stretch of wax and back again,
+easing to a stop at each turn, at real speed between them, so it is
+seamless whatever the wax does. The two sheets (styles, palettes) are
+one run per tile, in step through the frame clock; their last second
+crossfades into the frames leading into the start. Encoded with ffmpeg
+(one palette, no dither) and gifsicle.
+
+**Budget.** Trailer under 5 MB; the loops together under 4 MB, none over
+1.5 MB (the styles sheet is the heaviest: its matrix tile changes every
+frame); the README about 8.2 MB in all. GIF is used throughout: in these
+flat-colour pictures it beat lossy WebP (smaller and sharper) and APNG,
+and every GitHub client plays it.
 
 Pictures with music use the hidden `--demo` flag (`src/demo.rs`): a
 made-up player with invented songs and artists, original covers embedded
@@ -480,8 +525,8 @@ has the first song, so adding it shows the "add it again?" question.
 Playing from the browser plays in the `FakeSource`, which knows the
 playlists (`FakeSource::with_contexts`). `Library::demo` counts as set up
 with no Client ID. Without `--config` the demo reads and saves no
-settings at all (`Store::for_session`); with one (as `capture.py` and the
-tape do), its saves keep the file's `[spotify]` section, so the demo's
+settings at all (`Store::for_session`); with one (as `capture.py` and
+`trailer.py` do), its saves keep the file's `[spotify]` section, so the demo's
 Spotify page can't change a real Client ID, login store or login.
 Nothing goes to the network, no account or keyring is touched, and no
 real album art or song ends up in a committed image.
@@ -490,7 +535,8 @@ the question over it.
 
 ```sh
 cargo build --release
-python3 -m venv /tmp/v && /tmp/v/bin/pip install pyte pillow
-/tmp/v/bin/python docs/screenshots/capture.py      # all committed PNGs
-vhs docs/screenshots/demo.tape && gifsicle -O3 --colors 80 -b docs/screenshots/demo.gif
+python3 -m venv /tmp/v && /tmp/v/bin/pip install pyte pillow   # + ffmpeg, gifsicle
+/tmp/v/bin/python docs/screenshots/capture.py        # the stills (PNG)
+/tmp/v/bin/python docs/screenshots/capture.py loops  # the 15 README loops (GIF)
+/tmp/v/bin/python docs/screenshots/trailer.py check  # demo.gif + its cut frames
 ```

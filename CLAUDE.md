@@ -121,10 +121,13 @@ window with `--initial-command`, never `-e <path>` (a prompt per window
 and a second copy), and keeps helper output off the screen
 (`docs/perf/frame-trace.md`).
 `docs/screenshots/capture.py` does exactly this (pyte + Pillow) and
-regenerates the README screenshots; rerun it after visible changes, and
-look at every image. Music shots use `--demo`; never commit real album
-art or real song names. `docs/screenshots/demo.tape` (vhs + gifsicle)
-makes the README GIF; keep it under 5 MB (the tape says how).
+regenerates the README pictures: stills (no arguments) and the 15 loops
+(`capture.py loops`); `docs/screenshots/trailer.py check` makes the
+README trailer (`demo.gif`, match cuts between takes on the hidden
+`--frame-clock`) and the frames either side of each cut. Rerun them
+after visible changes, and look at every image and cut. Music shots use
+`--demo`; never commit real album art or real song names. Budgets:
+trailer < 5 MB, loops < 4 MB together (docs/architecture.md).
 `tools/linux/run.sh [--amd64]` builds, lints and tests on real Linux in Docker,
 runs the MPRIS live tests against `tools/linux/fake_mpris.py` (also as Spotify)
 and drives lavatui in a pty with the music widget (`tools/linux/pty_check.py`;

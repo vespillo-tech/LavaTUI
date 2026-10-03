@@ -1,28 +1,33 @@
 """The README trailer: docs/screenshots/demo.gif (lava-0bl).
 
-A day in three scenes, cut together so it plays as one calm recording:
-morning focus (solid, lava, the clock and focus timer beside the lamp,
-the timer starting), evening music (synthwave, the music card and karaoke
-lyrics beside the lamp, the cover on it coming into focus), late night
-(abyss, the clock at 23:30 beside the lamp, slow wax).
+A tour, cut together so it plays as one calm recording: the welcome
+card; all nine styles and two colour themes as a slideshow of the same
+lamp, and the style picker; music (the cover coming into focus, karaoke
+beside the lamp, the music controls, playlists, a song played, liked
+and added: "already in ... add it again?"; help; settings turning on
+wax at the top); layouts (the clock, timer and music card float out of
+the side panel into corner groups, and the lamp widens); a synthwave
+ending, the lamp alone. The loop dissolves back into the first frame.
 
 Every scene state is its own take: the same seed and window, the hidden
 `--frame-clock` (time moves exactly one frame a frame, so frame k is the
 same wax in every take, and the clock reads each take's start time), the
-`--demo` player, no status bar, the side panel the same width in every
-take (so the lamp's size never changes at a cut). The film is frames of one take, then the next, cut at exact
-frame numbers: at a cut, the style, colours and widgets change in one
-frame while the wax carries on unbroken. The cover's focus pull is four
-takes too (big, medium, small pixels, sharp). Keys a take needs before
-its first frame in the film (picking the song) have faded by then.
+`--demo` player, no status bar. The film is frames of one take, then the
+next, cut at exact frame numbers (CUT): at a cut, the style, colours and
+widgets change in one frame while the wax carries on unbroken. Keys are
+timed by frame (capture.py's `f<n>:`), and keys that change the wax (wax
+at the top, the panel emptying) are replayed at the same frames in every
+later take, so the worlds stay identical at each cut. Keys a take needs
+before its first frame in the film have faded by then.
 
     cargo build --release
     /tmp/v/bin/python docs/screenshots/trailer.py            # the GIF
-    /tmp/v/bin/python docs/screenshots/trailer.py check      # + cut frames, proofs
+    /tmp/v/bin/python docs/screenshots/trailer.py check      # + cut frames ($LAVATUI_TRAILER_CHECK,
+                                                             #   default <tmp>/lavatui-trailer-check)
     /tmp/v/bin/python docs/screenshots/trailer.py survey 7 2 3  # seeds, side by side
 
-Frames are drawn by capture.py's renderer (pyte), each scene's frames get
-their own palette (ffmpeg, no dither) and gifsicle joins them. Output:
+Frames are drawn by capture.py's renderer (pyte), each part (PALETTES)
+gets its own palette (ffmpeg, no dither) and gifsicle joins them. Output:
 $LAVATUI_TRAILER_OUT (default docs/screenshots/demo.gif).
 """
 import os, subprocess, sys, tempfile
@@ -216,7 +221,7 @@ def main(args):
     end = max(e for _, _, e in CUT) + DISSOLVE
     print(out, os.path.getsize(out), f"{end / FPS:.1f} s")
     if args[:1] == ["check"]:
-        check(takes, os.path.splitext(out)[0] + "-check")
+        check(takes, os.environ.get("LAVATUI_TRAILER_CHECK", os.path.join(tempfile.gettempdir(), "lavatui-trailer-check")))
 
 
 if __name__ == "__main__":
