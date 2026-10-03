@@ -5,11 +5,17 @@
 //!
 //! The lamp is always 1.0 tall: `y` runs from 0 (base, the heater) to 1
 //! (top). Width is the lamp's *visual* aspect (on-screen width ÷ height),
-//! centred on `x = 0`, so a blob that is round in world units is round on
-//! screen whatever the window size. The container is a straight-walled
-//! tank that fills the lamp's area: a terminal resize only changes the
-//! view width; the walls then ease to it over ~250 ms and push blobs
-//! along, so nothing teleports (docs/design.md §2.2).
+//! so a blob that is round in world units is round on screen whatever the
+//! window size; a new world is centred on `x = 0`. The container is a
+//! straight-walled tank that fills the lamp's area.
+//!
+//! When the lamp changes size or place on screen ([`World::set_frame`]),
+//! the [`View`] (the part of the world it shows) first moves with it, so
+//! every cell shows the wax it showed before; then it glides (~0.45 s) to
+//! the whole lamp height and the new width. The edge that stayed put keeps
+//! its place in the world, so the tank grows or shrinks on the side that
+//! moved, and the walls glide there (~1.2 s), pushing blobs along: nothing
+//! on screen jumps (docs/design.md §2.2).
 //!
 //! # Model
 //!
@@ -301,8 +307,22 @@ const WANDER_FREQ: (f64, f64) = (0.08, 0.25);
 const FLOW: f64 = 0.008;
 const FLOW_CELL: f64 = 0.8;
 
-/// Wall easing time constant on resize (≈ 95 % in 250 ms).
-const WALL_EASE: f64 = 0.08;
+/// How fast (1/s) the view and the walls glide to a new lamp size:
+/// critically damped, so a glide starts from rest and settles without
+/// overshooting. The walls take 800 ms (95 %), so they meet the blobs
+/// they push gently; the view glides in two such stages, one chasing the
+/// other, so it even starts without a jerk (450 ms: a zoom moves the
+/// whole lamp).
+const VIEW_GLIDE: f64 = 17.0;
+const WALL_GLIDE: f64 = 4.0;
+/// Seconds the pool's mounds take to change to a resized lamp's.
+const HUMP_FADE: f64 = 0.8;
+/// While the walls glide, and `SOFT_SQUEEZE` seconds after, a blob they
+/// reach is squeezed at this rate (1/s) rather than at once, so it never
+/// jumps; it is drawn past the wall meanwhile, which is off the lamp
+/// (walls only close in from outside it).
+const SQUEEZE_RATE: f64 = 4.0;
+const SOFT_SQUEEZE: f64 = 2.5;
 /// Pool area eases toward the volume target at this rate (1/s).
 const POOL_EASE: f64 = 0.5;
 /// Accepted lamp aspect range.
@@ -313,22 +333,176 @@ fn world_width(aspect: f64) -> f64 {
     aspect.clamp(ASPECT_RANGE.0, ASPECT_RANGE.1)
 }
 
+/// Where the lamp is on screen, in row heights: columns ÷ the cell aspect
+/// across (`x`, `width`), rows down (`y`, `height`). Only differences
+/// between frames matter, so any origin will do.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Frame {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl Frame {
+    fn near(self, other: Frame) -> bool {
+        let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+        close(self.x, other.x)
+            && close(self.y, other.y)
+            && close(self.width, other.width)
+            && close(self.height, other.height)
+    }
+}
+
+/// The part of the world the lamp shows: its left edge and bottom, its
+/// width and height (world units). Settled, it is the whole lamp height
+/// (`y` 0, `height` 1) and the lamp's aspect wide.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+struct View {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
+impl View {
+    /// The settled view `width` wide, centred on `x = 0`.
+    fn centred(width: f64) -> Self {
+        View {
+            x: -0.5 * width,
+            y: 0.0,
+            width,
+            height: 1.0,
+        }
+    }
+
+    fn top(self) -> f64 {
+        self.y + self.height
+    }
+
+    fn centre(self) -> f64 {
+        self.x + 0.5 * self.width
+    }
+
+    fn lerp(self, to: View, t: f64) -> View {
+        let mix = |a: f64, b: f64| a + (b - a) * t;
+        View {
+            x: mix(self.x, to.x),
+            y: mix(self.y, to.y),
+            width: mix(self.width, to.width),
+            height: mix(self.height, to.height),
+        }
+    }
+
+    /// The view a lamp moved from `from` to `to` on screen shows if every
+    /// cell keeps showing the world point it showed. Linear in the view,
+    /// so it commutes with [`View::lerp`].
+    fn pinned(self, from: Frame, to: Frame) -> View {
+        let (kx, ky) = (self.width / from.width, self.height / from.height);
+        let top = self.top() - (to.y - from.y) * ky;
+        let height = ky * to.height;
+        View {
+            x: self.x + (to.x - from.x) * kx,
+            y: top - height,
+            width: kx * to.width,
+            height,
+        }
+    }
+
+    /// One step `dt` of a [`glide`] toward `aim` at `rate`, `speed` per
+    /// component.
+    fn glide(&mut self, speed: &mut View, aim: View, rate: f64, dt: f64) {
+        glide(&mut self.x, &mut speed.x, aim.x, rate, dt);
+        glide(&mut self.y, &mut speed.y, aim.y, rate, dt);
+        glide(&mut self.width, &mut speed.width, aim.width, rate, dt);
+        glide(&mut self.height, &mut speed.height, aim.height, rate, dt);
+    }
+}
+
+/// One step `dt` of `value` (moving at `speed`) gliding to `to`: a
+/// critically damped spring at `rate`, solved exactly. Lands on `to` once
+/// within 1e-6 (far below a pixel) and all but still.
+fn glide(value: &mut f64, speed: &mut f64, to: f64, rate: f64, dt: f64) {
+    let off = *value - to;
+    if off.abs() < 1e-6 && speed.abs() < 1e-6 {
+        (*value, *speed) = (to, 0.0);
+        return;
+    }
+    let fade = (-rate * dt).exp();
+    let c = *speed + rate * off;
+    *value = to + (off + c * dt) * fade;
+    *speed = (*speed - rate * c * dt) * fade;
+}
+
+/// The pool's floor: the walls' middle and width, and the mounds it heaps
+/// into, `from`'s giving way to `to`'s (`blend` of the way, 0 … 1) after
+/// a resize.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(super) struct Floor {
+    pub centre: f64,
+    pub width: f64,
+    pub from: Mounds,
+    pub to: Mounds,
+    pub blend: f64,
+}
+
+impl Floor {
+    /// `t` of the way to `to`, whose mounds both are counted in.
+    fn lerp(self, to: Floor, t: f64) -> Floor {
+        let mix = |a: f64, b: f64| a + (b - a) * t;
+        Floor {
+            centre: mix(self.centre, to.centre),
+            width: mix(self.width, to.width),
+            blend: mix(self.blend, to.blend),
+            ..to
+        }
+    }
+}
+
+/// Mounds laid out over a floor `width` wide around `centre` (where the
+/// walls are once they settle): one per [`POOL_HUMP`] of it, lowest at
+/// the walls. They stay put while the walls glide.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(super) struct Mounds {
+    pub centre: f64,
+    pub width: f64,
+    pub humps: f64,
+}
+
+impl Mounds {
+    /// The mounds of a lamp settled at `view`.
+    fn of(view: View) -> Self {
+        Mounds {
+            centre: view.centre(),
+            width: view.width,
+            humps: (view.width / POOL_HUMP).round().max(1.0),
+        }
+    }
+}
+
 /// Liquid temperature at height `y`.
 #[inline]
 pub fn ambient_temp(y: f64) -> f64 {
     AMBIENT_BOTTOM + (AMBIENT_TOP - AMBIENT_BOTTOM) * y.clamp(0.0, 1.0)
 }
 
-/// Pool surface height at `x` over a floor `floor` wide: the mean `level`,
-/// heaped into soft mounds (one per [`POOL_HUMP`] of floor, lowest at the
-/// walls) that slowly breathe and drift, plus a slow ripple. The mounds
-/// average out to about `level`; they are shape only and move no wax.
-fn pool_surface(level: f64, x: f64, floor: f64, time: f64) -> f64 {
-    let humps = (floor / POOL_HUMP).round().max(1.0);
-    let s = (x / floor + 0.5) * humps;
+/// Pool surface height at `x` over `floor`: the mean `level`, heaped into
+/// soft mounds (one per [`POOL_HUMP`] of floor, lowest at the walls) that
+/// slowly breathe and drift, plus a slow ripple. The mounds average out
+/// to about `level`; they are shape only and move no wax.
+fn pool_surface(level: f64, x: f64, floor: Floor, time: f64) -> f64 {
+    let heap = |m: Mounds| {
+        let s = ((x - m.centre) / m.width + 0.5) * m.humps;
+        (2.0 * PI * s).cos() - MOUND_SKEW * (2.0 * PI * 1.7 * s + time * 0.04).sin()
+    };
     let breathe = 1.0 + MOUND_BREATHE * (time * 0.09).sin();
     let mound = POOL_MOUND * breathe * level.min(MOUND_DEPTH);
-    let heap = (2.0 * PI * s).cos() - MOUND_SKEW * (2.0 * PI * 1.7 * s + time * 0.04).sin();
+    let heap = if floor.blend >= 1.0 {
+        heap(floor.to)
+    } else {
+        let from = heap(floor.from);
+        from + (heap(floor.to) - from) * field::smooth(floor.blend)
+    };
     let ripple = (x * 9.0 + time * 0.21).sin() + RIPPLE_OVERTONE * (x * 23.0 - time * 0.37).sin();
     level - mound * heap + POOL_WAVE * ripple
 }
@@ -426,10 +600,31 @@ pub struct World {
     time: f64,
     /// Duration of the last step (for interpolating time).
     last_dt: f64,
-    /// Width of the viewport (what the renderer maps onto the screen).
-    view_width: f64,
-    /// Width of the walls; eases toward `view_width`.
+    /// What the lamp shows (see [`View`]), the view it glides to, the
+    /// first stage of that glide (`chase`), their speeds, and the view at
+    /// the start of the last step (for interpolation).
+    view: View,
+    aim: View,
+    chase: View,
+    speeds: (View, View),
+    prev_view: View,
+    /// Where the lamp was on screen last ([`World::set_frame`]).
+    frame: Option<Frame>,
+    /// Width and centre of the walls, and their speeds; they glide to the
+    /// aim's.
     wall_width: f64,
+    wall_centre: f64,
+    wall_speed: (f64, f64),
+    /// Whether a resize is still settling (the view, walls or mounds on
+    /// their way), and seconds since the walls last moved.
+    resizing: bool,
+    walls_still: f64,
+    /// The pool's mounds and their change (see [`Floor`]), and the floor
+    /// at the start of the last step, for interpolation (its blend counted
+    /// between the mounds of now).
+    mounds: (Mounds, Mounds),
+    mound_blend: f64,
+    prev_floor: Floor,
     pool_area: f64,
     /// Pool level at the start of the last step, for interpolation.
     prev_pool_level: f64,
@@ -472,8 +667,23 @@ impl World {
         let mut world = Self {
             time: 0.0,
             last_dt: 0.0,
-            view_width: width,
+            view: View::centred(width),
+            aim: View::centred(width),
+            chase: View::centred(width),
+            speeds: (View::default(), View::default()),
+            prev_view: View::centred(width),
+            frame: None,
             wall_width: width,
+            wall_centre: 0.0,
+            wall_speed: (0.0, 0.0),
+            resizing: false,
+            walls_still: SOFT_SQUEEZE,
+            mounds: (
+                Mounds::of(View::centred(width)),
+                Mounds::of(View::centred(width)),
+            ),
+            mound_blend: 1.0,
+            prev_floor: Floor::default(),
             pool_area: 0.0,
             prev_pool_level: 0.0,
             wax_target: FILL * width,
@@ -497,6 +707,7 @@ impl World {
             lumps: Vec::new(),
         };
         world.scatter_initial_blobs();
+        world.prev_floor = world.floor();
         world.prev_pool_level = world.pool_level();
         for blob in &mut world.blobs {
             blob.prev = blob.pose();
@@ -555,20 +766,82 @@ impl World {
         field.sample(u as f32, v as f32)
     }
 
-    /// The lamp's on-screen aspect changed. The view follows at once; walls
-    /// ease over ~250 ms, pushing blobs, and the pool slowly adjusts so wax
-    /// stays at [`FILL`] of the container.
-    pub fn set_aspect(&mut self, aspect: f64) {
-        let width = world_width(aspect);
-        if (width - self.view_width).abs() > 1e-9 {
-            self.view_width = width;
+    /// The lamp is at `frame` on screen. If it moved or changed size,
+    /// the view moves with it so every cell shows what it showed, then
+    /// glides to the whole lamp: the lamp's height, and its aspect wide,
+    /// keeping in place the side edge that didn't move (both or neither:
+    /// the middle). The walls glide after it, pushing blobs, and the pool
+    /// slowly adjusts so wax stays at [`FILL`] of the container. The first
+    /// frame only says where the view is (centred on it).
+    pub fn set_frame(&mut self, frame: Frame) {
+        let sane = [frame.x, frame.y, frame.width, frame.height]
+            .iter()
+            .all(|v| v.is_finite());
+        if !sane || frame.width <= 0.0 || frame.height <= 0.0 {
+            return;
+        }
+        let from = self.frame.unwrap_or_else(|| {
+            let width = self.view.width / self.view.height * frame.height;
+            Frame {
+                x: frame.x + 0.5 * (frame.width - width),
+                width,
+                ..frame
+            }
+        });
+        self.frame = Some(frame);
+        if from.near(frame) {
+            return;
+        }
+        self.resizing = true;
+        self.view = self.view.pinned(from, frame);
+        self.chase = self.chase.pinned(from, frame);
+        self.speeds.0 = self.speeds.0.pinned(from, frame);
+        self.speeds.1 = self.speeds.1.pinned(from, frame);
+        self.prev_view = self.prev_view.pinned(from, frame);
+        let stays = |a: f64, b: f64| (a - b).abs() < 1e-9;
+        let pivot = match (
+            stays(from.x, frame.x),
+            stays(from.x + from.width, frame.x + frame.width),
+        ) {
+            (true, false) => 0.0,
+            (false, true) => 1.0,
+            _ => 0.5,
+        };
+        let width = world_width(frame.width / frame.height);
+        if (width - self.aim.width).abs() > 1e-9 {
             self.wax_target = FILL * width;
         }
+        let at = self.view.x + pivot * self.view.width;
+        self.aim = View {
+            x: at - pivot * width,
+            y: 0.0,
+            width,
+            height: 1.0,
+        };
+    }
+
+    /// A lamp `aspect` wide in place of this one: the same height, its
+    /// left edge where it was.
+    #[cfg(test)]
+    pub fn set_aspect(&mut self, aspect: f64) {
+        let from = self.frame.unwrap_or(Frame {
+            x: 0.0,
+            y: 0.0,
+            width: self.view.width / self.view.height,
+            height: 1.0,
+        });
+        self.frame = Some(from);
+        self.set_frame(Frame {
+            width: aspect * from.height,
+            ..from
+        });
     }
 
     /// Advance by exactly `dt` seconds (always the fixed step).
     pub fn step(&mut self, dt: f64) {
         self.last_dt = dt;
+        self.prev_view = self.view;
+        self.prev_floor = self.floor();
         self.prev_pool_level = self.pool_level();
         self.prev_cap_on = self.cap_on;
         self.prev_cap_depth = self.cap_mean_depth();
@@ -606,6 +879,17 @@ impl World {
 
     fn bottom_width(&self) -> f64 {
         self.wall_width
+    }
+
+    /// The pool's floor, as [`pool_surface`] takes it.
+    fn floor(&self) -> Floor {
+        Floor {
+            centre: self.wall_centre,
+            width: self.wall_width,
+            from: self.mounds.0,
+            to: self.mounds.1,
+            blend: self.mound_blend,
+        }
     }
 
     fn max_radius(&self) -> f64 {
@@ -677,7 +961,7 @@ impl World {
         let width = self.wall_width;
         let cells = (width / FLOW_CELL).round().max(1.0);
         let kx = PI * cells / width;
-        let s = (x / width + 0.5) * PI * cells;
+        let s = ((x - self.wall_centre) / width + 0.5) * PI * cells;
         let amp = FLOW * (0.75 + 0.25 * (self.time * 0.05).sin()) / PI;
         // Stream function ψ = amp · sin(πy) · sin(s); u = ∂ψ/∂y, v = −∂ψ/∂x.
         let y = y.clamp(0.0, 1.0);
@@ -742,13 +1026,53 @@ impl World {
         }
     }
 
+    /// The view and the walls glide to the aim (after a resize), and the
+    /// pool's mounds fade to the aim's.
     fn ease_walls(&mut self, dt: f64) {
-        let gap = self.view_width - self.wall_width;
-        self.wall_width = if gap.abs() < 1e-6 {
-            self.view_width
-        } else {
-            self.wall_width + gap * (1.0 - (-dt / WALL_EASE).exp())
-        };
+        if !self.resizing {
+            self.walls_still += dt;
+            return;
+        }
+        self.chase
+            .glide(&mut self.speeds.0, self.aim, VIEW_GLIDE, dt);
+        self.view
+            .glide(&mut self.speeds.1, self.chase, VIEW_GLIDE, dt);
+        let was = (self.wall_centre, self.wall_width);
+        let (centre, width) = &mut self.wall_speed;
+        glide(&mut self.wall_width, width, self.aim.width, WALL_GLIDE, dt);
+        glide(
+            &mut self.wall_centre,
+            centre,
+            self.aim.centre(),
+            WALL_GLIDE,
+            dt,
+        );
+        let moved = was != (self.wall_centre, self.wall_width);
+        self.walls_still = if moved { 0.0 } else { self.walls_still + dt };
+
+        // One change at a time: new mounds wait for the last change to
+        // finish, unless they are the ones it started from.
+        let (from, to) = self.mounds;
+        let want = Mounds::of(self.aim);
+        if want == from && self.mound_blend < 1.0 {
+            self.mounds = (to, from);
+            self.mound_blend = 1.0 - self.mound_blend;
+            self.prev_floor.blend = 1.0 - self.prev_floor.blend;
+        } else if want != to && self.mound_blend >= 1.0 {
+            self.mounds = (to, want);
+            (self.mound_blend, self.prev_floor.blend) = (0.0, 0.0);
+        }
+        (self.prev_floor.from, self.prev_floor.to) = self.mounds;
+        if self.mound_blend < 1.0 {
+            self.mound_blend = (self.mound_blend + dt / HUMP_FADE).min(1.0);
+        }
+        self.resizing = self.view != self.aim
+            || self.chase != self.aim
+            || self.speeds != (View::default(), View::default())
+            || self.wall_speed != (0.0, 0.0)
+            || (self.wall_centre, self.wall_width) != (self.aim.centre(), self.aim.width)
+            || self.mounds.1 != want
+            || self.mound_blend < 1.0;
     }
 
     fn move_free(&mut self, dt: f64) {
@@ -790,7 +1114,7 @@ impl World {
 
         let damp = 1.0 / (1.0 + DRAG * dt);
         let level = self.pool_level();
-        let floor = self.bottom_width();
+        let floor = self.floor();
         let buoyancy = BUOYANCY * self.heat_buoyancy();
         let cap = self.cap_depth();
         // Rising blobs may join the top layer once it is fully in, as far
@@ -798,6 +1122,7 @@ impl World {
         let room = CAP_FULL * self.wall_width - self.cap_total();
         let joinable = self.top_wax && self.cap_on >= 1.0 && self.reseed.is_none() && room > 0.0;
         let typical = self.typical_radius();
+        let squeeze = (self.walls_still < SOFT_SQUEEZE).then(|| 1.0 - (-SQUEEZE_RATE * dt).exp());
         for i in 0..self.blobs.len() {
             let blob = &self.blobs[i];
             if blob.phase != Phase::Free {
@@ -817,7 +1142,10 @@ impl World {
             } else {
                 1.0
             };
-            ax += WALL * ((-half + hx - blob.x).max(0.0) - (blob.x + hx - half).max(0.0));
+            // Across from the walls' middle.
+            let centre = self.wall_centre;
+            let across = blob.x - centre;
+            ax += WALL * ((-half + hx - across).max(0.0) - (across + hx - half).max(0.0));
             ay -= WALL * (blob.y + hy - ceiling).max(0.0);
 
             // Implicit drag toward the liquid's own velocity.
@@ -834,8 +1162,12 @@ impl World {
             // before they push it: one left stretched into a wall is shoved
             // off it hard, and stretches further with that speed.
             let tallest = (ceiling - blob.y) / blob.radius;
-            let widest = (half - blob.x.abs()) / blob.radius;
-            let stretch = blob.stretch.max(1.0 / widest.max(1e-3));
+            let widest = (half - (blob.x - centre).abs()) / blob.radius;
+            let squeezed = blob.stretch.max(1.0 / widest.max(1e-3));
+            let stretch = match squeeze {
+                Some(k) => blob.stretch + (squeezed - blob.stretch) * k,
+                None => squeezed,
+            };
             let flattest = tallest.max(WALL_FLATTEN);
             if blob.end == End::Top && stretch > flattest {
                 // Let go of the top layer still pressed into it (it was
@@ -881,10 +1213,11 @@ impl World {
     /// upside down.
     fn move_attached(&mut self, dt: f64) {
         let level = self.pool_level();
-        let floor = self.bottom_width();
+        let floor = self.floor();
         let min_pool = self.min_pool_area();
         let keep = self.cap_keep_area();
         let half = self.half_width();
+        let squeeze = (self.walls_still < SOFT_SQUEEZE).then(|| 1.0 - (-SQUEEZE_RATE * dt).exp());
         let (melt_rate, bud_time) = match self.reseed {
             Some(Reseed::Melting) => (controls::RESEED_MELT_RATE, BUD_TIME),
             Some(Reseed::Refill { .. }) => (MELT_RATE, BUD_TIME / controls::REFILL_BUD_SPEEDUP),
@@ -906,11 +1239,13 @@ impl World {
             // (by its half-width, as for a free one: a tall blob settling to
             // melt beside a wall stays put).
             let inside = (half - blob.half_extents().0).max(0.0);
-            let excess = blob.x.abs() - inside;
-            let x = if excess > 0.0 {
-                blob.x - blob.x.signum() * excess.min(MAX_SPEED * dt)
-            } else {
-                blob.x
+            let across = blob.x - self.wall_centre;
+            let excess = across.abs() - inside;
+            // (While walls glide, gently: eased in, not at once at full speed.)
+            let x = match squeeze {
+                _ if excess <= 0.0 => blob.x,
+                Some(k) => blob.x - across.signum() * (excess * k).min(MAX_SPEED * dt),
+                None => blob.x - across.signum() * excess.min(MAX_SPEED * dt),
             };
             let surface = match end {
                 End::Bottom => pool_surface(level, x, floor, self.time),
@@ -1263,20 +1598,28 @@ impl World {
             return;
         }
         let half = (self.half_width() - target).max(0.0);
+        let centre = self.wall_centre;
+        let (lo, hi) = (centre - half, centre + half);
         let x = match x {
-            Some(x) => x.clamp(-half, half),
+            Some(x) => x.clamp(lo, hi),
             // Mostly off the tops of the mounds, where the pool is deepest.
             None => {
-                let x = self.rng.range(-half, half);
-                let floor = self.bottom_width();
-                let humps = (floor / POOL_HUMP).round().max(1.0);
-                let top = ((x / floor + 0.5) * humps).floor().min(humps - 1.0) + 0.5;
-                let top = (top / humps - 0.5) * floor;
-                (x + BUD_CENTRING * (top - x)).clamp(-half, half)
+                let x = centre + self.rng.range(-half, half);
+                let Mounds {
+                    centre,
+                    width: floor,
+                    humps,
+                } = self.mounds.1;
+                let top = (((x - centre) / floor + 0.5) * humps)
+                    .floor()
+                    .min(humps - 1.0)
+                    + 0.5;
+                let top = centre + (top / humps - 0.5) * floor;
+                (x + BUD_CENTRING * (top - x)).clamp(lo, hi)
             }
         };
         // Just under the surface, where the bud's first step puts it.
-        let surface = pool_surface(self.pool_level(), x, self.bottom_width(), self.time);
+        let surface = pool_surface(self.pool_level(), x, self.floor(), self.time);
         let y = surface - 0.7 * MELTED_RADIUS;
         let mut blob = self.new_blob(x, y, MELTED_RADIUS, POOL_TEMP, Phase::Budding { target });
         // Already the flat bulge its first step makes it, fading in.
@@ -1306,7 +1649,8 @@ impl World {
         let max_drips = self.wall_width.round().max(1.0) as usize;
         let target = (self.typical_radius() * self.rng.range(DRIP_SIZE.0, DRIP_SIZE.1))
             .max(MIN_BUD.min(0.5 * MAX_BUD * self.max_radius()));
-        let x = self.rng.range(-1.0, 1.0) * (self.half_width() - target).max(0.0);
+        let x =
+            self.wall_centre + self.rng.range(-1.0, 1.0) * (self.half_width() - target).max(0.0);
         if self.blobs.len() < MAX_BLOBS
             && drips < max_drips
             && self.cap_area - keep >= 0.5 * PI * target * target
@@ -1332,7 +1676,10 @@ impl World {
                 continue;
             }
             let room = (self.half_width() - target).max(0.0);
-            let x = lump.shape.x.clamp(-room, room);
+            let x = lump
+                .shape
+                .x
+                .clamp(self.wall_centre - room, self.wall_centre + room);
             let start = self.start_drop(x, target, lump.shape.temp);
             let lump = &mut self.lumps[i];
             lump.shape.area -= start;
@@ -1463,7 +1810,7 @@ impl World {
             .all(|v| v.is_finite());
             if !sane {
                 *blob = Blob {
-                    x: 0.0,
+                    x: self.wall_centre,
                     y: 0.5,
                     vx: 0.0,
                     vy: 0.0,
@@ -1478,7 +1825,9 @@ impl World {
             // pushed back in at a capped speed rather than snapped. This
             // clamp is only a runaway guard.
             let bound = 0.5 * ASPECT_RANGE.1;
-            blob.x = blob.x.clamp(-bound, bound);
+            blob.x = blob
+                .x
+                .clamp(self.wall_centre - bound, self.wall_centre + bound);
             blob.y = blob.y.clamp(0.0, 1.0);
             let speed = blob.vx.hypot(blob.vy);
             if speed > MAX_SPEED {
@@ -1545,7 +1894,7 @@ impl World {
             for _ in 0..8 {
                 y = self.rng.range(0.25, 0.85);
                 let half = (self.half_width() - radius).max(0.0);
-                x = self.rng.range(-half, half);
+                x = self.wall_centre + self.rng.range(-half, half);
                 let clear = self
                     .blobs
                     .iter()

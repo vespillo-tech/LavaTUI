@@ -47,8 +47,8 @@ impl End {
     }
 }
 
-/// A wax blob. World units: `y` is 0 at the base and 1 at the top, `x` is 0
-/// at the lamp's centre line. Read-only outside the sim.
+/// A wax blob. World units: `y` is 0 at the base and 1 at the top, `x`
+/// across (a new world's centre line is 0). Read-only outside the sim.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Blob {
     /// Stable identity (survives merges as the larger parent's id).

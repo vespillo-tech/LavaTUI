@@ -326,8 +326,15 @@ the layout/visual contract.
                 backoff so it never flaps).
 - `sim/`      — wax simulation (pure, seeded, deterministic). `World::new(seed,
                 aspect)` + `step(dt)` at the fixed `dt` (`SIM_HZ = 120`).
-                World units: height 1, width = visual aspect, x centred on 0;
-                a straight-walled tank whose walls ease to a new width.
+                World units: height 1, width = visual aspect (a new world centred on x = 0);
+                a straight-walled tank. `set_frame(Frame)` (where the lamp
+                is on screen, in row heights) moves the `View` with the
+                lamp so no cell's wax changes, then glides it (two
+                critically damped stages) to the whole lamp, keeping the
+                side edge that stayed put; the walls glide after it
+                (`WALL_GLIDE`), blobs they reach are squeezed gently,
+                pool mounds cross-fade (`Floor`/`Mounds`), and the pool
+                ends in a slope past a wall (`field::WALL_END`).
                 Pool on the heater buds blobs; heat/buoyancy/drag/cohesion,
                 merge + split, melt back into the pool; wax area conserved.
                 Optional top layer (`lamp.top_wax`, `set_top_wax`): the
@@ -345,7 +352,9 @@ the layout/visual contract.
                 fades in; skirts fade by `attach`; buds fade in; the
                 teardrop `taper` eases; all of it is in the interpolated
                 `Pose`. `render/pops.rs` measures it (`wax_does_not_pop`
-                in the gate, `pop_harness` the long report).
+                in the gate, `pop_harness` the long report; `POP_RESIZE`
+                for panel / lamp-only / below / window resizes, compared
+                through the newest view, `POP_SPACE=screen` on screen).
                 `field.rs`: `Field::prepare(&world, alpha)` once per frame,
                 then `fill(&mut [Sample], cols, rows)` / `sample(u, v)`
                 (v down; density `>= SURFACE` is wax). Kernels are built per

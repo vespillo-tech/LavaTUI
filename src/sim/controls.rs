@@ -152,7 +152,8 @@ impl World {
     /// down, exactly as in [`super::Field::sample`]. Nearby blobs heat up
     /// over the next second and rise; a pulse on the pool raises a bud.
     pub fn heat_pulse(&mut self, u: f64, v: f64) {
-        let (x, y) = ((u - 0.5) * self.view_width, 1.0 - v);
+        let view = self.view;
+        let (x, y) = (view.x + u * view.width, view.top() - v * view.height);
         if !(x.is_finite() && y.is_finite()) {
             return;
         }

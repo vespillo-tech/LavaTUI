@@ -6,6 +6,10 @@ What changed in each version of LavaTUI, in plain words.
 
 **Lamp**
 
+- Showing or hiding the side panel (or pressing `m` for just the lamp)
+  no longer makes the wax jump sideways. The wax stays where it is, and
+  the lamp grows or shrinks on the panel's side, the wax slowly settling
+  into the new space. Resizing the window works the same way.
 - Wax at the top: like a real lava lamp, a thin layer of wax can rest
   under the top. A blob that rises to it and has cooled a little can
   stick: it flattens against the layer and slowly seeps in, warming the
