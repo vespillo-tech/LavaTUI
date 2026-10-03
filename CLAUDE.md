@@ -555,9 +555,14 @@ the layout/visual contract.
                 overlay. `mod.rs` draws back to front; `dock.rs` (panel, widgets on the
                 lava, floating by default — `dock.backing = "none"`:
                 glyphs only, each cell keeping the lamp's colours, ink
-                per glyph by contrast with what's displayed behind it,
-                per-glyph hysteresis; `contrast_trace` (ignored test) is
-                the seeded repro — or on the soft
+                per word by contrast with what's displayed behind it
+                (own colours or the other of light / dark, karaoke parts
+                kept by weight, underline and shade; a letter that won't
+                read gets its cell knocked back), settling over a few
+                frames; big digits per glyph; scratch kept in a
+                thread-local, no per-frame allocation; `contrast_trace`
+                (ignored test) is the seeded repro, `bench_float` the
+                cost — or on the soft
                 backing, `"soft"`: veiled 82 % to liquid, truecolor
                 only — and the chip), `chrome.rs` (status
                 bar + hint fitting, HUD, toasts), `help/` (`sheet.rs`: the

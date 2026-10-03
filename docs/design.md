@@ -984,50 +984,98 @@ glyph styles included, except a one-cell gap between two words of a
 text line, whose lamp glyph is cleared (its colours stay) so `thu 1 oct`
 never reads `thu#1#oct` over ascii, matrix, braille or halftone. Text is
 bold; `dim` lines aren't. Nothing is drawn around the text: no veil, box
-or halo.
+or halo (only behind a letter that wouldn't read, its own cell is knocked
+back; *Adaptive contrast* below).
 
-*Adaptive contrast* (v1.5, lava-1xk.31). Legibility comes from the ink
-alone, chosen per **glyph** against the colour actually displayed right
-behind it: the cell's background for text (it replaces the lamp's
-glyph), the lamp's pixels around a big-digit stroke. With see-through
-cell backgrounds (Ghostty's `background-opacity` with
+*Adaptive contrast* (v1.5, lava-1xk.31; per word since lava-4ba).
+Legibility comes from the ink, chosen against the colour actually
+displayed right behind each glyph: the cell's background for text (it
+replaces the lamp's glyph), the lamp's pixels around a big-digit stroke.
+With see-through cell backgrounds (Ghostty's `background-opacity` with
 `background-opacity-cells`, read from its config; 0.75 assumed for
 `display.cells = "translucent"`) a background is measured as it shows,
 at that opacity over a dark desktop (captures: lava's liquid `#23160C`
 shows as `#19130D`), while glyphs stay opaque; so mid wax behind text
-counts darker there than on an opaque terminal. A glyph keeps its own
-role ink (`text`, `accent`, `dim`) while that reads at least 4.5 : 1
-(WCAG AA; 3 : 1 for big digits), or, for a quiet ink that reads less on
-the palette's plain liquid (lava's `dim`, 3.6 : 1), 0.9 of that, never
-below 3 : 1 (paper's 2.85 : 1 `dim` reads dark instead). Otherwise it
-takes the better of the palette's light and dark inks (`text` and `bg`,
-the lighter first; white and black where they are the terminal's
-defaults): dark over bright wax, light over the liquid; the two cross at
-≈ 3.8 : 1 on lava. Secondary lines stay unbolded either way, so they
-still read as secondary. Nothing else decides a glyph's ink, so it
-changes only when what's behind *it* changes, never a whole word or
-line at once. Words stay coherent only where it costs nothing: a glyph
-that reads about as well in light as in dark (within 1.15×, both
-≥ 3.3 : 1) follows the glyph before it, and a big clock digit takes the
-ink most of its cells chose wherever that still reads ≥ 3 : 1 (one that
-straddles pale wax and dark liquid splits). Calm, per glyph (by cell and
-character): the ink it had last frame counts 1.15× better against the
-other of light / dark, its own ink comes back only at 1.08× its bar, and
-a change shows once it's wanted two frames running (a backdrop line
-sweeping under a glyph doesn't make it blink), at once if the ink it
-has reads below 3 : 1. Each stack on the lava keeps its own memory. So
-every glyph reads ≥ 3 : 1 in every frame, and text ≥ 4.5 : 1 unless
-it's quiet or sits where light and dark cross. In 256 colours the same
-rule runs on the indices' standard RGB; with no colour, or colours that
-are the terminal's defaults (16 colours, the `ansi` palette), contrast
-can't be measured and glyphs keep their own ink, bold. Album-art pixels
-are drawn as they are. The repro: `cargo test --release -- --ignored
---nocapture contrast_trace` (seeded, 30 fps frames; `STYLE`,
-`PALETTE`, `SEED`, `CELLS`, `CSV`).
+counts darker there than on an opaque terminal. The bars: 4.5 : 1 for
+text (WCAG AA), 3 : 1 for big digits; a quiet ink that reads less on the
+palette's plain liquid (lava's `dim`, 3.6 : 1) 0.9 of that, never below
+3 : 1.
+
+*Text takes its ink per **word*** (a run of letters on a row), so a
+word never splits (`thoug_t` over synthwave's grid) and the lyrics'
+karaoke keeps its parts. A word is in its **own inks** (the widget's
+role colours: `text`, `accent`, `dim`) or in the palette's **other ink**,
+the one of light and dark (`text` and `bg`; white and black where they
+are the terminal's defaults) that its `text` isn't: dark over bright wax
+on a dark palette. In the other ink a word keeps its part by weight and
+shade: bold stays bold, the word being sung is underlined, and quiet
+words take the other ink 30 % of the way to `text` where all their
+letters read at their bar in it (else the ink itself, unbolded). Each
+tone also has a short ladder within its own inks, for a colour that
+doesn't read: `dim` lifted halfway to `text`, then `text`; `accent`
+then `text`, underlined. Paper's `dim` (2.85 : 1 on its liquid) takes
+the lifted shade.
+
+The word takes whichever of the two its letters fall least short of
+their bars in (the shortfalls summed in log steps; the ink it had counts
+1.15× better), then the fewer ladder steps, then the ink it had, then its
+own. The other ink only where every letter reads ≥ 3 : 1 in it as it is,
+and, for a word of one or two letters, a cell beside it too: on wax,
+never on a line of the backdrop under a letter or two. A change of ink
+or ladder step shows once it's been wanted four frames running (≈ 0.1 s
+at 30 fps; synthwave's grid sweeping under a word isn't wax), at once
+only where keeping it would leave a letter below 3 : 1 with nothing to
+knock back.
+
+*Knock-back.* A letter still below 3 : 1 in its word's ink has the cell
+behind it knocked back: in its own inks toward the liquid's side (the
+other ink), in the other ink toward `text`, by the first of 35, 50, 65,
+80 and 100 % that makes it read at its bar. Only that cell changes, and
+only behind a letter: a grid line seems to pass behind the word, a
+blob's edge dims under it. Where colours don't blend (16 colours) its
+own inks' letter sits on the plain liquid instead. Words in their own
+inks that read on the plain liquid don't step up their ladder at all:
+the letters that fall short are knocked back, so a word doesn't
+brighten each time a line passes, and a quiet word never takes `text`.
+But for a light lamp on see-through cells, which show no background
+lighter than the window (brightened cells would show as boxes): there
+the ladder is used. A letter that can't be knocked back far enough
+takes the better of light and dark on its own. Secondary lines stay
+unbolded throughout, so they still read as secondary.
+
+So every glyph reads ≥ 3 : 1 in every frame, a word is one ink, and the
+karaoke's sung / being sung / to come stay apart: by colour in the own
+inks, by weight, underline and shade in the other ink (paper on
+see-through cells, whose liquid shows mid grey: by weight and underline).
+
+*Big digits* keep the per-glyph rule: a stroke keeps its own ink while
+that reads ≥ 3 : 1, else takes the better of light and dark, a glyph
+that reads about as well in both (within 1.15×, both ≥ 3.3 : 1)
+following the one before it; a digit takes the ink most of its cells
+chose wherever that still reads ≥ 3 : 1 (one that straddles pale wax and
+dark liquid splits). Calm, per glyph: the ink it had last frame counts
+1.15× better, its own ink comes back only at 1.08× its bar, and a change
+shows once it's wanted two frames running, at once if the ink it has
+reads below 3 : 1.
+
+Each stack on the lava keeps its own memory (by cell and character;
+text also its tone and ladder step). In 256 colours the same rules run on
+the indices' standard RGB, knock-backs taking the nearest index; with no
+colour, or colours that are the terminal's defaults (the `ansi` palette),
+contrast can't be measured and glyphs keep their own ink, bold.
+Album-art pixels are drawn as they are. The repro: `cargo test
+--release -- --ignored --nocapture contrast_trace` (seeded, 30 fps
+frames; `STYLE`, `PALETTE`, `SEED`, `CELLS`, `CSV`; it also counts split
+words and karaoke parts drawn alike), and `bench_float` its cost.
 
 Picked from pty captures of all nine styles and eight palettes at
-80 × 24 and 160 × 40. Earlier rejected alternatives still hold: a halo
-following the glyphs was busy around short lines, per-row spans ragged.
+80 × 24 and 160 × 40 (v1.5), and for lava-4ba of all nine styles over
+abyss, lava, synthwave, mono and paper, opaque and see-through, in
+truecolor, 256 and 16 colours and none. Rejected: a halo following the
+glyphs was busy around short lines, per-row spans ragged; an ink per
+glyph (v1.5) split words over synthwave's grid (`S_ow`) and, choosing
+light or dark for `accent` and `dim` letters, drew the karaoke's three
+parts alike.
 
 *Fixed ink* (`dock.text`, lava-1xk.41; settings › widgets › *text on
 the lamp*). `auto` (the default) is the adaptive contrast above.
@@ -1468,10 +1516,12 @@ the word being sung bold `accent`, the words still to come `dim` (not
 bold); once the line is sung, all of it bold `text`. The other lines are
 `dim`. With no colour (`NO_COLOR`) the word being sung is underlined
 too, so sung (bold), being sung (bold, underlined) and to come (plain)
-stay apart; in 16 colours `accent` is its own colour. On the lava a
-glyph that has to take the palette's light or dark ink over bright wax
-loses the accent there, but keeps its weight: the bold edge still shows
-how far the line has got. The highlight moves word by word, never back,
+stay apart; in 16 colours `accent` is its own colour. On the lava the
+three parts stay apart over any wax (§4.6 *Adaptive contrast*, lava-4ba):
+each word is one ink, in its own colours with the backdrop knocked back
+behind a letter that wouldn't read, or over bright wax in the other ink,
+the word being sung underlined and the words to come a quieter shade.
+The highlight moves word by word, never back,
 with no fade (a word lasts a few hundred ms). **Transitions**: a new
 line comes in with its words `dim` and lights word by word, while the
 line it replaced dims back from bright over 320 ms (truecolor and 256
@@ -1979,7 +2029,7 @@ cover = "off"
 # where each sits on the lava: center | top | top-right | bottom-right | bottom | bottom-left | top-left
 anchor = { clock = "center", pomodoro = "center", music = "top-left", lyrics = "bottom", cover = "top-right" }
 backing = "none"         # none (text floats on the lamp) | soft (§4.6 The backing)
-text = "auto"            # auto (light or dark per glyph, by the wax behind) | light | dark
+text = "auto"            # auto (light or dark per word, by the wax behind) | light | dark
 
 [art]
 detail = "auto"          # auto | sharp | small-pixels | medium-pixels | big-pixels (§4.6 Cover; older names load)

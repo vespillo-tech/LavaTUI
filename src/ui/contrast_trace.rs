@@ -14,7 +14,12 @@
 //! - `flicker`: a glyph's ink going A → B → A within 4 frames;
 //! - `sympathetic`: ink changes of glyphs whose own background barely
 //!   moved (luminance within 0.01 over the last 8 frames): a word or line
-//!   flipping together because of another glyph.
+//!   flipping together because of another glyph;
+//! - `split`: word-frames drawn partly in the palette's other ink (the one
+//!   of light / dark its `text` isn't) and partly not: `thoug_t`;
+//! - `tones lost` (lava-4ba): lyric letters still to sing (`dim`) drawn in
+//!   a colour a sung letter has that frame, or the word being sung
+//!   (`accent`) drawn like a sung letter, colour and underline alike.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -22,14 +27,14 @@ use std::time::{Duration, Instant};
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Color;
+use ratatui::style::{Color, Modifier};
 
 use super::render_tests::{draw, local, lyrics};
 use crate::app::Model;
 use crate::config::store::Store;
 use crate::config::{CellsChoice, ColorChoice, Session};
 use crate::dock::{Anchor, Backdrop, Look, Place, WIDGETS};
-use crate::theme;
+use crate::theme::{self, Role};
 
 /// The modelled window opacity (the user's Ghostty: 0.75).
 const OPACITY: f32 = 0.75;
@@ -91,9 +96,27 @@ fn shown(c: Color, translucent: bool) -> Option<Color> {
     }
 }
 
-/// The floating glyph cells this frame: (position, is a block glyph).
-fn glyphs(m: &Model, area: Rect) -> Vec<((u16, u16), bool)> {
+/// What a floating lyric letter is in its line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tone {
+    Sung,
+    Now,
+    Ahead,
+}
+
+/// A floating glyph cell this frame.
+struct Spot {
+    pos: (u16, u16),
+    /// Text (not a big digit's half block).
+    text: bool,
+    /// Its karaoke part, for the lyrics' current line.
+    tone: Option<Tone>,
+}
+
+/// The floating glyph cells this frame.
+fn glyphs(m: &Model, area: Rect) -> Vec<Spot> {
     let mut scratch = Buffer::empty(area);
+    let mut lyrics = Rect::ZERO;
     for s in &m.layout.on_lava {
         let look = Look {
             backdrop: Backdrop::Lava,
@@ -101,14 +124,46 @@ fn glyphs(m: &Model, area: Rect) -> Vec<((u16, u16), bool)> {
         };
         for p in &s.items {
             WIDGETS[p.widget].draw(m, p.form, p.rect, look, &mut scratch);
+            if WIDGETS[p.widget].name() == "lyrics" {
+                lyrics = p.rect;
+            }
         }
     }
+    let (text, dim, accent) = (
+        m.theme.role(Role::Text),
+        m.theme.role(Role::Dim),
+        m.theme.role(Role::Accent),
+    );
+    let bold = |c: &ratatui::buffer::Cell| c.modifier.contains(Modifier::BOLD);
+    // The current line's rows: those with a sung or being-sung letter.
+    let current = |y: u16| {
+        (lyrics.left()..lyrics.right()).any(|x| {
+            let c = &scratch[(x, y)];
+            bold(c) && (c.fg == text || c.fg == accent)
+        })
+    };
+    let rows: Vec<bool> = (0..area.height).map(current).collect();
     area.positions()
         .filter_map(|p| {
             let c = &scratch[p];
             let s = c.symbol();
-            (s != " " && s != "█" && c.bg == theme::TERMINAL_DEFAULT)
-                .then_some(((p.x, p.y), s == "▀" || s == "▄"))
+            if s == " " || s == "█" || c.bg != theme::TERMINAL_DEFAULT {
+                return None;
+            }
+            let in_line = lyrics.contains(p) && rows[usize::from(p.y)];
+            let tone = match (c.fg, bold(c)) {
+                _ if !in_line => None,
+                (f, true) if f == accent => Some(Tone::Now),
+                (f, true) if f == text => Some(Tone::Sung),
+                (f, false) if f == dim => Some(Tone::Ahead),
+                _ => None,
+            };
+            let text = s != "▀" && s != "▄";
+            Some(Spot {
+                pos: (p.x, p.y),
+                text,
+                tone,
+            })
         })
         .collect()
 }
@@ -123,6 +178,10 @@ struct Tally {
     changes: u64,
     flicker: u64,
     sympathetic: u64,
+    words: u64,
+    split: u64,
+    toned: u64,
+    lost: u64,
 }
 
 fn run(cells: CellsChoice, csv: &mut Option<String>) -> Tally {
@@ -147,7 +206,56 @@ fn run(cells: CellsChoice, csv: &mut Option<String>) -> Tally {
         m.tick(now, area, local());
         let buf = draw(&m, cols, rows);
         let mut quiet_changes = 0;
-        for (pos, _block) in glyphs(&m, area) {
+        let spots = glyphs(&m, area);
+        // Words: runs of text letters in a row.
+        let other = if m.theme.role(Role::Text) == light {
+            dark
+        } else {
+            light
+        };
+        let mut word: Option<((u16, u16), bool, bool)> = None;
+        for s in spots.iter().filter(|s| s.text) {
+            let is_other = buf[s.pos].fg == other;
+            word = match word {
+                Some((end, a, b)) if end.1 == s.pos.1 && end.0 + 1 == s.pos.0 => {
+                    Some((s.pos, a || is_other, b || !is_other))
+                }
+                done => {
+                    if let Some((_, a, b)) = done {
+                        t.words += 1;
+                        t.split += u64::from(a && b);
+                    }
+                    Some((s.pos, is_other, !is_other))
+                }
+            };
+        }
+        if let Some((_, a, b)) = word {
+            t.words += 1;
+            t.split += u64::from(a && b);
+        }
+        // Tones: a letter still to sing in a sung letter's colour, or the
+        // one being sung drawn like a sung letter.
+        let look = |s: &Spot| {
+            let c = &buf[s.pos];
+            (c.fg, c.modifier.contains(Modifier::UNDERLINED))
+        };
+        let sung: Vec<(Color, bool)> = spots
+            .iter()
+            .filter(|s| s.tone == Some(Tone::Sung))
+            .map(look)
+            .collect();
+        for s in &spots {
+            let (fg, line) = look(s);
+            let lost = match s.tone {
+                Some(Tone::Now) => sung.contains(&(fg, line)),
+                Some(Tone::Ahead) => sung.iter().any(|&(c, _)| c == fg),
+                _ => continue,
+            };
+            t.toned += 1;
+            t.lost += u64::from(lost);
+        }
+        for spot in &spots {
+            let pos = spot.pos;
             let cell = &buf[pos];
             let (Some(fg), Some(bg)) = (lum(cell.fg), shown(cell.bg, translucent).and_then(lum))
             else {
@@ -223,7 +331,8 @@ fn contrast_trace() {
         let pct = |n: u64| 100.0 * n as f64 / t.glyphs.max(1) as f64;
         println!(
             "{name:11} glyph-frames {:7}  <3:1 {:5.2}%  <4.5:1 {:5.2}%  worst {:.2}  \
-             stuck {:5.2}%  ink changes {:5}  flicker {:4}  sympathetic {:5}",
+             stuck {:5.2}%  ink changes {:5}  flicker {:4}  sympathetic {:5}  \
+             split {:5.2}% of {} words  tones lost {:5.2}% of {} letters",
             t.glyphs,
             pct(t.below3),
             pct(t.below45),
@@ -232,9 +341,47 @@ fn contrast_trace() {
             t.changes,
             t.flicker,
             t.sympathetic,
+            100.0 * t.split as f64 / t.words.max(1) as f64,
+            t.words,
+            100.0 * t.lost as f64 / t.toned.max(1) as f64,
+            t.toned,
         );
     }
     if let (Some(out), Ok(path)) = (csv, std::env::var("CSV")) {
         std::fs::write(path, out).unwrap();
     }
+}
+
+/// How long floating the widgets onto the lamp takes a frame (the clock,
+/// pomodoro, music and lyrics on the lava, as above):
+/// `cargo test --release -- --ignored --nocapture bench_float` (`COLS`,
+/// `ROWS`, `FRAMES`, `STYLE`, `PALETTE`).
+#[test]
+#[ignore = "timing: cargo test --release -- --ignored --nocapture bench_float"]
+fn bench_float() {
+    let (cols, rows) = (env("COLS", 160u16), env("ROWS", 48u16));
+    let frames = env("FRAMES", 600u32);
+    let (mut m, t0) = scene(cols, rows, env("SEED", 7u64), CellsChoice::Opaque);
+    let area = Rect::new(0, 0, cols, rows);
+    let mut spent = Vec::with_capacity(frames as usize);
+    for f in 0..frames {
+        let now = t0 + Duration::from_millis(u64::from(f) * 1000 / 30);
+        m.tick(now, area, local());
+        // A whole frame, then the widgets floated onto it again, timed.
+        let mut buf = draw(&m, cols, rows);
+        let start = Instant::now();
+        for s in &m.layout.on_lava {
+            super::dock::draw_on_lava(&mut buf, s, &m, &m.theme);
+        }
+        spent.push(start.elapsed());
+    }
+    spent.sort();
+    let us = |d: Duration| d.as_secs_f64() * 1e6;
+    let mean = spent.iter().map(|&d| us(d)).sum::<f64>() / spent.len().max(1) as f64;
+    println!(
+        "float {cols}x{rows}: mean {mean:.1} µs  p50 {:.1}  p95 {:.1}  max {:.1}",
+        us(spent[spent.len() / 2]),
+        us(spent[spent.len() * 95 / 100]),
+        us(spent[spent.len() - 1]),
+    );
 }
