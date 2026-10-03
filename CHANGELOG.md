@@ -2,7 +2,7 @@
 
 What changed in each version of LavaTUI, in plain words.
 
-## 1.3.0 — YYYY-MM-DD
+## 1.3.0 — 2026-10-03
 
 Lyrics now light up word by word, Apple Music works on a Mac, and the
 lamp can grow a layer of wax at the top. Covers, timing and many small
