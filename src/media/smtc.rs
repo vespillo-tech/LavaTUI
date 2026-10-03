@@ -246,7 +246,7 @@ pub use backend::Smtc;
 
 #[cfg(windows)]
 mod backend {
-    use std::sync::Arc;
+    use std::sync::{Arc, Once};
     use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
     use windows::Media::Control::{
@@ -256,6 +256,7 @@ mod backend {
     };
     use windows::Media::MediaPlaybackAutoRepeatMode;
     use windows::Storage::Streams::DataReader;
+    use windows::Win32::System::Com::CoIncrementMTAUsage;
     use windows::Win32::System::WinRT::{RO_INIT_MULTITHREADED, RoInitialize};
     use windows::core::{IUnknown, Interface};
 
@@ -361,6 +362,18 @@ mod backend {
         }
 
         fn manager(&mut self) -> windows::core::Result<Manager> {
+            // Keep the multithreaded apartment up for the whole process.
+            // WinRT activation factories are cached per process (by the
+            // windows crate); when a worker's thread ends (the music widget
+            // turned off) and no thread is left in the apartment, it is
+            // torn down and the DLL the cached factory lives in unloaded,
+            // so the next worker's `RequestAsync` would call into freed
+            // code (the Windows tests crashed there, lava-blu).
+            static KEEP_APARTMENT: Once = Once::new();
+            KEEP_APARTMENT.call_once(|| {
+                // SAFETY: no preconditions; the cookie is never released.
+                let _ = unsafe { CoIncrementMTAUsage() };
+            });
             if !self.initialised {
                 // Already initialised (another apartment type) is fine too.
                 let _ = unsafe { RoInitialize(RO_INIT_MULTITHREADED) };
@@ -586,6 +599,25 @@ mod tests {
             app_id,
             playing,
             current,
+        }
+    }
+
+    /// The music widget turned off ends the worker's thread; turned on
+    /// again, a new worker on a new thread must still reach the system's
+    /// media controls. WinRT's activation factory is cached for the whole
+    /// process, so the apartment it lives in must outlive any one worker
+    /// (it crashed the Windows tests, lava-blu).
+    #[cfg(windows)]
+    #[test]
+    fn a_worker_after_the_last_one_ended_still_reaches_the_controls() {
+        use crate::media::worker::Backend;
+        for _ in 0..3 {
+            std::thread::spawn(|| {
+                let mut smtc = Smtc::new();
+                let _ = smtc.exchange(&[]);
+            })
+            .join()
+            .expect("the worker thread ends cleanly");
         }
     }
 
