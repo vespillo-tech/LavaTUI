@@ -7,8 +7,11 @@
 //! **The line being sung is always shown whole** (design §4.6, lava-uqi).
 //! Every form is sized by the song, once, when its lyrics arrive
 //! ([`Sizing`]): it keeps `R` rows for the current line, the most rows
-//! any of the song's lines wraps onto (between words) at the form's
-//! width. Sizes are fixed per song, so nothing jumps from line to line.
+//! any of the song's lines wraps onto at the form's
+//! width ([`breaks`]: between words, between the characters of scripts
+//! written without spaces, and between letters of a run too wide for the
+//! row, as in Thai). Sizes are fixed per song, so nothing jumps from line
+//! to line.
 //! Forms, most preferred first:
 //!
 //! | form | on the lava | beside the lamp | shows |
@@ -27,8 +30,9 @@
 //! The current line starts on the row under the lines kept for those
 //! before it; when it takes fewer rows than its form keeps, the lines
 //! after it move up. A line around it shows whole when it fits in the
-//! rows left, else on one row cut after a word with `…` (never mid-word,
-//! but for a single word wider than the form). Words light one by one as
+//! rows left, else on one row cut after a word (or a character, in
+//! scripts without spaces) with `…` (never mid-word, but for a single
+//! word wider than the form). Words light one by one as
 //! they're sung (times from `lyrics::words`: exact from word tags, else
 //! estimated); the line just left dims over [`FADE`](crate::app::model);
 //! a seek cuts. Gaps
@@ -47,10 +51,11 @@ use ratatui::style::{Modifier, Style};
 
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use super::music::{fit, width, wrap};
+use super::music::width;
 use super::{Anchor, ChipText, DockWidget, Look, Place, WidgetForm, align_x};
 use crate::app::{Fetch, Model};
 use crate::lyrics::Lyrics as Words;
+use crate::lyrics::breaks;
 use crate::lyrics::lrc::Line;
 use crate::lyrics::sync::Cursor;
 use crate::media::Status;
@@ -84,7 +89,9 @@ const V_MESSAGE: u16 = 0x200;
 pub struct Sizing {
     /// The widest line, in columns.
     pub widest: u16,
-    /// The most rows a line takes at each width from `W.0` to `W.1`.
+    /// The most rows a line takes at each width from `W.0` to `W.1`
+    /// ([`breaks`]: between words, or characters in scripts without
+    /// spaces).
     rows: Vec<u16>,
 }
 
@@ -97,7 +104,7 @@ impl Sizing {
         // than `w` are wrapped.
         let rows = (W.0..=W.1)
             .map(|w| {
-                let rows = |(l, &lw): (&&str, &u16)| if lw <= w { 1 } else { wrap(l, w).len() };
+                let rows = |(l, &lw): (&&str, &u16)| if lw <= w { 1 } else { breaks::count(l, w) };
                 let most = lines.iter().zip(&widths).map(rows).max();
                 most.unwrap_or(1).min(usize::from(u16::MAX)) as u16
             })
@@ -166,9 +173,12 @@ pub fn lyrics_forms(show: &Show, place: Place) -> Vec<WidgetForm> {
                 .iter()
                 .zip(0..)
                 .map(|(text, n)| {
-                    let lines = wrap(text, w);
-                    let w = lines.iter().map(|l| width(l)).max().unwrap_or(1).max(1);
-                    WidgetForm::fixed(w, lines.len() as u16, V_MESSAGE | n)
+                    let (mut widest, mut rows) = (1, 0);
+                    for (a, b) in breaks::rows(text, w, u16::MAX) {
+                        widest = widest.max(width(&text[a..b]));
+                        rows += 1;
+                    }
+                    WidgetForm::fixed(widest, rows.max(1), V_MESSAGE | n)
                 })
                 .collect()
         }
@@ -278,11 +288,9 @@ impl DockWidget for Lyrics {
             (V_MESSAGE, Show::Message(texts)) => {
                 let dim = model.theme.text(Role::Dim);
                 let text = texts.get(usize::from(form.variant & 0xff));
-                for (i, line) in wrap(text.map_or("", String::as_str), area.width)
-                    .iter()
-                    .enumerate()
-                {
-                    pen.text(i as u16, line, dim);
+                let text = text.map_or("", String::as_str);
+                for (i, (a, b)) in breaks::rows(text, area.width, u16::MAX).enumerate() {
+                    pen.text(i as u16, &text[a..b], dim);
                 }
             }
             (V_LINES, Show::Lines(_)) => match &model.lyrics.found {
@@ -318,88 +326,29 @@ impl DockWidget for Lyrics {
 }
 
 /// `text` on one row of `w`: whole if it fits, else cut after the last
-/// word that fits (and any `,;:` it ends with), then `…`. Only a first
-/// word wider than the row is cut inside.
+/// word (or character, in scripts without spaces) that fits, and any
+/// `,;:` it ends with, then `…` ([`breaks::cut`]).
 pub fn cut(text: &str, w: u16) -> String {
-    if width(text) <= w {
-        return text.to_owned();
+    match breaks::cut(text, w) {
+        (end, false) => text[..end].to_owned(),
+        (end, true) => format!("{}…", &text[..end]),
     }
-    let mut out = String::new();
-    for word in text.split_whitespace() {
-        let longer = if out.is_empty() {
-            word.to_owned()
-        } else {
-            format!("{out} {word}")
-        };
-        if width(&longer) + 1 > w {
-            break;
-        }
-        out = longer;
-    }
-    let kept = out.trim_end_matches([',', ';', ':']).len();
-    out.truncate(kept);
-    if out.is_empty() {
-        return fit(text, w);
-    }
-    out.push('…');
-    out
 }
 
 /// A line next to the current one, in at most `free` rows of `w`: whole
-/// when it fits, else one row cut after a word.
-fn neighbour(text: &str, w: u16, free: u16) -> Vec<String> {
-    let rows = wrap(text, w);
-    if rows.len() <= usize::from(free) {
-        rows
+/// when it fits (row byte ranges, cut: false), else one row cut after a
+/// word (cut: true).
+fn neighbour(text: &str, w: u16, free: u16) -> (breaks::Rows<'_>, bool) {
+    let fits = breaks::rows(text, w, u16::MAX)
+        .nth(usize::from(free))
+        .is_none();
+    let rows = if fits {
+        breaks::rows(text, w, free)
     } else {
-        vec![cut(text, w)]
-    }
-}
-
-/// The line being sung in at most `most` rows of `w`: whole (its form
-/// keeps the rows for it), else (never, by the sizing) the last row cut
-/// after a word.
-fn whole(text: &str, w: u16, most: u16) -> Vec<String> {
-    let most = usize::from(most.max(1));
-    let mut rows = wrap(text, w);
-    if rows.len() > most {
-        let rest = rows[most - 1..].join(" ");
-        rows.truncate(most - 1);
-        rows.push(cut(&rest, w));
-    }
-    rows
-}
-
-/// [`whole`]'s rows as byte ranges of `text` (one-space separated, as
-/// lyrics lines are), wrapped between words as [`wrap`] wraps them (a
-/// word wider than `w` alone on its row), the last of `most` holding the
-/// rest. Nothing allocated.
-fn rows(text: &str, w: u16, most: u16) -> impl Iterator<Item = (usize, usize)> + '_ {
-    let w = usize::from(w);
-    let mut most = most.max(1);
-    let mut at = 0;
-    std::iter::from_fn(move || {
-        if at >= text.len() {
-            return None;
-        }
-        let start = at;
-        let mut end = text.len();
-        if most > 1 {
-            most -= 1;
-            end = start;
-            let mut used = 0;
-            for word in text[start..].split(' ') {
-                let ww = word.width().min(w);
-                if end > start && used + 1 + ww > w {
-                    break;
-                }
-                used += ww + usize::from(end > start);
-                end += word.len() + usize::from(end > start);
-            }
-        }
-        at = end + 1;
-        Some((start, end))
-    })
+        // One row: the part before the cut.
+        breaks::rows(&text[..breaks::cut(text, w).0], w, 1)
+    };
+    (rows, !fits)
 }
 
 /// The middle of [`Pen::around`]: the current line, or a gap's dots.
@@ -420,14 +369,14 @@ struct Pen<'a, 'b> {
 impl Pen<'_, '_> {
     /// `text` on row `dy`, cut to fit, lined up by the look.
     fn text(&mut self, dy: u16, text: &str, style: Style) {
-        self.row(dy, text, |_| style);
+        self.row(dy, text, false, |_| style);
     }
 
     /// `text` on row `dy`, lined up by the look, each character in
-    /// `style(its byte offset)`, cut with `…` as [`fit`] cuts if too
-    /// wide. Drawn in runs of one style straight from `text`: nothing
-    /// allocated.
-    fn row(&mut self, dy: u16, text: &str, style: impl Fn(usize) -> Style) {
+    /// `style(its byte offset)`, then `…` if `cut`; cut with `…` as
+    /// `music::fit` cuts if too wide. Drawn in runs of one style straight from
+    /// `text`: nothing allocated.
+    fn row(&mut self, dy: u16, text: &str, cut: bool, style: impl Fn(usize) -> Style) {
         if dy >= self.area.height || self.area.width == 0 {
             return;
         }
@@ -447,7 +396,7 @@ impl Pen<'_, '_> {
             }
             text[..to].trim_end().len()
         };
-        let cut = to < text.len();
+        let cut = cut || to < text.len();
         let drawn = text[..to].width() + usize::from(cut);
         let mut x = self.area.x + align_x(self.align, self.area.width, drawn as u16);
         let (y, right) = (self.area.y + dy, self.area.right());
@@ -495,8 +444,8 @@ impl Pen<'_, '_> {
         };
         let text = line.text.as_str();
         let mut used = 0;
-        for (start, end) in rows(text, self.area.width, most) {
-            self.row(dy + used, &text[start..end], |at| style(start + at));
+        for (start, end) in breaks::rows(text, self.area.width, most) {
+            self.row(dy + used, &text[start..end], false, |at| style(start + at));
             used += 1;
         }
         used
@@ -563,11 +512,12 @@ impl Pen<'_, '_> {
         let back = back.min(rows.saturating_sub(1));
         let used = match current {
             Current::Line(text, style) => {
-                let parts = whole(text, w, rows - back);
-                for (i, part) in parts.iter().enumerate() {
-                    self.text(back + i as u16, part, style);
+                let mut used = 0;
+                for (a, b) in breaks::rows(text, w, rows - back) {
+                    self.text(back + used, &text[a..b], style);
+                    used += 1;
                 }
-                parts.len() as u16
+                used
             }
             Current::Karaoke(line, cursor) => self.karaoke(back, line, cursor, rows - back),
             Current::Dots(progress) => {
@@ -580,10 +530,11 @@ impl Pen<'_, '_> {
             let Some((text, style)) = before(n).filter(|_| top > 0) else {
                 break;
             };
-            let parts = neighbour(text, w, top);
-            top -= parts.len() as u16;
-            for (i, part) in parts.iter().enumerate() {
-                self.text(top + i as u16, part, style);
+            let (parts, cut) = neighbour(text, w, top);
+            let n = parts.clone().count() as u16;
+            top -= n;
+            for (i, (a, b)) in parts.enumerate() {
+                self.row(top + i as u16, &text[a..b], cut, |_| style);
             }
         }
         let mut y = back + used;
@@ -591,11 +542,11 @@ impl Pen<'_, '_> {
             let Some((text, style)) = after(n).filter(|_| y < rows) else {
                 break;
             };
-            let parts = neighbour(text, w, rows - y);
-            for (i, part) in parts.iter().enumerate() {
-                self.text(y + i as u16, part, style);
+            let (parts, cut) = neighbour(text, w, rows - y);
+            for (a, b) in parts {
+                self.row(y, &text[a..b], cut, |_| style);
+                y += 1;
             }
-            y += parts.len() as u16;
         }
     }
 
@@ -642,6 +593,7 @@ impl Pen<'_, '_> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::music::wrap;
     use super::*;
     use ratatui::layout::Size;
 
@@ -662,32 +614,33 @@ mod tests {
             .collect()
     }
 
+    /// A line's rows at `w`, as text.
+    fn split(text: &str, w: u16, most: u16) -> Vec<&str> {
+        breaks::rows(text, w, most)
+            .map(|(a, b)| &text[a..b])
+            .collect()
+    }
+
     #[test]
-    fn karaoke_rows_wrap_as_wrap_does() {
-        let lines = SONG.iter().copied().chain([
-            "Supercalifragilisticexpialidocious is a word too wide",
-            "君の名は yeah 사랑해",
-        ]);
-        for text in lines.filter(|l| !l.is_empty()) {
-            for w in 8..60 {
-                let ours: Vec<&str> = rows(text, w, u16::MAX).map(|(a, b)| &text[a..b]).collect();
-                let theirs: Vec<String> = wrap(text, w)
-                    .into_iter()
-                    .map(|r| r.trim_end_matches('…').to_owned())
-                    .collect();
-                assert_eq!(ours.len(), theirs.len(), "{text:?} at {w}");
-                for (o, t) in ours.iter().zip(&theirs) {
-                    assert!(
-                        o.starts_with(t.as_str()),
-                        "{text:?} at {w}: {ours:?} vs {theirs:?}"
-                    );
-                }
-            }
-            // At most `most` rows, the last holding the rest.
-            let two: Vec<_> = rows(text, 10, 2).collect();
-            assert!(two.len() <= 2);
-            assert_eq!(two.last().unwrap().1, text.len());
-        }
+    fn lines_without_spaces_are_never_cut_off() {
+        // 12 characters, 24 columns (claude review #2): two rows beside
+        // the lamp, nothing cut.
+        let zh = "我们一起看着蜡慢慢地升起";
+        let s = Sizing::of([zh, "Slow rise"]);
+        assert_eq!((s.widest, s.rows(20), s.rows(24)), (24, 2, 1));
+        assert_eq!(split(zh, 20, s.rows(20)), ["我们一起看着蜡慢慢地", "升起"]);
+        // Thai has no spaces either: broken where the row is full.
+        let th = "ฉันรักเธอมากกว่าที่คำพูดจะบอกได้";
+        let s = Sizing::of([th]);
+        let rows = split(th, 20, s.rows(20));
+        assert_eq!(rows.len(), usize::from(s.rows(20)));
+        assert_eq!(rows.concat(), th);
+        assert!(rows.iter().all(|r| width(r) <= 20), "{rows:?}");
+        // A neighbour too long for its rows: cut after a character.
+        let (parts, cut) = neighbour(zh, 20, 1);
+        let parts: Vec<&str> = parts.map(|(a, b)| &zh[a..b]).collect();
+        assert_eq!((parts, cut), (vec!["我们一起看着蜡慢慢"], true));
+        assert_eq!(super::cut(zh, 9), "我们一起…");
     }
 
     #[test]
@@ -696,6 +649,12 @@ mod tests {
         assert_eq!(s.widest, 47);
         for w in W.0..=W.1 {
             let most = SONG.iter().map(|l| wrap(l, w).len() as u16).max().unwrap();
+            let ours = SONG
+                .iter()
+                .map(|l| breaks::count(l, w) as u16)
+                .max()
+                .unwrap();
+            assert_eq!(ours, most, "breaks between words as wrap does, at {w}");
             assert_eq!(s.rows(w), most, "at {w}");
             // Wider never takes more rows.
             assert!(s.rows(w + 1) <= s.rows(w), "at {w}");
@@ -793,18 +752,25 @@ mod tests {
         let s = Sizing::of(SONG.iter().copied());
         for w in W.0..=W.1 {
             for line in SONG {
-                let rows = whole(line, w, s.rows(w));
+                let rows = split(line, w, s.rows(w));
                 assert_eq!(
                     rows.join(" "),
                     line.split_whitespace().collect::<Vec<_>>().join(" ")
                 );
             }
         }
-        // More than its rows (never offered): the last row cut after a word.
-        let rows = whole(SONG[4], 20, 2);
-        assert_eq!(rows, ["Cooling at the top", "and coming down to…"]);
-        assert_eq!(neighbour(SONG[4], 20, 3).len(), 3);
-        assert_eq!(neighbour(SONG[4], 20, 2), ["Cooling at the top…"]);
+        // More than its rows (never offered): the last holds the rest (the
+        // pen cuts it).
+        let rows = split(SONG[4], 20, 2);
+        assert_eq!(rows, ["Cooling at the top", "and coming down to try again"]);
+        let (parts, cut) = neighbour(SONG[4], 20, 3);
+        assert_eq!((parts.count(), cut), (3, false));
+        let (mut parts, cut) = neighbour(SONG[4], 20, 2);
+        let (a, b) = parts.next().unwrap();
+        assert_eq!(
+            (&SONG[4][a..b], parts.next(), cut),
+            ("Cooling at the top", None, true)
+        );
     }
 
     fn message(texts: &[&str]) -> Show<'static> {

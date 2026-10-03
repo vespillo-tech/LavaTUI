@@ -519,6 +519,65 @@ fn lyrics_are_never_clipped() {
     }
 }
 
+/// Lines in scripts written without spaces (claude review #2): the line
+/// being sung shows whole wherever the widget lands, broken between
+/// characters (Chinese, Japanese) or letters (Thai), never cut with `…`.
+#[test]
+fn lyrics_without_spaces_are_never_clipped() {
+    const LINES: &[&str] = &[
+        "我们一起看着蜡慢慢地升起又慢慢地落下来回到温暖的底部",
+        "君の名は夜明けまで歌おう、ゆっくりと上がっていく光の中で",
+        "ฉันรักเธอมากกว่าที่คำพูดจะบอกได้ในคืนที่โคมไฟลาวาส่องแสง",
+    ];
+    let lrc: String = LINES
+        .iter()
+        .enumerate()
+        .map(|(i, l)| format!("[00:{:02}.00]{l}\\n", 5 + 5 * i))
+        .collect();
+    let lyrics_at = WIDGETS.iter().position(|w| w.name() == "lyrics").unwrap();
+    let bare = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+    for presses in [1, 2] {
+        let (mut m, t0) = model(120, 36, 1);
+        lyrics_lrc(&mut m, t0, presses, 0, &lrc);
+        let mut checked = 0;
+        for (i, line) in LINES.iter().enumerate() {
+            let now = t0 + std::time::Duration::from_millis(5_500 + 5_000 * i as u64);
+            for cols in (40..=220).step_by(15) {
+                for rows in (14..=62).step_by(8) {
+                    let area = Rect::new(0, 0, cols, rows);
+                    m.tick(now, area, local());
+                    let Some(placed) = m.layout.placed(lyrics_at).copied() else {
+                        continue;
+                    };
+                    let backdrop = if presses == 1 {
+                        Backdrop::Panel
+                    } else {
+                        Backdrop::Lava
+                    };
+                    let look = Look {
+                        backdrop,
+                        align: ratatui::layout::Alignment::Left,
+                    };
+                    let mut buf = Buffer::empty(area);
+                    WIDGETS[lyrics_at].draw(&m, placed.form, placed.rect, look, &mut buf);
+                    let r = placed.rect;
+                    let shown: String = (r.y..r.bottom())
+                        .flat_map(|y| (r.x..r.right()).map(move |x| (x, y)))
+                        .map(|at| buf[at].symbol())
+                        .collect();
+                    let ctx = format!("{cols}x{rows} line {i} presses {presses}");
+                    assert!(
+                        bare(&shown).contains(&bare(line)),
+                        "{ctx}: {line:?} not whole in {shown:?}"
+                    );
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 50, "only {checked} layouts had the lyrics");
+    }
+}
+
 /// lava-75z.23: the "no lyrics" and "instrumental" sentences are shown
 /// whole too, wherever they land: the long wording, or the short one (or
 /// nothing at all) when the room is small; never half a sentence.

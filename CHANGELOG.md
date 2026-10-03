@@ -47,6 +47,9 @@ What changed in each version of LavaTUI, in plain words.
 - Lyrics beside the lamp never cut off the line being sung: long lines
   wrap onto more rows, nearby lines are shortened after a whole word, and
   on big screens the panel widens to fit them.
+- Lyrics in Chinese, Japanese, Korean or Thai are no longer cut off.
+  Lines written without spaces now wrap onto more rows like any other,
+  and still light up word by word.
 - When a song has no lyrics, the lyrics widget now says whose shelf is
   bare: "no lyrics on lrclib.net for this song" (just "not on
   lrclib.net" where space is tight). Songs that are instrumental say
