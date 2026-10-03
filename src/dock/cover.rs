@@ -423,7 +423,7 @@ impl DockWidget for Cover {
     }
 
     /// None: the music chip already names the track.
-    fn chip(&self, _model: &Model) -> Option<ChipText> {
+    fn chip<'m>(&self, _model: &'m Model) -> Option<ChipText<'m>> {
         None
     }
 }

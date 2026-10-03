@@ -45,6 +45,8 @@
 //! No backing is assumed: the text is role colours over whatever is
 //! behind it. Without colours the word being sung is underlined too.
 
+use std::borrow::Cow;
+
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Modifier, Style};
@@ -58,7 +60,7 @@ use crate::lyrics::Lyrics as Words;
 use crate::lyrics::breaks;
 use crate::lyrics::lrc::Line;
 use crate::lyrics::sync::Cursor;
-use crate::media::Status;
+use crate::media::{Status, Unavailable};
 use crate::theme::{Ink, Role};
 
 pub struct Lyrics;
@@ -128,37 +130,157 @@ pub enum Show<'a> {
     /// Lines (synced or plain), sized by the song.
     Lines(&'a Sizing),
     /// One calm sentence: the wordings, most preferred first (a shorter
-    /// one for rooms the first doesn't fit).
-    Message(Vec<String>),
+    /// one for rooms the first doesn't fit). Borrowed from
+    /// [`Messages`] once built.
+    Message(Cow<'a, [String]>),
 }
 
-fn show(model: &Model) -> Show<'_> {
+pub fn show(model: &Model) -> Show<'_> {
+    let Some(say) = say(model) else {
+        return Show::Lines(&model.lyrics.sizing);
+    };
     // With its `♪`, when the glyphs have one.
     let note = model.glyphs().note;
-    let messages =
-        |texts: &[&str]| Show::Message(texts.iter().map(|text| format!("{note}{text}")).collect());
-    let message = |text: &str| messages(&[text]);
+    match model.lyrics.messages.get(say, note) {
+        Some(texts) => Show::Message(Cow::Borrowed(texts)),
+        // Not built yet this frame (`Model::sync_lyrics` builds it).
+        None => Show::Message(Cow::Owned(say.texts(note))),
+    }
+}
+
+/// What a message says, told apart without building it; `None`: the
+/// lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Say<'a> {
+    Words(&'static [&'static str]),
+    /// The player's problem, and the player's name.
+    Problem(&'a Unavailable, &'a str),
+}
+
+fn say(model: &Model) -> Option<Say<'_>> {
     let Some(snap) = model.music.snapshot.as_ref() else {
-        return message("…");
+        return Some(Say::Words(&["…"]));
     };
     match (&snap.status, &snap.track) {
-        (Status::Unavailable(reason), _) => {
-            return message(&reason.message_for(snap.player_name(), "lyrics"));
-        }
-        (Status::Connecting, _) => return message("…"),
-        (Status::Stopped, _) | (_, None) => return message("nothing playing"),
+        (Status::Unavailable(reason), _) => return Some(Say::Problem(reason, snap.player_name())),
+        (Status::Connecting, _) => return Some(Say::Words(&["…"])),
+        (Status::Stopped, _) | (_, None) => return Some(Say::Words(&["nothing playing"])),
         _ => {}
     }
-    match &model.lyrics.found {
-        None | Some(Fetch::Looking) => message("asking lrclib.net for lyrics…"),
+    Some(Say::Words(match &model.lyrics.found {
+        None | Some(Fetch::Looking) => &["asking lrclib.net for lyrics…"],
         // Say whose shelf is bare: the lyrics site, not this app.
-        Some(Fetch::NotFound) => {
-            messages(&["no lyrics on lrclib.net for this song", "not on lrclib.net"])
+        Some(Fetch::NotFound) => &["no lyrics on lrclib.net for this song", "not on lrclib.net"],
+        Some(Fetch::Offline) => &["lyrics offline"],
+        Some(Fetch::Lyrics(Words::Instrumental)) => &["instrumental"],
+        Some(Fetch::Lyrics(_)) => return None,
+    }))
+}
+
+impl Say<'_> {
+    fn texts(self, note: &str) -> Vec<String> {
+        match self {
+            Say::Words(texts) => texts.iter().map(|text| format!("{note}{text}")).collect(),
+            Say::Problem(reason, player) => {
+                vec![format!("{note}{}", reason.message_for(player, "lyrics"))]
+            }
         }
-        Some(Fetch::Offline) => message("lyrics offline"),
-        Some(Fetch::Lyrics(Words::Instrumental)) => message("instrumental"),
-        Some(Fetch::Lyrics(_)) => Show::Lines(&model.lyrics.sizing),
     }
+}
+
+/// A message's wordings, built when what it says changes
+/// ([`Messages::fresh`], from `Model::sync_lyrics`), so the rank, forms
+/// and draw borrow them each frame instead of building them three times.
+#[derive(Debug, Default)]
+pub struct Messages {
+    said: Option<(Said, &'static str)>,
+    texts: Vec<String>,
+}
+
+/// [`Say`], kept.
+#[derive(Debug)]
+enum Said {
+    Words(&'static [&'static str]),
+    Problem(Unavailable, String),
+}
+
+impl Messages {
+    /// The wordings for `say` with `note`, if these are them.
+    fn get(&self, say: Say, note: &str) -> Option<&[String]> {
+        let (said, kept_note) = self.said.as_ref()?;
+        let same = match (said, say) {
+            (Said::Words(a), Say::Words(b)) => *a == b,
+            (Said::Problem(r, p), Say::Problem(r2, p2)) => r == r2 && p == p2,
+            _ => false,
+        };
+        (same && *kept_note == note).then_some(&self.texts)
+    }
+
+    /// New wordings when the model's message isn't the one kept (none:
+    /// the kept ones still hold, or there's no message).
+    pub fn fresh(model: &Model) -> Option<Self> {
+        let say = say(model)?;
+        let note = model.glyphs().note;
+        if model.lyrics.messages.get(say, note).is_some() {
+            return None;
+        }
+        let said = match say {
+            Say::Words(texts) => Said::Words(texts),
+            Say::Problem(reason, player) => Said::Problem(reason.clone(), player.to_owned()),
+        };
+        Some(Self {
+            said: Some((said, note)),
+            texts: say.texts(note),
+        })
+    }
+}
+
+/// The chip's text, built when the line it's for changes
+/// ([`ChipLine::fresh`], from `Model::sync_lyrics`).
+#[derive(Debug, Default)]
+pub struct ChipLine {
+    /// The line and note it was built from.
+    line: String,
+    note: &'static str,
+    text: String,
+}
+
+impl ChipLine {
+    /// The chip for `line` with `note`: kept, or built.
+    fn get(&self, line: &str, note: &str) -> Option<&str> {
+        (self.line == line && self.note == note).then_some(self.text.as_str())
+    }
+
+    /// A new chip text when the line being sung isn't the one kept.
+    pub fn fresh(model: &Model) -> Option<Self> {
+        let line = chip_line(model)?;
+        let note = model.glyphs().note;
+        if model.lyrics.chip.get(line, note).is_some() {
+            return None;
+        }
+        Some(Self {
+            line: line.to_owned(),
+            note,
+            text: chip_text(line, note),
+        })
+    }
+}
+
+/// The line the chip shows (`""` in a gap): while playing synced lyrics.
+fn chip_line(model: &Model) -> Option<&str> {
+    let snap = model.music.snapshot.as_ref()?;
+    if snap.status != Status::Playing {
+        return None;
+    }
+    let synced = model.lyrics.synced()?;
+    let cursor = model.lyrics.cursor?;
+    Some(cursor.current(synced).map_or("", |l| l.text.as_str()))
+}
+
+/// `♪ line`, cut after a word if it's long; empty in a gap with no note.
+fn chip_text(line: &str, note: &str) -> String {
+    let text = format!("{note}{line}");
+    cut(text.trim_end(), CHIP_MAX)
 }
 
 /// The forms for `show` in `place`, most preferred first (pure).
@@ -202,15 +324,11 @@ fn lines_form(w: u16, back: u16, rows: u16, fill: bool) -> WidgetForm {
 /// at it and the narrower widths.
 fn lava_forms(s: &Sizing) -> Vec<WidgetForm> {
     let full = s.widest.clamp(W.0, W.1);
-    let mut widths = vec![full];
-    widths.extend(NARROW.into_iter().filter(|&n| n < full));
-    let mut forms = vec![lines_form(full, 2, s.rows(full), false)];
+    let widths = || std::iter::once(full).chain(NARROW.into_iter().filter(move |&n| n < full));
+    let mut forms = Vec::with_capacity(1 + 2 * (1 + NARROW.len()));
+    forms.push(lines_form(full, 2, s.rows(full), false));
     for back in [1, 0] {
-        forms.extend(
-            widths
-                .iter()
-                .map(|&w| lines_form(w, back, s.rows(w), false)),
-        );
+        forms.extend(widths().map(|w| lines_form(w, back, s.rows(w), false)));
     }
     forms
 }
@@ -218,33 +336,34 @@ fn lava_forms(s: &Sizing) -> Vec<WidgetForm> {
 /// Beside the lamp: five, three and the line alone, each at the widths
 /// of [`side_widths`] (filling the panel).
 fn side_forms(s: &Sizing) -> Vec<WidgetForm> {
-    let widths = side_widths(s);
-    [2, 1, 0]
-        .into_iter()
-        .flat_map(|back| {
-            widths
-                .iter()
-                .map(move |&w| lines_form(w, back, s.rows(w), true))
-        })
-        .collect()
+    let (widths, n) = side_widths(s);
+    let widths = &widths[..n];
+    let mut forms = Vec::with_capacity(3 * n);
+    for back in [2, 1, 0] {
+        forms.extend(widths.iter().map(|&w| lines_form(w, back, s.rows(w), true)));
+    }
+    forms
 }
 
 /// The narrowest panel insides that hold every line in one, two and
 /// three rows, widest first, then the narrowest panel's (in as many rows
 /// as that takes): wider than one of these only spares rows, which the
-/// lines after the current one use.
-fn side_widths(s: &Sizing) -> Vec<u16> {
-    let mut out: Vec<u16> = Vec::new();
+/// lines after the current one use. The first `n` of the array.
+fn side_widths(s: &Sizing) -> ([u16; SIDE_ROWS as usize + 1], usize) {
+    let mut out = [0; SIDE_ROWS as usize + 1];
+    let mut n = 0;
     for rows in 1..=SIDE_ROWS {
         let narrowest = (SIDE_W.0..=SIDE_W.1).find(|&w| s.rows(w) <= rows);
-        if let Some(w) = narrowest.filter(|w| !out.contains(w)) {
-            out.push(w);
+        if let Some(w) = narrowest.filter(|w| !out[..n].contains(w)) {
+            out[n] = w;
+            n += 1;
         }
     }
-    if !out.contains(&SIDE_W.0) {
-        out.push(SIDE_W.0);
+    if !out[..n].contains(&SIDE_W.0) {
+        out[n] = SIDE_W.0;
+        n += 1;
     }
-    out
+    (out, n)
 }
 
 impl DockWidget for Lyrics {
@@ -303,23 +422,17 @@ impl DockWidget for Lyrics {
     }
 
     /// The current line while playing synced lyrics (`♪` in a gap), cut
-    /// after a word if it's long.
-    fn chip(&self, model: &Model) -> Option<ChipText> {
-        let snap = model.music.snapshot.as_ref()?;
-        if snap.status != Status::Playing {
-            return None;
-        }
-        let synced = model.lyrics.synced()?;
-        let line = model
-            .lyrics
-            .cursor?
-            .current(synced)
-            .map_or("", |l| l.text.as_str());
-        let text = format!("{}{line}", model.glyphs().note);
-        let text = text.trim_end();
+    /// after a word if it's long. Borrowed: built once a line.
+    fn chip<'m>(&self, model: &'m Model) -> Option<ChipText<'m>> {
+        let line = chip_line(model)?;
+        let note = model.glyphs().note;
+        let text = match model.lyrics.chip.get(line, note) {
+            Some(text) => Cow::Borrowed(text),
+            None => Cow::Owned(chip_text(line, note)),
+        };
         // A gap with no note to show: no chip.
-        (!text.is_empty()).then(|| ChipText {
-            text: cut(text, CHIP_MAX),
+        (!text.is_empty()).then_some(ChipText {
+            text,
             ink: Role::Text,
         })
     }
@@ -774,7 +887,7 @@ mod tests {
     }
 
     fn message(texts: &[&str]) -> Show<'static> {
-        Show::Message(texts.iter().map(|t| t.to_string()).collect())
+        Show::Message(Cow::Owned(texts.iter().map(|t| t.to_string()).collect()))
     }
 
     const NOT_FOUND: [&str; 2] = [

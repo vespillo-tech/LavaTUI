@@ -88,7 +88,7 @@ impl DockWidget for Pomodoro {
     }
 
     /// `▸ 24:58` (focus), `▸ break 4:58`, `‖` when paused; nothing idle.
-    fn chip(&self, model: &Model) -> Option<ChipText> {
+    fn chip<'m>(&self, model: &'m Model) -> Option<ChipText<'m>> {
         let p = &model.pomodoro;
         let g = model.glyphs();
         let (glyph, ink) = match p.status() {
@@ -102,7 +102,7 @@ impl DockWidget for Pomodoro {
         // 16 colours and none, the same).
         let phase = if p.phase().is_break() { "break " } else { "" };
         Some(ChipText {
-            text: format!("{glyph} {phase}{remaining}"),
+            text: format!("{glyph} {phase}{remaining}").into(),
             ink,
         })
     }

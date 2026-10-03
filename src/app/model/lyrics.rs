@@ -53,6 +53,10 @@ pub struct LyricsState {
     pub changed: Option<(Instant, Option<usize>)>,
     /// What the widget's forms are sized by, per song.
     pub sizing: dock::LyricsSizing,
+    /// The widget's message and chip text, built when they change, so
+    /// frames only borrow them.
+    pub messages: dock::LyricsMessages,
+    pub chip: dock::LyricsChip,
 }
 
 impl Default for LyricsState {
@@ -67,6 +71,8 @@ impl Default for LyricsState {
             cursor: None,
             changed: None,
             sizing: dock::LyricsSizing::default(),
+            messages: dock::LyricsMessages::default(),
+            chip: dock::LyricsChip::default(),
         }
     }
 }
@@ -122,17 +128,26 @@ impl LyricsState {
             self.cursor = None;
             return;
         };
-        let key = lyrics::Track {
-            title: track.name.clone(),
-            artist: track.artist.clone(),
-            album: track.album.clone(),
-            duration: Some(track.duration).filter(|d| !d.is_zero()),
-        };
-        if key.title.trim().is_empty() {
+        if track.name.trim().is_empty() {
             self.forget();
             return;
         }
-        if self.track.as_ref() != Some(&key) {
+        let duration = Some(track.duration).filter(|d| !d.is_zero());
+        // Compared field by field: nothing built while the song plays on.
+        let same = self.track.as_ref().is_some_and(|t| {
+            t.title == track.name
+                && t.artist == track.artist
+                && t.album == track.album
+                && t.duration == duration
+        });
+        let key = || lyrics::Track {
+            title: track.name.clone(),
+            artist: track.artist.clone(),
+            album: track.album.clone(),
+            duration,
+        };
+        if !same {
+            let key = key();
             self.forget();
             if self.service.is_none() {
                 self.service = (self.start)();
@@ -156,7 +171,7 @@ impl LyricsState {
                 self.service = (self.start)();
             }
             if let Some(service) = &mut self.service {
-                service.request(key);
+                service.request(key());
             }
             self.asked_at = Some(now);
         }
@@ -290,5 +305,11 @@ impl Model {
         let timing = (self.settings.lyrics.delay_ms, self.settings.lyrics.karaoke);
         self.lyrics
             .sync(on, self.music.snapshot.as_ref(), timing, self.now);
+        if let Some(messages) = dock::LyricsMessages::fresh(self) {
+            self.lyrics.messages = messages;
+        }
+        if let Some(chip) = dock::LyricsChip::fresh(self) {
+            self.lyrics.chip = chip;
+        }
     }
 }

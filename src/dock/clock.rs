@@ -116,14 +116,14 @@ impl DockWidget for Clock {
     }
 
     /// `14:32` (` 2:32 pm`); none in minimal mode with `minimal.clock = "off"`.
-    fn chip(&self, model: &Model) -> Option<ChipText> {
+    fn chip<'m>(&self, model: &'m Model) -> Option<ChipText<'m>> {
         let s = &model.settings;
         if model.minimal() && s.minimal.clock == MinimalClock::Off {
             return None;
         }
         let hour24 = s.clock.hour24;
         Some(ChipText {
-            text: clock::readout(model.local.time, hour24, false, !hour24),
+            text: clock::readout(model.local.time, hour24, false, !hour24).into(),
             ink: Role::Text,
         })
     }

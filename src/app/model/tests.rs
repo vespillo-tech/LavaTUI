@@ -1848,6 +1848,28 @@ mod lyrics {
         assert_eq!(Lyrics.chip(&m).unwrap().text, "♪ first line");
     }
 
+    /// perf.md #5, claude review #15: the chip and the messages are
+    /// built when they change, and borrowed by every frame after.
+    #[test]
+    fn the_chip_and_messages_are_built_once_not_every_frame() {
+        use crate::dock::{LyricsShow, lyrics_show};
+        use std::borrow::Cow;
+        let (mut m, t0, source, _mock) = placed("lyrics-borrowed", 120, 36);
+        m.update(Action::Place("lyrics"), t0);
+        settle(&mut m, t0);
+        tick(&mut m, t0 + S * 3);
+        let chip = Lyrics.chip(&m).unwrap().text;
+        assert!(matches!(chip, Cow::Borrowed("♪ first line")), "{chip:?}");
+        source.set(Snapshot::new(Player::Stopped, t0 + S * 3));
+        tick(&mut m, t0 + S * 3);
+        match lyrics_show(&m) {
+            LyricsShow::Message(Cow::Borrowed(texts)) => {
+                assert_eq!(texts, ["♪ nothing playing"]);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
     #[test]
     fn seeks_cut_and_track_changes_ask_again() {
         let (mut m, t0, source, mock) = placed("lyrics-seek", 120, 36);
