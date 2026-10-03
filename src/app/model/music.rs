@@ -289,7 +289,7 @@ impl Model {
             };
             let track = self.music.snapshot.as_ref()?.track.as_ref()?;
             let r = dock::cover_at(&self.layout)?;
-            let key = cover::picture_key(self, &track.artwork_url, r, grain);
+            let key = cover::picture_key(&track.artwork_url, r, grain);
             let png = match key.grid {
                 None => art.hires.clone()?,
                 Some(grid) => self.music.pixel_art(&art, grid)?,

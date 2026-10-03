@@ -13,8 +13,10 @@
 //! ([`block_side`]), so every
 //! block is the same size give or take one; each size's blocks are always
 //! bigger than the one before's, however small the cover. A picture in
-//! pixels (kitty, iTerm2, sixel) has the same blocks ([`pixel_grid`]), so
-//! nothing moves when it takes over from the text cells.
+//! pixels (kitty, iTerm2, sixel) is finer: exactly `PIXEL_ART` squares
+//! across, whatever the cover's size; in a terminal that shows pictures
+//! these text cells are never drawn while it's on its way
+//! (`cover::draw_cover`), so the two never swap.
 //!
 //! Quadrants and sextants split each cell's pixels in the two groups whose
 //! means lose the least (every split is tried: 8 or 32), one mean the
@@ -79,8 +81,8 @@ pub fn block_side(mode: TextMode, cols: u16, translucent: bool) -> Option<usize>
 }
 
 /// Pixel art in `mode` on a cover `cols × rows`: its blocks across and
-/// down. The text cells and the picture in pixels both use these. `None`
-/// for the sharp modes.
+/// down in text cells. `None` for the sharp modes.
+#[cfg(test)]
 pub fn pixel_grid(mode: TextMode, cols: u16, rows: u16, translucent: bool) -> Option<(u16, u16)> {
     let side = block_side(mode, cols, translucent)?;
     let (nx, ny) = grid((cols, rows), (side, translucent));

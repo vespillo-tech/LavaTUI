@@ -434,10 +434,14 @@ the layout/visual contract.
                 in pixels it waits for. `picture.rs`: covers in text
                 cells (sharp: 2-colour best split per cell; pixel art:
                 flat blocks, `PIXEL_ART` about 32/16/10 across,
-                `block_side`; `pixel_grid` = the blocks across and down,
-                which the picture in pixels gets too, `Art::pixel_art`,
-                made on change and kept on `Music`), cached by source,
-                size, mode, depth and `translucent`.
+                `block_side`), cached by source,
+                size, mode, depth and `translucent`. Pictures in pixels
+                are finer: `PIXEL_ART` squares exactly (`picture_key`,
+                `Art::pixel_art`, made on change, kept on `Music`); while
+                one is on its way the cover shows the picture already up
+                if it's the same size (`Kitty::shown_sized`, the placed
+                inline one), else a blank tile, never text cells
+                (`Kitty::pending`, `Inline::pending`).
                 Widgets are stateless views of the `Model`. Seconds never
                 on the lava; date forms need tall.
 - `media/`    — now playing (platform-neutral; backends behind `cfg`):

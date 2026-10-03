@@ -10,9 +10,12 @@
 //! (2 × 3 pixels a cell, Unicode 13) where they're known to be drawn, else
 //! quadrants (2 × 2). `small-pixels`, `medium-pixels` and `big-pixels` are
 //! pixel art, the cover in flat square blocks, about 32, 16 and 10
-//! across (fewer on a small cover): drawn in whole and half cells
-//! ([`super::picture`]), and where the terminal shows pictures sent as one
-//! too, with the same blocks. `auto` is `sharp`. Text cells need 256 colours or
+//! across: where the terminal shows pictures, a picture of exactly that
+//! many squares; elsewhere drawn in whole and half cells, fewer on a small
+//! cover ([`super::picture`]). While a picture is on its way the cover is
+//! never drawn in text cells instead (they'd look different): the
+//! picture already up, if it's the same size, else a blank tile in the
+//! cover's colour. `auto` is `sharp`. Text cells need 256 colours or
 //! more; pixels any colour at all. With no way to show it the widget is
 //! one calm line.
 //!
@@ -445,23 +448,37 @@ pub(super) fn draw_cover(model: &Model, r: Rect, buf: &mut Buffer) {
     };
     let text = match model.pictures() {
         Drawn::Pixels(protocol, grain) => {
-            let key = picture_key(model, url, r, grain);
+            let key = picture_key(url, r, grain);
             let Rgb(red, green, blue) = art.mean();
             let bg = Color::Rgb(red, green, blue);
+            // The picture once it's all there. Until then (a frame or two
+            // for kitty, a few ms of sixel encoding) the one already up if
+            // it's this size, else a blank tile: never text cells, whose
+            // blocks and colours look different from the picture's.
             match protocol {
                 Protocol::Kitty => {
+                    let up = || model.kitty.shown_sized(r.width, r.height);
                     if let Some(id) = model.kitty.ready(&key) {
                         return graphics::draw(buf, r, id, bg);
                     }
+                    if model.kitty.pending(&key) {
+                        return match up() {
+                            Some(id) => graphics::draw(buf, r, id, bg),
+                            None => blank(r, bg, buf),
+                        };
+                    }
                 }
                 Protocol::Iterm | Protocol::Sixel => {
-                    if model.inline.shows(&key, r) {
+                    if model.inline.shows(r) {
                         return graphics::inline::draw(buf, r, bg);
+                    }
+                    if model.inline.pending() {
+                        return blank(r, bg, buf);
                     }
                 }
             }
-            // Until the picture is all there: the same in text cells (pixel
-            // art with the same blocks, `picture_key`).
+            // No picture can come (no room for one, or it couldn't be
+            // made): the cover in text cells.
             grain.text(model.caps)
         }
         Drawn::Text(mode) => mode,
@@ -482,14 +499,28 @@ pub(super) fn draw_cover(model: &Model, r: Rect, buf: &mut Buffer) {
 }
 
 /// The picture in pixels of the cover at `source`, drawn in `r` at
-/// `grain`: pixel art has the blocks its text cells show.
-pub fn picture_key(model: &Model, source: &str, r: Rect, grain: Grain) -> graphics::Key {
-    let text = grain.text(model.caps);
+/// `grain`: pixel art is `PIXEL_ART` squares across and down (32, 16 or
+/// 10), however big the cover; text cells have their own (`pixel_grid`).
+pub fn picture_key(source: &str, r: Rect, grain: Grain) -> graphics::Key {
+    let grid = match grain {
+        Grain::Sharp => None,
+        Grain::Pixels(level) => {
+            let n = picture::PIXEL_ART[level.min(picture::PIXEL_ART.len() - 1)];
+            Some((n, n))
+        }
+    };
     graphics::Key {
         source: source.to_owned(),
         cols: r.width,
         rows: r.height,
-        grid: picture::pixel_grid(text, r.width, r.height, model.translucent_cells()),
+        grid,
+    }
+}
+
+/// The cover's spot while its picture is on its way: its average colour.
+fn blank(r: Rect, bg: Color, buf: &mut Buffer) {
+    for p in r.positions() {
+        buf[p].set_symbol(" ").set_fg(bg).set_bg(bg);
     }
 }
 

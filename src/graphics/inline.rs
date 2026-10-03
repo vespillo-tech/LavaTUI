@@ -28,7 +28,10 @@
 //! The iTerm2 protocol takes the PNG as is, scaled by the terminal to the
 //! cells. Sixel is drawn at its own pixel size, so it needs the cell size
 //! in pixels and is encoded off the UI thread (resize, quantise, encode:
-//! a few milliseconds), the cover showing as text cells meanwhile.
+//! a few milliseconds). Meanwhile the picture already up at that spot
+//! stays ([`Inline::want`] keeps it as the target), or, with none there,
+//! the cover is a blank tile ([`Inline::pending`]): never a stand-in in
+//! text cells, which would look different from the picture.
 
 use std::io::{self, Write};
 use std::sync::Arc;
@@ -81,6 +84,8 @@ pub struct Inline {
     failed: Option<Spec>,
     /// On screen now, and where.
     placed: Option<(Spec, Rect)>,
+    /// This frame's wish is being encoded (and will be shown).
+    pending: bool,
     /// The screen the picture was placed on.
     screen: Rect,
     /// Due after this frame's cells: the picture and where.
@@ -94,6 +99,7 @@ impl Inline {
     pub fn want(&mut self, wish: Option<Wish>, screen: Rect) {
         self.poll();
         self.target = None;
+        self.pending = false;
         let Some(wish) = wish else {
             return;
         };
@@ -117,8 +123,11 @@ impl Inline {
             self.target = Some((spec, at));
             return;
         }
-        if self.failed.as_ref() == Some(&spec) || self.job.as_ref().is_some_and(|(s, _)| *s == spec)
-        {
+        if self.failed.as_ref() == Some(&spec) {
+            return;
+        }
+        if self.job.as_ref().is_some_and(|(s, _)| *s == spec) {
+            self.hold(at);
             return;
         }
         match spec.protocol {
@@ -142,13 +151,23 @@ impl Inline {
                         let _ = tx.send(sixel_picture(&png, (w, h), bg, crisp));
                     });
                 match started {
-                    Ok(_) => self.job = Some((spec, rx)),
+                    Ok(_) => {
+                        self.job = Some((spec, rx));
+                        self.hold(at);
+                    }
                     Err(_) => self.failed = Some(spec),
                 }
             }
             // Kitty has its own state (`super::Kitty`).
             Protocol::Kitty => {}
         }
+    }
+
+    /// While the wish is encoded: keep the picture already up at `at`, if
+    /// there is one there, as the target (it stays on screen untouched).
+    fn hold(&mut self, at: Rect) {
+        self.pending = true;
+        self.target = self.placed.clone().filter(|(_, r)| *r == at);
     }
 
     /// Collect a finished encoding, if any.
@@ -163,12 +182,17 @@ impl Inline {
         }
     }
 
-    /// Whether `key`'s picture is ready to be shown at `at` this frame
-    /// (else the cover draws itself in text cells).
-    pub fn shows(&self, key: &Key, at: Rect) -> bool {
-        self.target
-            .as_ref()
-            .is_some_and(|(s, r)| s.key == *key && *r == at)
+    /// Whether a picture is shown at `at` this frame: the one wished
+    /// for, or (while that's encoded) the one already up there. The cover
+    /// draws [`SENTINEL`]s there.
+    pub fn shows(&self, at: Rect) -> bool {
+        self.target.as_ref().is_some_and(|(_, r)| *r == at)
+    }
+
+    /// This frame's wish is on its way (being encoded): it will show.
+    /// False when it can't (no room, no cell size, a failed encoding).
+    pub fn pending(&self) -> bool {
+        self.pending
     }
 
     /// Whether frames shouldn't sleep: a picture being encoded or due.
@@ -359,7 +383,7 @@ mod tests {
         let mut buf = Buffer::empty(SCREEN);
         if let Some(w) = &want {
             inline.want(Some(w.clone()), SCREEN);
-            if inline.shows(&w.key, w.at) {
+            if inline.shows(w.at) {
                 draw(&mut buf, w.at, Color::Rgb(1, 2, 3));
             }
         } else {
@@ -382,7 +406,7 @@ mod tests {
 
     fn wait_for_encoding(inline: &mut Inline, w: &Wish) {
         let start = Instant::now();
-        while !inline.shows(&w.key, w.at) {
+        while inline.pending() || !inline.shows(w.at) {
             assert!(start.elapsed() < Duration::from_secs(10), "never encoded");
             std::thread::sleep(Duration::from_millis(2));
             inline.want(Some(w.clone()), SCREEN);
@@ -498,10 +522,10 @@ mod tests {
         let mut inline = Inline::default();
         let low = Rect::new(3, 16, 8, 4);
         inline.want(Some(wish(Protocol::Iterm, low)), SCREEN);
-        assert!(!inline.shows(&key(8, 4), low));
+        assert!(!inline.shows(low));
         let fits = Rect::new(3, 15, 8, 4);
         inline.want(Some(wish(Protocol::Iterm, fits)), SCREEN);
-        assert!(inline.shows(&key(8, 4), fits));
+        assert!(inline.shows(fits));
     }
 
     #[test]
@@ -509,7 +533,7 @@ mod tests {
         let mut inline = Inline::default();
         let w = wish(Protocol::Sixel, AT);
         inline.want(Some(w.clone()), SCREEN);
-        assert!(!inline.shows(&w.key, AT), "not yet");
+        assert!(!inline.shows(AT), "not yet");
         assert!(inline.busy());
         wait_for_encoding(&mut inline, &w);
         let (_, out) = frame(&mut inline, Some(w.clone()), |_| {});
@@ -529,8 +553,51 @@ mod tests {
         let mut bigger = w.clone();
         bigger.cell = Some((10, 20));
         inline.want(Some(bigger.clone()), SCREEN);
-        assert!(!inline.shows(&w.key, AT));
+        assert!(inline.pending(), "on its way");
+        assert!(inline.shows(AT), "the old one stays meanwhile");
         wait_for_encoding(&mut inline, &bigger);
+    }
+
+    /// lava-jop: while a new picture for the same spot is encoded, the one
+    /// up there stays untouched (its cells skipped, nothing written over
+    /// it), then the new one replaces it. With none up there yet, the
+    /// cover is told it's on its way (a blank tile, no text stand-in).
+    #[test]
+    fn the_picture_up_stays_while_the_next_one_is_encoded() {
+        let mut inline = Inline::default();
+        let first = wish(Protocol::Sixel, AT);
+        inline.want(Some(first.clone()), SCREEN);
+        assert!(inline.pending() && !inline.shows(AT), "nothing up yet");
+        wait_for_encoding(&mut inline, &first);
+        let (_, out) = frame(&mut inline, Some(first.clone()), |_| {});
+        assert!(!out.is_empty(), "placed");
+        let mut next = first.clone();
+        next.key.source = "https://i.example/b".into();
+        let (buf, out) = frame(&mut inline, Some(next.clone()), |_| {});
+        assert!(inline.pending());
+        assert!(all(&buf, AT, CellDiffOption::Skip), "left alone");
+        assert!(out.is_empty());
+        let start = Instant::now();
+        loop {
+            let (buf, out) = frame(&mut inline, Some(next.clone()), |_| {});
+            if !out.is_empty() {
+                assert!(all(&buf, AT, CellDiffOption::AlwaysUpdate), "placing");
+                break;
+            }
+            assert!(all(&buf, AT, CellDiffOption::Skip), "still the old one");
+            assert!(start.elapsed() < Duration::from_secs(10), "never encoded");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(!inline.pending());
+        // Elsewhere, the old one can't stay: nothing shows until it's done.
+        let moved = Wish {
+            at: Rect::new(20, 2, 8, 4),
+            ..first.clone()
+        };
+        let mut moved_next = moved.clone();
+        moved_next.key.source = "https://i.example/c".into();
+        inline.want(Some(moved_next), SCREEN);
+        assert!(inline.pending() && !inline.shows(moved.at));
     }
 
     #[test]
@@ -549,7 +616,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(2));
             inline.want(Some(w.clone()), SCREEN);
         }
-        assert!(!inline.shows(&w.key, AT));
+        assert!(!inline.shows(AT));
         inline.want(Some(w.clone()), SCREEN);
         assert!(!inline.busy(), "not tried again");
     }

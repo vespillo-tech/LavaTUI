@@ -1380,47 +1380,148 @@ mod music {
         };
         assert!(sent(&mut m).contains(";QUJD\x1b\\"), "the sharp picture");
         let art = Art::solid(Rgb(200, 120, 40));
-        let mut grids = Vec::new();
-        for (detail, level) in [
-            (Detail::SmallPixels, 0),
-            (Detail::MediumPixels, 1),
-            (Detail::BigPixels, 2),
+        for (detail, n) in [
+            (Detail::SmallPixels, 32),
+            (Detail::MediumPixels, 16),
+            (Detail::BigPixels, 10),
         ] {
             m.settings.art.detail = detail;
             let out = sent(&mut m);
-            // lava-jop: the blocks its text cells show, so nothing moves
-            // when the picture takes over.
-            let r = crate::dock::cover_at(&m.layout).unwrap();
-            let text = crate::dock::picture::TextMode::Pixels(level);
-            let grid = crate::dock::picture::pixel_grid(text, r.width, r.height, false).unwrap();
-            // The chunks' payloads, joined.
+            // The chunks' payloads, joined: the cover in n × n squares,
+            // whatever its size (text cells have their own grid).
             let payload: String = out
                 .split("\x1b_G")
                 .filter_map(|c| c.split_once(';')?.1.split_once("\x1b\\"))
                 .map(|(data, _)| data)
                 .collect();
-            let png = art.pixel_art(grid).unwrap();
+            let png = art.pixel_art((n, n)).unwrap();
             assert_eq!(payload, *png, "{detail:?}");
             assert!(sent(&mut m).contains("a=d,d=I"), "the old one goes");
             assert!(sent(&mut m).is_empty(), "and nothing more");
-            grids.push(grid);
         }
-        assert!(
-            grids[0].0 > grids[1].0 && grids[1].0 > grids[2].0,
-            "{grids:?}"
-        );
-        // While it's on its way: the same grain in text cells.
-        m.settings.art.detail = Detail::MediumPixels;
-        tick(&mut m, t0);
+    }
+
+    /// The cover's cells as drawn this frame (after a tick), and where.
+    fn cover_cells(m: &Model) -> (Rect, Vec<String>) {
         let p = *m.layout.placed(COVER_W).unwrap();
         let mut buf = ratatui::buffer::Buffer::empty(m.layout.area);
         let look = crate::dock::Look {
             backdrop: crate::dock::Backdrop::Panel,
             align: ratatui::layout::Alignment::Left,
         };
-        Cover.draw(&m, p.form, p.rect, look, &mut buf);
-        let glyph = buf[(p.rect.x, p.rect.y)].symbol().to_owned();
-        assert!(glyph == "█" || glyph == "▀", "{glyph:?}");
+        Cover.draw(m, p.form, p.rect, look, &mut buf);
+        let r = crate::dock::cover_at(&m.layout).unwrap();
+        (
+            r,
+            r.positions().map(|p| buf[p].symbol().to_owned()).collect(),
+        )
+    }
+
+    /// lava-jop: in a terminal with pictures the cover never shows as text
+    /// cells while its picture is on its way (they'd look different):
+    /// the picture already up while it's the same size, else a blank tile
+    /// in the cover's colour.
+    #[test]
+    fn kitty_covers_never_stand_in_as_text() {
+        use crate::graphics::is_placeholder;
+        let (mut m, t0) = model_with(Session::default(), temp_config("cover-kitty-wait"), 120, 36);
+        m.caps = Caps {
+            pixels: Some(crate::graphics::Protocol::Kitty),
+            sextants: true,
+        };
+        with_hires(&mut m, &fake(t0));
+        m.update(Action::Place("cover"), t0);
+        let frame = |m: &mut Model| {
+            tick(m, t0);
+            let cells = cover_cells(m);
+            m.kitty.write(&mut Vec::new()).unwrap();
+            cells.1
+        };
+        let blank = |cells: &[String]| cells.iter().all(|c| c == " ");
+        let pictured = |cells: &[String]| cells.iter().all(|c| is_placeholder(c));
+        assert!(blank(&frame(&mut m)), "nothing up yet: blank");
+        assert!(pictured(&frame(&mut m)), "then the picture");
+        // A quality change: the old picture until the new one is there.
+        for detail in [Detail::SmallPixels, Detail::BigPixels, Detail::Sharp] {
+            m.settings.art.detail = detail;
+            let cells = frame(&mut m);
+            assert!(pictured(&cells), "{detail:?}: the old picture meanwhile");
+            assert!(pictured(&frame(&mut m)), "{detail:?}");
+            assert!(!m.kitty.busy() || pictured(&frame(&mut m)));
+        }
+        // Another size: the old picture won't do, a blank tile meanwhile.
+        let before = cover_cells(&m).0;
+        m.settings.art.size = CoverSize::Small;
+        let cells = frame(&mut m);
+        assert_ne!(cover_cells(&m).0.width, before.width);
+        assert!(blank(&cells), "{cells:?}");
+        assert!(pictured(&frame(&mut m)));
+    }
+
+    /// The same for pictures placed at the cursor (sixel, encoded off the
+    /// UI thread): the one up stays while the next is encoded.
+    #[test]
+    fn sixel_covers_never_stand_in_as_text() {
+        use crate::graphics::inline::SENTINEL;
+        let (mut m, t0) = model_with(Session::default(), temp_config("cover-sixel-wait"), 120, 36);
+        m.caps = Caps {
+            pixels: Some(crate::graphics::Protocol::Sixel),
+            sextants: true,
+        };
+        m.cell_px = Some((8, 16));
+        let source = fake(t0);
+        let s = source.clone();
+        m.music.connect_with(
+            move || Box::new(s.clone()),
+            || {
+                let art = Art::from_fn(|x, _| Rgb((x * 2) as u8, 40, 200));
+                let png = {
+                    use base64::Engine;
+                    let img = image::RgbImage::from_pixel(4, 4, image::Rgb([200, 40, 9]));
+                    let mut bytes = std::io::Cursor::new(Vec::new());
+                    img.write_to(&mut bytes, image::ImageFormat::Png).unwrap();
+                    base64::engine::general_purpose::STANDARD.encode(bytes.into_inner())
+                };
+                ArtLoader::preloaded(COVER, art.with_hires(&png))
+            },
+        );
+        m.update(Action::Place("cover"), t0);
+        // Frames as the loop draws them, until one places a picture.
+        let mut placed = 0;
+        let mut text = Vec::new();
+        let mut run = |m: &mut Model, what: &str| {
+            let start = Instant::now();
+            loop {
+                tick(m, t0);
+                let (r, cells) = cover_cells(m);
+                if cells.iter().any(|c| c != " " && c != SENTINEL) {
+                    text.push(format!("{what}: {:?}", &cells[..3]));
+                }
+                let mut buf = ratatui::buffer::Buffer::empty(m.layout.area);
+                for (p, c) in r.positions().zip(&cells) {
+                    buf[p].set_symbol(c);
+                }
+                m.inline.settle(&mut buf);
+                let mut out = Vec::new();
+                m.inline.write(&mut out).unwrap();
+                if !out.is_empty() {
+                    placed += 1;
+                    return;
+                }
+                assert!(
+                    start.elapsed() < Duration::from_secs(10),
+                    "{what}: never placed"
+                );
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        };
+        run(&mut m, "first");
+        for detail in [Detail::SmallPixels, Detail::MediumPixels, Detail::Sharp] {
+            m.settings.art.detail = detail;
+            run(&mut m, &format!("{detail:?}"));
+        }
+        assert_eq!(placed, 4);
+        assert!(text.is_empty(), "text stand-ins: {text:?}");
     }
 
     #[test]

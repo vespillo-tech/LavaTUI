@@ -35,6 +35,10 @@ What changed in each version of LavaTUI, in plain words.
   sizes turn the cover into pixel art with bigger and bigger squares, in
   every terminal. Before, the choices often looked the same. Your old
   choice carries over.
+- In terminals that show pictures, the cover no longer flashes a rougher,
+  blockier version while a new picture loads (a new song, a new quality,
+  a new size). The old picture stays until the new one is ready, or the
+  spot stays plain for a moment.
 - Adding a song to a playlist that already has it now asks first:
   "already in Lamplight Mix · add it again?" Press `Enter` to add it
   again, or `Esc` to pick another playlist. In the add list, playlists
