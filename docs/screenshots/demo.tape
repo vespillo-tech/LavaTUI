@@ -11,9 +11,10 @@
 # The story (screenplay: lava-0bl): the lamp and its looks (styles,
 # colours, the style picker; same seed and timing as the first demo, so
 # the wax moves the same) → it's a clock and a focus timer → it's your
-# music (card, karaoke lyrics, cover, its pixel sizes, the playlists, a
-# new song, like, add with the "already in" question) → wax at the top →
-# just the lamp, in synthwave, with the lyrics sung on it.
+# music (card, karaoke lyrics, cover, the playlists, a new song, like, add
+# with the "already in" question) → settings: wax at the top, the new
+# cover from big pixels to sharp → just the lamp, in synthwave, with the
+# lyrics sung on it.
 #
 # The scratch config turns on the soft backing (dock.backing): over
 # synthwave's grid, floating text picks a contrast ink per letter, which
@@ -44,7 +45,7 @@ Hide
 Type "export PS1='> ' COLORTERM=truecolor; unset TERM_PROGRAM TERM_PROGRAM_VERSION ZMX_SESSION ${!GHOSTEX_*} ${!LAVATUI_*}; cargo build --release -q && clear"
 Enter
 Wait@300s
-Type `printf '[ui]\nwelcome = false\n[lamp]\nstyle = "solid"\n[dock]\nbacking = "soft"\n' > /tmp/lavatui-demo.toml && clear && ./target/release/lavatui --seed 7 --fps 8 --demo --config /tmp/lavatui-demo.toml; clear`
+Type `printf '[ui]\nwelcome = false\n[lamp]\nstyle = "solid"\n[dock]\nbacking = "soft"\nanchor = { cover = "top-left" }\n[art]\nsize = "small"\n' > /tmp/lavatui-demo.toml && clear && ./target/release/lavatui --seed 7 --fps 8 --demo --config /tmp/lavatui-demo.toml; clear`
 Enter
 # Let the first blobs bud off the pool before the camera rolls.
 Sleep 5s
@@ -78,28 +79,24 @@ Sleep 1.3s
 Type "f"
 Sleep 0.6s
 Type " "
-Sleep 1.5s
+Sleep 1.1s
 
 # 3. Your music. Clock and timer off; the music card beside the lamp.
 Type "tf"
 Sleep 0.3s
 Type "a"
-Sleep 2s
+Sleep 1.6s
 # Lyrics beside it, lit word by word (a long line wraps, never cut off).
 Type "y"
-Sleep 2.5s
-# The cover on the lamp; as pixel art (big pixels), and back.
+Sleep 2s
+# The cover on the lamp.
 Type "oo"
-Sleep 1.1s
-Type "OOOO"
-Sleep 1.2s
-Type "O"
-Sleep 0.8s
+Sleep 1s
 # The playlists (music controls on: A); play another song, like it.
 Type "Ab"
-Sleep 1.2s
-Enter
 Sleep 1s
+Enter
+Sleep 0.8s
 Type "j"
 Sleep 0.4s
 Enter
@@ -109,12 +106,12 @@ Sleep 0.1s
 Escape
 Sleep 0.2s
 Type "s"
-Sleep 1.2s
+Sleep 1s
 # Add it: ✓ marks a playlist that has it, so that one asks first.
 Type "a"
-Sleep 1.3s
+Sleep 1.1s
 Enter
-Sleep 2s
+Sleep 1.5s
 Escape
 Sleep 0.1s
 Escape
@@ -122,15 +119,33 @@ Sleep 0.1s
 Escape
 Sleep 0.3s
 
-# 4. Wax at the top, from the settings.
+# 4. One visit to the settings (the sheet leaves the cover, top left,
+# in view): wax at the top on; then the new cover picture steps back from
+# big pixels to sharp (from auto, ← wraps round to big pixels).
 Type ","
-Sleep 0.5s
+Sleep 0.4s
 Enter
 Sleep 0.3s
 Type "jjjj"
 Sleep 0.4s
 Right
+Sleep 0.6s
+Escape
+Sleep 0.2s
+Type "jjj"
+Sleep 0.3s
+Enter
+Sleep 0.3s
+Type "jjj"
+Sleep 0.4s
+Left
 Sleep 1s
+Left
+Sleep 1s
+Left
+Sleep 1s
+Left
+Sleep 1.2s
 Escape
 Sleep 0.1s
 Escape
@@ -140,7 +155,7 @@ Sleep 0.2s
 # lyrics sung on it (cover off, lyrics onto the lamp, lamp only). The soft
 # backing keeps the karaoke colours readable over the grid.
 Type "oym"
-Sleep 4.5s
+Sleep 3s
 
 Hide
 Type "q"
