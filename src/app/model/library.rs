@@ -107,6 +107,9 @@ impl<T> Default for Listing<T> {
 pub struct OpenPlaylist {
     pub playlist: Playlist,
     pub tracks: Listing<Track>,
+    /// Where the next page starts: songs removed from the playlist leave
+    /// empty slots, so it can be past `tracks.items.len()`.
+    pub next_offset: u32,
     pub has_more: bool,
 }
 
@@ -847,8 +850,9 @@ impl Library {
                 open.tracks.loading = false;
                 match result {
                     Ok(Reply::Tracks(page)) => {
-                        if page.offset as usize == open.tracks.items.len() {
+                        if page.offset == open.next_offset {
                             open.tracks.items.extend(page.items);
+                            open.next_offset = page.next_offset;
                         }
                         open.tracks.loaded = true;
                         open.has_more = page.has_more;
@@ -1759,6 +1763,7 @@ impl Model {
                         loading: true,
                         ..Listing::default()
                     },
+                    next_offset: 0,
                     has_more: false,
                 });
                 let request = Request::PlaylistTracks {
@@ -1923,14 +1928,14 @@ impl Model {
         let Some(open) = &mut self.library.open else {
             return;
         };
-        let loaded = open.tracks.items.len();
+        let next_offset = open.next_offset;
         let near_end = finding || view.cursor + PREFETCH >= shown;
         if open.has_more && !open.tracks.loading && near_end {
             open.tracks.loading = true;
             let playlist_id = open.playlist.id.clone();
             let request = Request::PlaylistTracks {
                 playlist_id: playlist_id.clone(),
-                offset: loaded as u32,
+                offset: next_offset,
             };
             self.library.request(request, Want::Tracks { playlist_id });
         }

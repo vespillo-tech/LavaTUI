@@ -577,6 +577,59 @@ fn a_filter_looks_through_every_page_and_esc_stays_on_the_row() {
 }
 
 #[test]
+fn songs_removed_from_a_playlist_do_not_repeat_on_the_next_page() {
+    let account = demo();
+    // 60 songs with four empty slots (two together, one at the end of the
+    // first page, one at the very end): 64 slots over two pages.
+    account
+        .state()
+        .holes
+        .insert("mix".into(), vec![3, 4, 49, 63]);
+    let (mut m, t0, _source) = rig("holes", &account);
+    key(&mut m, t0, P::Playlists);
+    m.update(Action::Keep, t0);
+    assert_eq!(m.list_total(ListKind::Tracks), 47, "the first page's songs");
+    // A filter looks through everything: the rest loads.
+    m.update(Action::Find, t0);
+    type_in(&mut m, t0, "slow");
+    tick(&mut m, t0);
+    tick(&mut m, t0);
+    let ids: Vec<String> = m
+        .library
+        .open
+        .as_ref()
+        .unwrap()
+        .tracks
+        .items
+        .iter()
+        .map(|t| t.id.clone().unwrap())
+        .collect();
+    assert_eq!(ids.len(), 60, "every song once");
+    assert_eq!(ids, (0..60).map(|i| format!("t{i}")).collect::<Vec<_>>());
+    let offsets: Vec<u32> = account
+        .state()
+        .requests
+        .iter()
+        .filter_map(|r| match r {
+            Request::PlaylistTracks {
+                playlist_id,
+                offset,
+            } if playlist_id == "mix" => Some(*offset),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        offsets,
+        [0, 50],
+        "the second page starts after the empty slots"
+    );
+    assert!(
+        !m.library.open.as_ref().unwrap().has_more,
+        "the last page ends it"
+    );
+}
+
+#[test]
 fn clicks_pick_filtered_rows() {
     let account = demo();
     let (mut m, t0, source) = rig("find-click", &account);

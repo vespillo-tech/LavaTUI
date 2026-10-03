@@ -76,16 +76,12 @@ impl Track {
 pub struct Page<T> {
     pub items: Vec<T>,
     pub offset: u32,
+    /// Where the next page starts: after every slot of this one, the empty
+    /// (removed or unplayable) ones too, so `items.len()` is not it.
+    pub next_offset: u32,
     pub total: u32,
     /// Another page follows.
     pub has_more: bool,
-}
-
-impl<T> Page<T> {
-    /// The offset to ask for next.
-    pub fn next_offset(&self) -> u32 {
-        self.offset + self.items.len() as u32
-    }
 }
 
 /// One page of a playlist's item URIs ([`super::Request::PlaylistUris`]).
@@ -112,13 +108,17 @@ pub(super) struct RawPage<T> {
 }
 
 impl<T> RawPage<T> {
-    /// Converts the non-null items that `f` accepts.
+    /// Converts the non-null items that `f` accepts. The next page still
+    /// starts after every slot, the dropped ones included.
     pub fn map<U>(self, f: impl FnMut(T) -> Option<U>) -> Page<U> {
+        let slots = self.items.len() as u32;
         Page {
             items: self.items.into_iter().flatten().filter_map(f).collect(),
             offset: self.offset,
+            next_offset: self.offset + slots,
             total: self.total,
-            has_more: self.next.is_some(),
+            // An empty reply that claims more would be asked for again forever.
+            has_more: self.next.is_some() && slots > 0,
         }
     }
 }
