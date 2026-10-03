@@ -13,7 +13,11 @@
 # the wax moves the same) → it's a clock and a focus timer → it's your
 # music (card, karaoke lyrics, cover, its pixel sizes, the playlists, a
 # new song, like, add with the "already in" question) → wax at the top →
-# just the lamp.
+# just the lamp, in synthwave, with the lyrics sung on it.
+#
+# The scratch config turns on the soft backing (dock.backing): over
+# synthwave's grid, floating text picks a contrast ink per letter, which
+# hides the karaoke colours.
 #
 # Size: keep the GIF under 5 MB. Truecolor wax changes most pixels every
 # frame, so it is recorded small and at 8 fps, and squeezed to 80 colours.
@@ -40,7 +44,7 @@ Hide
 Type "export PS1='> ' COLORTERM=truecolor; unset TERM_PROGRAM TERM_PROGRAM_VERSION ZMX_SESSION ${!GHOSTEX_*} ${!LAVATUI_*}; cargo build --release -q && clear"
 Enter
 Wait@300s
-Type `printf '[ui]\nwelcome = false\n[lamp]\nstyle = "solid"\n' > /tmp/lavatui-demo.toml && clear && ./target/release/lavatui --seed 7 --fps 8 --demo --config /tmp/lavatui-demo.toml; clear`
+Type `printf '[ui]\nwelcome = false\n[lamp]\nstyle = "solid"\n[dock]\nbacking = "soft"\n' > /tmp/lavatui-demo.toml && clear && ./target/release/lavatui --seed 7 --fps 8 --demo --config /tmp/lavatui-demo.toml; clear`
 Enter
 # Let the first blobs bud off the pool before the camera rolls.
 Sleep 5s
@@ -74,7 +78,7 @@ Sleep 1.3s
 Type "f"
 Sleep 0.6s
 Type " "
-Sleep 1.8s
+Sleep 1.5s
 
 # 3. Your music. Clock and timer off; the music card beside the lamp.
 Type "tf"
@@ -83,17 +87,17 @@ Type "a"
 Sleep 2s
 # Lyrics beside it, lit word by word (a long line wraps, never cut off).
 Type "y"
-Sleep 3s
+Sleep 2.5s
 # The cover on the lamp; as pixel art (big pixels), and back.
 Type "oo"
-Sleep 1.3s
+Sleep 1.1s
 Type "OOOO"
-Sleep 1.3s
+Sleep 1.2s
 Type "O"
 Sleep 0.8s
 # The playlists (music controls on: A); play another song, like it.
 Type "Ab"
-Sleep 1.3s
+Sleep 1.2s
 Enter
 Sleep 1s
 Type "j"
@@ -126,15 +130,17 @@ Sleep 0.3s
 Type "jjjj"
 Sleep 0.4s
 Right
-Sleep 1.3s
+Sleep 1s
 Escape
 Sleep 0.1s
 Escape
-Sleep 0.5s
+Sleep 0.2s
 
-# 5. Just the lamp (the cover off first).
-Type "om"
-Sleep 3.5s
+# 5. Just the lamp, synthwave's horizon edge to edge, the new song's
+# lyrics sung on it (cover off, lyrics onto the lamp, lamp only). The soft
+# backing keeps the karaoke colours readable over the grid.
+Type "oym"
+Sleep 4.5s
 
 Hide
 Type "q"
