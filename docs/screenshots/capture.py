@@ -11,6 +11,7 @@ a monospace font. Clock times are whatever the local time is.
     /tmp/v/bin/python docs/screenshots/capture.py hero help  # some
     /tmp/v/bin/python docs/screenshots/capture.py live       # needs Spotify playing
     /tmp/v/bin/python docs/screenshots/capture.py lyrics     # Spotify + lrclib.net
+    /tmp/v/bin/python docs/screenshots/capture.py library    # --demo's made-up account
     /tmp/v/bin/python docs/screenshots/capture.py cover      # Spotify; text-cell covers
     /tmp/v/bin/python docs/screenshots/capture.py settings-pages  # every settings page
     /tmp/v/bin/python docs/screenshots/capture.py guide      # welcome card, music controls
@@ -31,7 +32,10 @@ playing, so they're for checking the widgets, not for committing. They
 land in $LAVATUI_SHOT_OUT (default: the temp dir). `cover` (the cover
 widget in each cover quality, beside the lamp and on the lava, with
 opaque and see-through cell backgrounds, plus `cover-qualities.png`
-side by side) uses `--demo` covers and lands there too.
+side by side) uses `--demo` covers and lands there too, as does `library`
+(the playlist browser, a playlist's songs, the add list with its ✓ and
+the "add it again?" question, over `--demo`'s made-up Spotify account;
+`library-live` is the same over your real one).
 
 pyte can't show kitty graphics, so the terminal's own variables that would
 make `art.detail = "auto"` pick pixels (Ghostty's, kitty's) are dropped:
@@ -312,10 +316,19 @@ LIVE = {
     "live-music-side": Shot(120, 36, '[lamp];style="solid";[dock];music="side"', frames=420),
     "live-music-lava": Shot(120, 36, '[lamp];style="braille";[theme];palette="abyss";[dock];music="overlay"', frames=420),
 }
+# The library UI over `--demo`'s made-up account. `capture.py library`.
+LIBRARY = {
+    "library-demo-widget": Shot(120, 36, '[lamp];style="solid";[dock];music="side"', args="--seed 2 --demo", frames=420),
+    "library-demo-playlists": Shot(120, 36, '[lamp];style="solid";[dock];music="side"', "2:A,3:b,4:j", args="--seed 2 --demo", frames=420),
+    "library-demo-tracks": Shot(120, 36, '[lamp];style="solid";[dock];music="side"', "2:A,3:b,4:\\r,5:j", args="--seed 2 --demo", frames=480),
+    "library-demo-add": Shot(120, 36, '[lamp];style="braille";[theme];palette="abyss";[dock];music="side"', "2:A,3:a", args="--seed 5 --demo", frames=420),
+    "library-demo-again": Shot(120, 36, '[lamp];style="braille";[theme];palette="abyss";[dock];music="side"', "2:A,3:a,4:\\r", args="--seed 5 --demo", frames=420),
+    "library-demo-small": Shot(60, 18, '[lamp];style="solid";[dock];music="side"', "2:A,3:a", args="--seed 2 --demo", frames=420),
+}
 # Live, logged in to the Web API (needs LAVATUI_SPOTIFY_CLIENT_ID and a
 # LAVATUI_SPOTIFY_TOKEN_FILE from a login, e.g. live_library's): the
-# library UI over your real playlists. `capture.py library`.
-LIBRARY = {
+# library UI over your real playlists. `capture.py library-live`.
+LIBRARY_LIVE = {
     "library-widget": Shot(120, 36, '[lamp];style="solid";[dock];music="side"', frames=420),
     "library-playlists": Shot(120, 36, '[lamp];style="solid";[dock];music="side"', "2:A,3:b,4:j", frames=420),
     "library-tracks": Shot(120, 36, '[lamp];style="solid";[dock];music="side"', "2:A,3:b,4:\\r,5:j", frames=480),
@@ -397,6 +410,8 @@ def main(names):
         jobs |= LYRICS
     if "library" in want:
         jobs |= LIBRARY
+    if "library-live" in want:
+        jobs |= LIBRARY_LIVE
     if "cover" in want:
         jobs |= COVER
     if "guide" in want:
@@ -411,7 +426,7 @@ def main(names):
     def one(item):
         name, shot = item
         out = os.path.join(HERE if name in SHOTS else tmp, name + ".png")
-        if name in LIVE or name in LYRICS or name in LIBRARY or name in COVER or name in GUIDE or name in SETTINGS_PAGES:
+        if name in LIVE or name in LYRICS or name in LIBRARY or name in LIBRARY_LIVE or name in COVER or name in GUIDE or name in SETTINGS_PAGES:
             live = os.environ.get("LAVATUI_SHOT_OUT", tempfile.gettempdir())
             out = os.path.join(live, name + ".png")
         render(run(shot), out)

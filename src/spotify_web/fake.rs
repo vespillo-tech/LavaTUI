@@ -1,7 +1,8 @@
-//! [`FakeWeb`]: an in-memory Spotify account for the app's tests. Answers
-//! every request at once from its state (playlists, tracks, liked songs,
-//! the player) and records what was asked; clones share the state, so a
-//! test keeps one to look at while the model owns another.
+//! [`FakeWeb`]: an in-memory Spotify account for the app's tests and for
+//! `--demo` (`crate::demo::account`). Answers every request at once from
+//! its state (playlists, tracks, liked songs, the player) and records what
+//! was asked; clones share the state, so a test keeps one to look at while
+//! the model owns another. No network, no keyring.
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -11,8 +12,12 @@ use super::{
     User, Web,
 };
 
+// Some knobs only tests turn.
+#[cfg_attr(not(test), allow(dead_code))]
 pub struct FakeState {
     pub logged_in: bool,
+    /// A login completes at once (`--demo`: no browser to wait for).
+    pub instant_login: bool,
     /// The saved login is unread (the macOS Keychain): `unlock` reads it.
     pub locked: bool,
     /// What an unlock finds: a saved login or none.
@@ -51,6 +56,7 @@ impl Default for FakeState {
     fn default() -> Self {
         Self {
             logged_in: false,
+            instant_login: false,
             locked: false,
             saved: false,
             unlocks: 0,
@@ -80,7 +86,6 @@ pub struct FakeWeb(pub Arc<Mutex<FakeState>>);
 pub const PAGE: usize = 50;
 
 impl FakeWeb {
-    /// Logged in as `me`, with `playlists` (and their `tracks`).
     /// Logged in as `me`, with `playlists` and the tracks of those `me`
     /// can read (others answer `Forbidden`, as Spotify does).
     pub fn account(me: User, playlists: Vec<(Playlist, Vec<Track>)>) -> Self {
@@ -100,6 +105,7 @@ impl FakeWeb {
     }
 
     /// The same account, its login saved but not read yet (macOS).
+    #[cfg(test)]
     pub fn locked(self) -> Self {
         {
             let mut s = self.state();
@@ -115,6 +121,7 @@ impl FakeWeb {
     }
 
     /// The browser came back: logged in.
+    #[cfg(test)]
     pub fn finish_login(&self) {
         let mut s = self.state();
         s.login_pending = false;
@@ -123,6 +130,7 @@ impl FakeWeb {
     }
 
     /// The browser came back with an error.
+    #[cfg(test)]
     pub fn fail_login(&self, error: Error) {
         let mut s = self.state();
         s.login_pending = false;
@@ -130,6 +138,7 @@ impl FakeWeb {
     }
 
     /// Answer the held unlock and requests.
+    #[cfg(test)]
     pub fn release(&self) {
         let mut s = self.state();
         s.hold = false;
@@ -203,9 +212,10 @@ fn answer(s: &mut FakeState, request: Request) -> Result<Reply, Error> {
                 p.snapshot_id.clone_from(&snapshot);
                 p.total += n;
             }
-            let list = s.tracks.entry(playlist_id).or_default();
             for uri in uris {
-                list.push(Track {
+                // A song the account knows (in any playlist) comes as is.
+                let known = s.tracks.values().flatten().find(|t| t.uri == uri).cloned();
+                let track = known.unwrap_or_else(|| Track {
                     id: uri.rsplit(':').next().map(str::to_owned),
                     uri,
                     name: "added".into(),
@@ -215,6 +225,7 @@ fn answer(s: &mut FakeState, request: Request) -> Result<Reply, Error> {
                     is_local: false,
                     image_url: None,
                 });
+                s.tracks.entry(playlist_id.clone()).or_default().push(track);
             }
             Reply::Snapshot(snapshot)
         }
@@ -294,7 +305,13 @@ impl Web for FakeWeb {
     }
 
     fn login(&mut self) -> Result<String, Error> {
-        self.state().login_pending = true;
+        let mut s = self.state();
+        if s.instant_login {
+            s.logged_in = true;
+            s.events.push_back(Event::LoggedIn { saved: true });
+        } else {
+            s.login_pending = true;
+        }
         Ok("https://accounts.spotify.com/authorize?fake".into())
     }
 
@@ -327,7 +344,7 @@ impl Web for FakeWeb {
     }
 }
 
-/// A playlist for tests.
+/// A playlist (tests, `--demo`).
 pub fn playlist(id: &str, name: &str, owner: &str, collaborative: bool, total: u32) -> Playlist {
     Playlist {
         id: id.into(),
@@ -344,6 +361,7 @@ pub fn playlist(id: &str, name: &str, owner: &str, collaborative: bool, total: u
 }
 
 /// A track for tests.
+#[cfg(test)]
 pub fn track(id: &str, name: &str, artist: &str) -> Track {
     Track {
         id: Some(id.into()),
@@ -360,6 +378,7 @@ pub fn track(id: &str, name: &str, artist: &str) -> Track {
 /// The account the app's tests use: `me` owns "Lamplight Mix" (60
 /// tracks, so it pages) and "lavatui test" (empty), collaborates on
 /// "Shared Jams", and follows "Discover Weekly" (not readable).
+#[cfg(test)]
 pub fn demo() -> FakeWeb {
     let me = User {
         id: "me".into(),

@@ -6,8 +6,8 @@
 //! queues [`Request`]s and drains [`Event`]s once a frame ([`Library::sync`],
 //! bounded), so nothing here blocks a frame. The client exists only while
 //! the music widget is placed and a Client ID is configured
-//! (`spotify.client_id` or `LAVATUI_SPOTIFY_CLIENT_ID`); tests plug in a
-//! `FakeWeb`.
+//! (`spotify.client_id` or `LAVATUI_SPOTIFY_CLIENT_ID`); tests and
+//! `--demo` plug in a `FakeWeb`.
 //!
 //! The saved login is read only when a library feature is first used (or
 //! the Spotify setup opens): on macOS that read can make the Keychain ask
@@ -178,6 +178,12 @@ enum Want {
 pub struct Library {
     web: Option<Box<dyn Web>>,
     connect: Connect,
+    /// `connect` was plugged in (tests, `--demo`): a new Client ID or
+    /// login store keeps it.
+    plugged: bool,
+    /// `--demo`'s made-up account: set up without a Client ID, and its
+    /// login never saved to the config.
+    pub demo: bool,
     client_id: Option<String>,
     store: LoginStore,
     /// A login is saved, as far as we know (`spotify.logged_in`): shown as
@@ -297,6 +303,8 @@ impl Library {
         Self {
             web: None,
             connect: connector(client_id.clone(), store),
+            plugged: false,
+            demo: false,
             client_id,
             store,
             saved,
@@ -325,18 +333,18 @@ impl Library {
         }
     }
 
-    /// Use `connect` for the client, from the next time music is placed.
-    #[cfg(test)]
+    /// Use `connect` for the client, from the next time music is placed
+    /// (tests and `--demo`: a `FakeWeb`).
     pub fn connect_with(&mut self, connect: impl Fn() -> Option<Box<dyn Web>> + 'static) {
         self.connect = Box::new(connect);
+        self.plugged = true;
         self.disconnect();
     }
 
     /// A new Client ID (the settings screen): the old client goes, and the
-    /// next sync connects with this one. Tests keep their fake.
+    /// next sync connects with this one. A plugged-in fake stays.
     pub fn set_client_id(&mut self, client_id: Option<String>) {
-        #[cfg(not(test))]
-        {
+        if !self.plugged {
             self.connect = connector(client_id.clone(), self.store);
         }
         self.client_id = client_id;
@@ -350,8 +358,7 @@ impl Library {
             return;
         }
         self.store = store;
-        #[cfg(not(test))]
-        {
+        if !self.plugged {
             self.connect = connector(self.client_id.clone(), store);
         }
         // Nothing connected (no Client ID): nothing to move.
@@ -1104,7 +1111,8 @@ impl Model {
         if self.spotify_setup_open() {
             self.unlock_library(None);
         }
-        if self.settings.spotify.logged_in != self.library.saved {
+        // The demo's made-up login is never written down.
+        if !self.library.demo && self.settings.spotify.logged_in != self.library.saved {
             self.settings.spotify.logged_in = self.library.saved;
             self.changed(self.now);
         }
@@ -1337,7 +1345,7 @@ impl Model {
         if self.library.account() == Account::Unavailable {
             if !self.music_on() {
                 self.toast("music is off · a to show it");
-            } else if self.settings.spotify_client_id().is_none() {
+            } else if !self.spotify_set_up() {
                 // Nothing to log in with yet: the guided setup says how.
                 self.open_settings_at(super::settings_screen::Page::Spotify, true);
             } else {
@@ -1411,6 +1419,11 @@ impl Model {
         self.library.request(request, Want::Like { uri, on });
         let g = self.glyphs();
         self.toast(if on { g.liked_toast } else { g.unliked_toast });
+    }
+
+    /// A Client ID to log in with (or the demo's made-up account).
+    pub(super) fn spotify_set_up(&self) -> bool {
+        self.library.demo || self.settings.spotify_client_id().is_some()
     }
 
     fn logged_in_or_say(&mut self) -> bool {

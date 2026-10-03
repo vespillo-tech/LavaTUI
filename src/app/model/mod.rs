@@ -277,7 +277,8 @@ impl Model {
             safe_glyphs: crate::cells::safe_glyphs(),
             kitty: Kitty::default(),
             inline: Inline::default(),
-            // The demo never touches a real account (or the keyring).
+            // The demo never touches a real account (or the keyring): it
+            // plugs in a made-up one below.
             library: Library::new(
                 settings.spotify_client_id().filter(|_| !session.demo),
                 settings.spotify.store,
@@ -316,6 +317,11 @@ impl Model {
                 crate::media::art::ArtLoader::start,
             );
             model.lyrics.start_with(crate::demo::lyrics);
+            let account = crate::demo::account();
+            model
+                .library
+                .connect_with(move || Some(Box::new(account.clone())));
+            model.library.demo = true;
         }
         model.warm_up(area, seed);
         if let Some(problem) = loaded.problem {

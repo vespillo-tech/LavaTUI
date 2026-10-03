@@ -826,7 +826,7 @@ impl Model {
     fn connect_row(&self) -> Row {
         let lib = &self.library;
         let (value, about): (&str, String) = match lib.account() {
-            _ if self.settings.spotify_client_id().is_none() => (
+            _ if !self.spotify_set_up() => (
                 "connect",
                 "Do steps 1 to 3 first, then connect here.".into(),
             ),
@@ -926,7 +926,7 @@ impl Model {
         if self.library.refused.is_some() {
             return "refused";
         }
-        if self.settings.spotify_client_id().is_none() {
+        if !self.spotify_set_up() {
             return "not set up";
         }
         match self.library.account() {
@@ -1149,7 +1149,7 @@ impl Model {
     /// Step 4: connect (log in in the browser), cancel a login waiting on
     /// the browser, or, twice, disconnect.
     fn connect_key(&mut self, now: Instant) {
-        if self.settings.spotify_client_id().is_none() {
+        if !self.spotify_set_up() {
             return;
         }
         // The client starts with the setup open; make sure it has.
