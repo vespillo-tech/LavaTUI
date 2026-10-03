@@ -1,15 +1,16 @@
 """The README trailer: docs/screenshots/demo.gif (lava-0bl).
 
 A day in three scenes, cut together so it plays as one calm recording:
-morning focus (solid, lava, a big clock, the focus timer starting),
-evening music (synthwave, the music card, the cover coming into focus,
-karaoke lyrics), late night (lamp only, abyss, slow wax).
+morning focus (solid, lava, the clock and focus timer beside the lamp,
+the timer starting), evening music (synthwave, the music card and karaoke
+lyrics beside the lamp, the cover on it coming into focus), late night
+(abyss, the clock at 23:30 beside the lamp, slow wax).
 
 Every scene state is its own take: the same seed and window, the hidden
 `--frame-clock` (time moves exactly one frame a frame, so frame k is the
-same wax in every take, and the clock reads 07:30 on), the `--demo`
-player, no status bar, widgets only on the lamp (so the lamp's size never
-changes). The film is frames of one take, then the next, cut at exact
+same wax in every take, and the clock reads each take's start time), the
+`--demo` player, no status bar, the side panel the same width in every
+take (so the lamp's size never changes at a cut). The film is frames of one take, then the next, cut at exact
 frame numbers: at a cut, the style, colours and widgets change in one
 frame while the wax carries on unbroken. The cover's focus pull is four
 takes too (big, medium, small pixels, sharp). Keys a take needs before
@@ -31,7 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import capture  # noqa: E402
 from PIL import Image, ImageChops, ImageStat  # noqa: E402
 
-FPS, COLS, ROWS, SEED, CLOCK = 10, 100, 30, 11, "07:30"
+FPS, COLS, ROWS, SEED = 10, 100, 30, 7
 SCALE, COLOURS = float(os.environ.get("LAVATUI_TRAILER_SCALE", 1.0)), 128
 # The loop: late night dissolves into the first morning frame (the day
 # turning) instead of jumping back to it.
@@ -60,18 +61,23 @@ def scene(style, palette, dock=None, minimal=False, art=None):
     return toml(**sections)
 
 
-MUSIC = dict(music="overlay", lyrics="overlay", cover="overlay")
-# The next song (Blob Merge: every word timed) from 0:00, so its first line
-# is sung once the cover is sharp; A turns the player keys on and off.
-SONG = "3.3:A,3.5:n,3.7:A"
+# The side panel is 30 columns at 100, whatever it holds, so the lamp is
+# the same in every take until night's `m` lets the walls ease out.
+MUSIC = dict(music="side", lyrics="side", cover="overlay")
+# The next song (Blob Merge: brisk, every word timed) from 0:00, its first
+# line just before the evening starts; A turns the player keys on and off.
+SONG = "4.3:A,4.5:n,4.7:A"
 
+# name: (config, keys, the clock's start)
 TAKES = {
-    "morning": (scene("solid", "lava", dict(clock="overlay", pomodoro="overlay")), "2.5: "),
+    "morning": (scene("solid", "lava", dict(clock="side", pomodoro="side")), "2.5: ", "07:30"),
     **{
-        f"evening-{d}": (scene("synthwave", "synthwave", MUSIC, art=d), SONG)
+        f"evening-{d}": (scene("synthwave", "synthwave", MUSIC, art=d), SONG, "19:30")
         for d in ["big-pixels", "medium-pixels", "small-pixels", "sharp"]
     },
-    "night": (scene("solid", "abyss", minimal=True), "18.5:-"),
+    # Not lamp only: dropping the panel widens the lamp, and the wax then
+    # re-centres in one frame (the walls ease, the view doesn't).
+    "night": (scene("solid", "abyss", dict(clock="side")), "18:-", "23:30"),
 }
 
 # (take, first frame, end frame): the film.
@@ -81,16 +87,16 @@ CUT = [
     ("evening-medium-pixels", 95, 103),
     ("evening-small-pixels", 103, 111),
     ("evening-sharp", 111, 155),
-    ("night", 155, 235),
+    ("night", 155, 225),
 ]
 # Which parts share a palette (a scene's colours).
 SCENES = [["morning"], [n for n in TAKES if n.startswith("evening")], ["night"]]
 
 
 def take(name, seed=SEED, frames=None):
-    cfg, keys = TAKES[name]
+    cfg, keys, clock = TAKES[name]
     end = frames or max(e for _, _, e in CUT) + DISSOLVE + 5
-    shot = capture.Shot(COLS, ROWS, cfg, keys, f"--seed {seed} --fps {FPS} --demo --frame-clock {CLOCK}", frames=end)
+    shot = capture.Shot(COLS, ROWS, cfg, keys, f"--seed {seed} --fps {FPS} --demo --frame-clock {clock}", frames=end)
     snaps = []
     capture.run(shot, snaps)
     return snaps
@@ -145,8 +151,8 @@ def check(takes, out_dir):
 
 
 def survey(seeds, out):
-    """Solid lava, no widgets, a frame every 2 s for each seed: one row each."""
-    TAKES["plain"] = (scene("solid", "lava"), "")
+    """The morning take (no keys), a frame every 2 s for each seed: one row each."""
+    TAKES["plain"] = (TAKES["morning"][0], "", "07:30")
     with ThreadPoolExecutor(len(seeds)) as ex:
         runs = list(ex.map(lambda s: take("plain", s, 24 * FPS), seeds))
     w, h = COLS * capture.CW // 3, ROWS * capture.CH // 3
