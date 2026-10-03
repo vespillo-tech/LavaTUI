@@ -126,7 +126,10 @@ mod tests {
                 "screencapture outside the redirected group"
             );
         }
-        for line in driver.lines().filter(|l| l.contains("stty")) {
+        // The stty command, not "ghostty" in a comment or a pattern.
+        let stty = |l: &&str| l.split_whitespace().any(|w| w == "stty");
+        assert!(driver.lines().any(|l| stty(&l)), "no stty in the driver");
+        for line in driver.lines().filter(stty) {
             assert!(line.contains("2>"), "stty may print on screen: {line}");
         }
         assert!(tool.contains("--initial-command=/bin/sh"));

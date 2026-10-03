@@ -6,7 +6,7 @@ actually showed (a screen recording, counted for distinct frames).
 ONE Ghostty window per size runs every case of that size in turn (builds
 alternating, round by round): a fixed driver script (<output>/driver.sh)
 reads the size's case list and runs the binary with
---config/--trace/--frames/--seed 7/--demo for each. The user's Ghostty
+--config/--trace/--frames/--seed/--demo for each (--seed 7 unless told). The user's Ghostty
 config, shaders included, applies unless overridden (--ghostty-arg,
 --opaque, --ghostty-config). Per case, in <output>/<case>/:
 
@@ -14,11 +14,12 @@ config, shaders included, applies unless overridden (--ghostty-arg,
   size            the pty size the app really got (Ghostty clamps windows
                   to the screen it opens on: check this, not the request)
   config.toml     the scratch LavaTUI config it ran with
-  screen.mov      with --record: the main display, from 15 s in, recorded
-                  from inside the window, so Ghostty's Screen Recording
-                  permission covers it
+  screen.mov      with --record: the main display (or --fullscreen-on's),
+                  from --record-at s in (15), recorded from inside the
+                  window, so Ghostty's Screen Recording permission covers it
   shot-NN.png     with --snapshots N: the window itself (screencapture
-                  -l), which works even when another app covers it
+                  -l), which works even when another app covers it; with
+                  --fullscreen-on, its whole display
   helpers.log     the recorder's and snapshotter's own output: never on
                   LavaTUI's screen (a "Failed to save" from screencapture
                   on a full disk once showed through the lamp)
@@ -32,6 +33,13 @@ dashed argument, `--initial-command=/bin/sh <driver> <cases>`. With
 files to open, so Ghostty asks the user to allow running them (for every
 window) and then runs the script a second time in a new tab: a second,
 unfocused LavaTUI. The driver also takes a lock, so a second copy exits.
+
+--fullscreen-on N puts the window in native fullscreen on display N
+(screencapture's numbering: 1 = main) before the first case: `open`
+always opens it on the main screen and --window-position can't leave
+it, so the driver moves it from inside (Ghostty holds Accessibility)
+with a small helper that touches only that Ghostty process (System
+Events' "process whose unix id is" can hand back another Ghostty).
 
 Keep the window in front while it runs: an unfocused LavaTUI drops to
 10 fps (the trace's fps column shows it; the summary warns). Recording
@@ -47,6 +55,11 @@ font size per size, COLSxROWS@FONT.
   # README video takes: opaque background, no shaders, window snapshots
   python3 tools/ghostty_native.py --output /tmp/take --sizes 120x36 --opaque \\
       --ghostty-arg=--custom-shader= --snapshots 20 --frames 1800
+  # A showcase take: own LavaTUI and Ghostty configs, fullscreen on the
+  # second display, 70 s recorded from 20 s in (size: whatever fits)
+  python3 tools/ghostty_native.py --output /tmp/show --sizes 343x68 --styles matrix \\
+      --app-config show.toml --ghostty-config rec.conf --fullscreen-on 2 --seed 5 \\
+      --frames 6000 --record --record-at 20 --record-secs 70 --keep-recordings
 """
 import argparse
 import ctypes
@@ -97,6 +110,7 @@ DRIVER = """\
 #!/bin/sh
 # driver.sh <cases file>: one line per case, run in order in this window:
 # <case dir> <binary> <frames> <record secs|0> <snapshots> <snapshot at>
+#   <seed> <display> <record at> <snapshot gap>
 cases=$1
 lock=$cases.lock
 if ! mkdir "$lock" 2> /dev/null; then
@@ -105,27 +119,83 @@ fi
 # Not hosted: a Ghostex/zmx session's variables make LavaTUI think it is.
 unset ZMX_SESSION
 for v in $(env | sed -n 's/^\\(GHOSTEX_[A-Z_]*\\)=.*/\\1/p'); do unset "$v"; done
-while read -r dir binary frames secs shots at <&3; do
+if [ -f "$cases.place" ]; then
+  # Our own Ghostty process: up the parent chain (login, then ghostty).
+  p=$$
+  while [ "$p" -gt 1 ]; do
+    case "$(ps -o comm= -p "$p")" in */MacOS/ghostty) break ;; esac
+    p=$(ps -o ppid= -p "$p" | tr -d ' ')
+  done
+  "${0%/*}/place" "$p" $(cat "$cases.place") > "$cases.place.log" 2>&1
+fi
+while read -r dir binary frames secs shots at seed display rec_at gap <&3; do
   [ -f "$dir/done" ] && continue
   stty size > "$dir/size" 2> /dev/null
   date +%s > "$dir/started"
   {
     if [ "$secs" != 0 ]; then
-      (sleep 15; /usr/sbin/screencapture -x -v -V "$secs" -D1 "$dir/screen.mov") &
+      (sleep "$rec_at"; /usr/sbin/screencapture -x -v -V "$secs" -D"$display" "$dir/screen.mov") &
     fi
     if [ "$shots" != 0 ]; then
-      (sleep "$at"; wid=$(cat "$cases.wid")
+      # A fullscreen window can't be captured by its id: take its display.
+      (sleep "$at"; if [ -f "$cases.place" ]; then from=-D$display; else from=-l$(cat "$cases.wid"); fi
        i=0; while [ "$i" -lt "$shots" ]; do i=$((i + 1))
-         /usr/sbin/screencapture -x -o -l"$wid" "$dir/shot-$(printf %02d "$i").png"; sleep 0.25
+         /usr/sbin/screencapture -x -o "$from" "$dir/shot-$(printf %02d "$i").png"; sleep "$gap"
        done) &
     fi
   } > "$dir/helpers.log" 2>&1
-  "$binary" --config "$dir/config.toml" --trace "$dir/trace.csv" --frames "$frames" --seed 7 --demo
+  "$binary" --config "$dir/config.toml" --trace "$dir/trace.csv" --frames "$frames" --seed "$seed" --demo
   wait
   touch "$dir/done"
   sleep 1
 done 3< "$cases"
 rmdir "$lock"
+"""
+
+# Native fullscreen on a display, for exactly one Ghostty process (by pid,
+# through the Accessibility API): moved onto the display first, since
+# fullscreen takes the window's own screen. Run by the driver from inside
+# the window, which has Ghostty's Accessibility permission.
+PLACE = """\
+import ApplicationServices
+import Foundation
+let args = CommandLine.arguments
+let app = AXUIElementCreateApplication(pid_t(args[1])!)
+let display = Int(args[2])!
+func windows() -> [AXUIElement] {
+    var value: CFTypeRef?
+    AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value)
+    return (value as? [AXUIElement]) ?? []
+}
+func frame(_ w: AXUIElement) -> String {
+    var p: CFTypeRef?, s: CFTypeRef?
+    var at = CGPoint.zero, size = CGSize.zero
+    AXUIElementCopyAttributeValue(w, kAXPositionAttribute as CFString, &p)
+    AXUIElementCopyAttributeValue(w, kAXSizeAttribute as CFString, &s)
+    if let p { AXValueGetValue(p as! AXValue, .cgPoint, &at) }
+    if let s { AXValueGetValue(s as! AXValue, .cgSize, &size) }
+    return "\\(at.x),\\(at.y) \\(size.width)x\\(size.height)"
+}
+var ids = [CGDirectDisplayID](repeating: 0, count: 16)
+var count: UInt32 = 0
+CGGetActiveDisplayList(16, &ids, &count)
+guard display >= 1, display <= Int(count) else { print("no display \\(display)"); exit(1) }
+let screen = CGDisplayBounds(ids[display - 1])
+print("trusted:", AXIsProcessTrusted(), "display:", screen)
+var found = windows()
+for _ in 0..<50 where found.count != 1 { usleep(100_000); found = windows() }
+guard found.count == 1 else { print("windows:", found.count); exit(1) }
+let window = found[0]
+print("opened at", frame(window))
+var to = CGPoint(x: screen.minX + 100, y: screen.minY + 100)
+AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, AXValueCreate(.cgPoint, &to)!)
+usleep(500_000)
+print("moved to", frame(window))
+AXUIElementSetAttributeValue(window, "AXFullScreen" as CFString, kCFBooleanTrue)
+sleep(3)  // the fullscreen animation
+var full: CFTypeRef?
+AXUIElementCopyAttributeValue(window, "AXFullScreen" as CFString, &full)
+print("fullscreen:", full as? Bool ?? false, frame(window))
 """
 
 LIBC = ctypes.CDLL('/usr/lib/libSystem.B.dylib')
@@ -222,16 +292,29 @@ def write_size(args, size, cases, driver):
         # not the window's flags, so it's told here.
         cells = 'opaque' if args.opaque else 'auto'
         (out / 'config.toml').write_text(CONFIG.format(fps=args.fps, cells=cells, style=case['style'],
-                                                       palette=args.palette, music=music, lyrics=lyrics))
+                                                       palette=args.palette or 'synthwave', music=music,
+                                                       lyrics=lyrics))
+        if args.app_config:
+            # Its own file, but each case's style (one window compares styles).
+            text = re.sub(r'(?m)^style\s*=.*$', f'style = "{case["style"]}"', args.app_config.read_text())
+            if args.palette:
+                text = re.sub(r'(?m)^palette\s*=.*$', f'palette = "{args.palette}"', text)
+            (out / 'config.toml').write_text(text)
         binary = args.output / f"lavatui-{case['build']}"
         lines.append(' '.join([str(out), str(binary), str(args.frames),
                                str(args.record_secs if args.record else 0),
-                               str(args.snapshots), str(args.snapshot_at)]))
+                               str(args.snapshots), str(args.snapshot_at), str(args.seed),
+                               str(args.fullscreen_on or 1), str(args.record_at), str(args.snapshot_gap)]))
     listed.write_text('\n'.join(lines) + '\n')
     lock = Path(str(listed) + '.lock')
     if lock.exists():
         lock.rmdir()
     Path(str(listed) + '.wid').unlink(missing_ok=True)
+    place = Path(str(listed) + '.place')
+    if args.fullscreen_on:
+        place.write_text(f'{args.fullscreen_on}\n')
+    else:
+        place.unlink(missing_ok=True)
     return listed
 
 
@@ -349,7 +432,7 @@ def main():
     parser.add_argument('--styles', nargs='+', default=['synthwave', 'solid'])
     parser.add_argument('--scenes', nargs='+', default=['music'], choices=sorted(SCENES),
                         help='music: music, cover, clock beside the lamp, lyrics on it; lamp: the clock only')
-    parser.add_argument('--palette', default='synthwave')
+    parser.add_argument('--palette', help='palette (default synthwave; with --app-config, the file\'s)')
     parser.add_argument('--fps', type=int, default=60)
     parser.add_argument('--frames', type=int, default=3600)
     parser.add_argument('--repeat', type=int, default=1, help='rounds (build order flips every other round)')
@@ -357,11 +440,20 @@ def main():
                         '(8 fits ~300x86 on a 1512x982 screen)')
     parser.add_argument('--record', action='store_true', help='record the screen and count presented frames')
     parser.add_argument('--record-secs', type=int, default=8)
+    parser.add_argument('--record-at', type=float, default=15, help='seconds into a case to start recording')
     parser.add_argument('--keep-recordings', action='store_true')
     parser.add_argument('--crop', type=float, nargs=4, default=[0, .1, .6, .8], metavar=('X', 'Y', 'W', 'H'),
                         help='region of the screen to compare, as fractions (default: the lamp of a big window)')
     parser.add_argument('--snapshots', type=int, default=0, help='window snapshots per case (0.25 s apart)')
     parser.add_argument('--snapshot-at', type=float, default=12, help='seconds into a case for the first one')
+    parser.add_argument('--snapshot-gap', type=float, default=0.25, help='seconds between snapshots')
+    parser.add_argument('--seed', type=int, default=7, help='the wax\'s seed (--seed)')
+    parser.add_argument('--app-config', type=Path,
+                        help='run with this LavaTUI config instead of the built-in one, each case with its '
+                        '--styles style and --palette if given (--scenes, --fps and --opaque then only name the cases)')
+    parser.add_argument('--fullscreen-on', type=int, metavar='DISPLAY',
+                        help='native fullscreen on this display (1 = main, as screencapture -D counts) '
+                        'before the first case; --record then records that display')
     parser.add_argument('--ghostty-arg', action='append', default=[], help='extra Ghostty flag, e.g. --ghostty-arg=--custom-shader=')
     parser.add_argument('--opaque', action='store_true',
                         help='opaque window background and display.cells = "opaque" (README video takes)')
@@ -393,6 +485,10 @@ def main():
     driver = args.output / 'driver.sh'
     driver.write_text(DRIVER)
     driver.chmod(0o755)
+    if args.fullscreen_on:
+        (args.output / 'place.swift').write_text(PLACE)
+        subprocess.run(['swiftc', '-O', '-o', str(args.output / 'place'), str(args.output / 'place.swift')],
+                       check=True)
     results = []
     for size, cases in plan(args).items():
         listed = write_size(args, size, cases, driver)
@@ -401,7 +497,7 @@ def main():
             continue
         title = open_window(args, size, listed, driver)
         try:
-            if args.snapshots:
+            if args.snapshots and not args.fullscreen_on:
                 window_id(args, title, listed)
             for case in cases:
                 result = watch_case(args, case, title)
