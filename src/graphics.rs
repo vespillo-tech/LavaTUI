@@ -209,6 +209,8 @@ pub struct Kitty {
     chunks: VecDeque<Vec<u8>>,
     /// An id to delete at the next write (the image just replaced).
     delete: Option<u32>,
+    /// This frame's wish ([`Kitty::want`]): the picture on its way.
+    wish: Option<Key>,
 }
 
 impl Default for Kitty {
@@ -227,6 +229,7 @@ impl Kitty {
             sending: None,
             chunks: VecDeque::new(),
             delete: None,
+            wish: None,
         }
     }
 
@@ -235,6 +238,22 @@ impl Kitty {
         self.shown
             .as_ref()
             .filter(|(k, _)| k == key)
+            .map(|&(_, id)| id)
+    }
+
+    /// `key` is wanted but not all there yet: it will be (kitty answers
+    /// nothing, so a transmission never fails), a frame or two on.
+    pub fn pending(&self, key: &Key) -> bool {
+        self.wish.as_ref() == Some(key) && self.ready(key).is_none()
+    }
+
+    /// The id of the picture shown now if it's `cols × rows` cells: what
+    /// a cover of that size draws while its new picture is on its way
+    /// (the old image stays until the new one is all there).
+    pub fn shown_sized(&self, cols: u16, rows: u16) -> Option<u32> {
+        self.shown
+            .as_ref()
+            .filter(|(k, _)| (k.cols, k.rows) == (cols, rows))
             .map(|&(_, id)| id)
     }
 
@@ -248,6 +267,7 @@ impl Kitty {
     /// A transmission in flight always finishes first (the protocol has no
     /// way to abandon one), so a wish made meanwhile waits a frame or two.
     pub fn want(&mut self, want: Option<(Key, &Arc<String>)>) {
+        self.wish = want.as_ref().map(|(key, _)| key.clone());
         if self.sending.is_some() {
             return;
         }
@@ -593,6 +613,38 @@ mod tests {
         assert_eq!(k.ready(&key(24)), Some(0x101), "finished what it began");
         k.want(Some((key(16), &big)));
         assert!(k.busy());
+    }
+
+    /// lava-jop: while the next track's picture (or a new quality) is on
+    /// its way, the one up is there to draw if it's the same size; a new
+    /// size has nothing to show meanwhile.
+    #[test]
+    fn the_picture_up_covers_for_the_next_one_of_its_size() {
+        let mut k = Kitty::new(3);
+        let big = Arc::new("A".repeat(BUDGET * 2));
+        k.want(Some((key(24), &big)));
+        while k.busy() {
+            k.write(&mut Vec::new()).unwrap();
+        }
+        let next = Key {
+            source: "https://i.example/b".into(),
+            ..key(24)
+        };
+        k.want(Some((next.clone(), &big)));
+        k.write(&mut Vec::new()).unwrap();
+        assert!(k.pending(&next) && k.ready(&next).is_none());
+        assert_eq!(k.shown_sized(24, 12), Some(0x301), "the old one, still up");
+        while k.busy() {
+            k.write(&mut Vec::new()).unwrap();
+        }
+        assert!(!k.pending(&next));
+        assert_eq!(k.ready(&next), Some(0x302));
+        // Another size: nothing of that size is up.
+        k.want(Some((key(16), &big)));
+        assert!(k.pending(&key(16)));
+        assert_eq!(k.shown_sized(16, 8), None);
+        // Not wished for: not pending (the cover falls back to text).
+        assert!(!k.pending(&key(30)));
     }
 
     #[test]

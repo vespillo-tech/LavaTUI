@@ -10,7 +10,7 @@
 //! ([`ArtLoader::set_hires`]: kitty, iTerm2 or sixel images) it also keeps a
 //! sharper copy, up to [`HIRES_PX`]² and ready to send: PNG, base64. Pixel
 //! art (the cover quality's small, medium and big pixels) is made from the
-//! small copy when it's wanted, as many blocks as the text cells show
+//! small copy when it's wanted, 32, 16 or 10 squares across
 //! ([`Art::pixel_art`]).
 //!
 //! Cache: `$XDG_CACHE_HOME/lavatui/art`, else the platform cache dir; one

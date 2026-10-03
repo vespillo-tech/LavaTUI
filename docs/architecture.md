@@ -110,10 +110,12 @@ promises, and draws the cover in text cells until it says yes. Inside
 tmux, screen, zellij or Ghostex it doesn't try. Elsewhere covers are text
 cells: sextants (2×3 pixels a cell) or quadrants (2×2), with the best
 two colours per cell. The small, medium and big pixels cover qualities are
-pixel art (about 32, 16 and 10 flat squares across, fewer on a small
-cover): square blocks of whole and half cells, and where pictures are
-shown a small PNG with the same blocks (`picture::pixel_grid`), made
-when the cover, its size or the quality changes. `LAVATUI_GRAPHICS` overrides
+pixel art: where pictures are shown, a small PNG of exactly 32, 16 or 10
+flat squares across, made when the cover or the quality changes; else
+square blocks of whole and half cells, about as many (fewer on a small
+cover). While a picture is on its way the cover is never drawn in text
+cells instead: the picture already up stays if it's the same size, else
+the spot is a blank tile in the cover's colour. `LAVATUI_GRAPHICS` overrides
 the choice. `tools/kitty_check.py` and `tools/inline_check.py` show the
 exact bytes sent.
 

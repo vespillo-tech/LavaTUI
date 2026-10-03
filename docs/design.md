@@ -1183,20 +1183,29 @@ here, e.g. `cover quality · auto · sharp`:
 | detail | with pictures | in text cells (256 colours+) |
 |---|---|---|
 | `sharp` | the real picture, at the terminal's resolution | the finest text: sextants (2 × 3 pixels a cell, two colours each, U+1FB00..1FB3B) where the terminal draws them, else quadrants (2 × 2, `▘▝▀▖▌▞▛▗▚▐▜▄▙▟█`) |
-| `small-pixels` | pixel art: the same flat squares as in text cells | flat square blocks, about 32 across: k columns × k half rows (`▀`, exact colours), k whole |
-| `medium-pixels` | the same | the same, about 16 across, always bigger blocks than `small-pixels` |
-| `big-pixels` | the same | the same, about 10 across, always bigger blocks than `medium-pixels` |
+| `small-pixels` | pixel art: 32 × 32 flat squares | flat square blocks, about 32 across: k columns × k half rows (`▀`, exact colours), k whole |
+| `medium-pixels` | pixel art: 16 × 16 flat squares | the same, about 16 across, always bigger blocks than `small-pixels` |
+| `big-pixels` | pixel art: 10 × 10 flat squares | the same, about 10 across, always bigger blocks than `medium-pixels` |
 | `auto` (default) | `sharp` | `sharp` |
 
 Pictures need a pixel protocol: kitty graphics with Unicode placeholders
 (kitty, Ghostty), iTerm2 inline images (iTerm2, WezTerm, mintty, Rio) or
 sixel (foot, mlterm, Konsole ≥ 22.04, Contour); any colour depth but
-none. A pixel-art picture has exactly the blocks the text cells show
-(`picture::pixel_grid`), so nothing moves when it takes over from them
-once it has arrived: `Art::pixel_art` makes it from the cover when the
-cover, its size or the quality changes (about a millisecond; kept),
-each block a box-filtered mean, drawn ~400 px on its longer side so the
-terminal's scaling keeps edges crisp (sixel scales it nearest).
+none. A pixel-art picture is exactly 32, 16 or 10 squares across,
+whatever the cover's size: `Art::pixel_art` makes it from the cover when
+the cover or the quality changes (about a millisecond; kept), each
+square a box-filtered mean, drawn ~400 px square so the terminal's
+scaling keeps edges crisp (sixel scales it nearest). **In a terminal
+that shows pictures the cover is never drawn in text cells while its
+picture is on its way** (a new track, a new quality, a new size: a frame
+or two for kitty, a few ms of sixel encoding), since those look
+different (fewer, other blocks): the picture already up stays while it's
+the same size (kitty keeps the old image until the new one is all
+there; a placed sixel / iTerm2 picture is left in place), else the
+cover's spot is a blank tile in the cover's average colour, and the new
+picture shows as soon as it's ready. Text cells stand in only where no
+picture can come (no room for one, no cell size for sixel, one that
+couldn't be made).
 In text cells a block is `round(cols / n)` columns wide (so blocks are
 all one size), bumped where needed so each size's blocks are bigger than
 the one before's on small covers; where cell backgrounds are see-through
@@ -1253,7 +1262,8 @@ cover is drawn in text cells; a no, while a cover is shown in `auto` /
 `sharp`, toasts `no photos in this terminal · covers drawn in text`. The cover is sent as a PNG (`a=T,U=1,f=100,q=2`) with
 a *virtual* placement of exactly the cover's cells (`c`, `r`), in 4096-byte
 base64 chunks, at most 96 KB a frame, after the frame's cells and inside
-its synchronized update; meanwhile the best text cells show. From the
+its synchronized update; meanwhile the picture before it (same size) or
+a blank tile shows. From the
 next frame the cover's cells are Unicode placeholders (U+10EEEE + a row
 and a column diacritic) in a foreground colour that is the image id. To
 ratatui they are ordinary cells, so the lamp's 60 fps diff never touches
@@ -1289,7 +1299,8 @@ picture reaching the bottom could scroll the screen). iTerm2 gets the
 own pixel size, so it needs the cell size from the terminal's reported
 window pixels (else text cells): decoded, scaled to fit, centred on the
 mean colour, height rounded down to whole 6-pixel bands, median-cut to
-256 colours and encoded on a worker thread (text cells meanwhile), ~100
+256 colours and encoded on a worker thread (meanwhile the picture
+already placed there stays, or a blank tile), ~100
 KB for a 24-column cover. Byte-checked in a pty by `tools/inline_check.py`
 (no such terminal was at hand to look at them).
 
