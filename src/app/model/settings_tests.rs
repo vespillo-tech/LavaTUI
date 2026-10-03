@@ -178,6 +178,29 @@ fn reset_needs_a_second_enter_and_puts_the_page_back() {
 }
 
 #[test]
+fn wax_at_the_top_eases_in_and_is_saved() {
+    let path = temp_config("top-wax");
+    let (mut m, t0) = model_at(path.clone());
+    open(&mut m, t0, 0);
+    to(&mut m, t0, Item::TopWax);
+    assert_eq!(row(&m, Item::TopWax).value, "off");
+    m.update(Action::Keep, t0);
+    assert!(m.settings.lamp.top_wax);
+    assert_eq!(row(&m, Item::TopWax).value, "on");
+    let area = m.layout.area;
+    m.tick(t0 + Duration::from_millis(100), area, local());
+    let early = m.world.top_wax_depth();
+    m.tick(t0 + Duration::from_millis(1100), area, local());
+    m.tick(t0 + Duration::from_millis(2100), area, local());
+    let later = m.world.top_wax_depth();
+    assert!(early < 0.5 * later && later > 0.0, "{early} → {later}");
+    m.save();
+    let (again, _) = model_at(path);
+    assert!(again.settings.lamp.top_wax);
+    assert!(again.world.top_wax_depth() > 0.0, "warmed up with it");
+}
+
+#[test]
 fn mouse_and_lamp_only_switch_live() {
     let (mut m, t0) = model_at(temp_config("window"));
     open(&mut m, t0, 4);

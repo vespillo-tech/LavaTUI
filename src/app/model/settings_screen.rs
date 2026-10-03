@@ -145,6 +145,7 @@ pub enum Item {
     Palette,
     Heat,
     Speed,
+    TopWax,
     Background,
     ColorRange,
     StripeFix,
@@ -397,7 +398,7 @@ impl Model {
         let mut out = Vec::new();
         match page {
             Page::Look => out.extend([
-                Style, Palette, Heat, Speed, Background, ColorRange, StripeFix,
+                Style, Palette, Heat, Speed, TopWax, Background, ColorRange, StripeFix,
             ]),
             Page::Clock => out.extend([
                 Face,
@@ -482,6 +483,12 @@ impl Model {
                 format!("×{}", self.speed.factor()),
                 "How fast the wax moves. ×1 is normal.",
                 Kind::Choice,
+            ),
+            Item::TopWax => choice(
+                "wax at the top",
+                on_off(s.lamp.top_wax),
+                "A thin layer of wax rests under the top, like in a real lamp. Some rising \
+                 blobs join it, and now and then it lets a drop fall.",
             ),
             Item::Background => choice(
                 "background",
@@ -1302,6 +1309,7 @@ impl Model {
                 };
                 self.settings.lamp.speed = self.speed.factor();
             }
+            Item::TopWax => s.lamp.top_wax = !s.lamp.top_wax,
             Item::Background => s.theme.transparent = !s.theme.transparent,
             Item::ColorRange => {
                 let i = wrap(

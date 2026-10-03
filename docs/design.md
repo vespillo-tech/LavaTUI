@@ -520,6 +520,15 @@ otherwise **2.0**. Recompute on every resize.
   round bump, with lobes fading in up to 5 px, so small lamps show round
   droplets, not torn clumps. The pool is drawn at
   least 2 sample rows deep (its mean lifted to that, mounds on top).
+* **Wax at the top** (`lamp.top_wax`, off by default): a thin, slightly
+  uneven layer of cool wax (the cool end of the wax colours) under the
+  top edge, ≈ 0.01–0.022 lamp heights, drawn 1.5–5 sample pixels deep
+  whatever the size, so it never grows into a slab. Rising blobs that
+  touch it sometimes melt in (small ones whole, big ones give a share
+  and sink); it grows hanging drips that let go and sink. Its wax comes
+  from the pool and goes back (wax is conserved). Toggling fades it in
+  or out over 1.5 s. It is part of the lamp, so widgets may sit over
+  it like over any wax.
 
 ---
 

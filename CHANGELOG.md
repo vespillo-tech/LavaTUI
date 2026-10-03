@@ -2,6 +2,15 @@
 
 What changed in each version of LavaTUI, in plain words.
 
+## Unreleased
+
+**Lamp**
+
+- Wax at the top: like a real lava lamp, a thin layer of wax can rest
+  under the top. Some rising blobs melt into it, and now and then it lets
+  a drop fall. Turn it on in the settings (`,` › look › *wax at the
+  top*). It's off unless you turn it on.
+
 ## 1.2.0 — 2026-10-02 — first public release
 
 **Easier to get started**

@@ -15,13 +15,13 @@
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    clock & timer      colours                          lava  │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    widgets            heat                            ▮▮▮▯▯  │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    music & lyrics     speed                              ×1  │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    controls           background                    painted  │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    window             colour range                 millions  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    controls           wax at the top                    off  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    window             background                    painted  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                       colour range                 millions  │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                       stripe fix                  automatic  │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                       reset this page                 reset  │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│ How the lamp looks: its style, colours, heat and speed.      │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
@@ -52,13 +52,13 @@
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    clock & timer      colours                          lava  │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    widgets            heat                            ▮▮▮▯▯  │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    music & lyrics     speed                              ×1  │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    controls           background                    painted  │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    window             colour range                 millions  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    controls           wax at the top                    off  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    window             background                    painted  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                       colour range                 millions  │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                       stripe fix                  automatic  │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                       reset this page                 reset  │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│ How the wax is drawn.                                        │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
@@ -89,13 +89,13 @@
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    clock & timer    ▸ colours                      ‹ lava ›  │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    widgets            heat                            ▮▮▮▯▯  │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    music & lyrics     speed                              ×1  │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    controls           background                    painted  │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    window             colour range                 millions  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    controls           wax at the top                    off  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│    window             background                    painted  │
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                       colour range                 millions  │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                       stripe fix                  automatic  │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                       reset this page                 reset  │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│ The colours of the wax, the liquid and the text.             │
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~│                                                              │

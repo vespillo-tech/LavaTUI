@@ -73,6 +73,8 @@ fn bench_compute() {
                     continue;
                 }
                 let mut world = World::new(7, f64::from(cols) / (2.0 * f64::from(rows)));
+                // `TOP_WAX=1`: with the top layer.
+                world.set_top_wax(std::env::var("TOP_WAX").is_ok_and(|s| s == "1"));
                 world.prewarm(1200, 1.0 / 120.0);
                 let mut field = Field::default();
                 let area = Rect::new(0, 0, cols, rows);

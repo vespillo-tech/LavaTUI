@@ -240,6 +240,7 @@ impl Model {
         let speed = SimSpeed::from_factor(settings.lamp.speed);
         let mut world = World::new(seed, 1.0);
         world.set_heat(settings.lamp.heat);
+        world.set_top_wax(settings.lamp.top_wax);
         let (caps, unconfirmed) = Caps::detect();
         let (detected_cells, ghostty_opacity) = crate::cells::detect();
         let mut model = Model {
@@ -335,6 +336,7 @@ impl Model {
         if let Some(aspect) = self.lamp_aspect() {
             self.world = World::new(seed, aspect);
             self.world.set_heat(self.settings.lamp.heat);
+            self.world.set_top_wax(self.settings.lamp.top_wax);
         }
         self.world.prewarm(PREWARM_STEPS, self.sim_clock.dt_secs());
         self.field.prepare(&self.world, 1.0);
@@ -548,6 +550,9 @@ impl Model {
         if let Some(aspect) = self.lamp_aspect() {
             self.world.set_aspect(aspect);
         }
+        // Whatever changed it (the settings screen, a page reset), the
+        // world eases the top layer in or out.
+        self.world.set_top_wax(self.settings.lamp.top_wax);
         let ease = 1.0 - (-elapsed.as_secs_f64() / SPEED_EASE).exp();
         self.speed_factor += (self.speed.factor() - self.speed_factor) * ease;
         self.stats.sim_steps = 0;

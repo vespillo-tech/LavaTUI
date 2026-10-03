@@ -20,10 +20,10 @@
     colours                       lava
     heat                         ▮▮▮▯▯
     speed                           ×1
+    wax at the top                 off
     background                 painted
     colour range              millions
     stripe fix               automatic
-    reset this page              reset
 
  How the wax is drawn.
 
@@ -35,10 +35,10 @@
   ▸ colours                   ‹ lava ›
     heat                         ▮▮▮▯▯
     speed                           ×1
+    wax at the top                 off
     background                 painted
     colour range              millions
     stripe fix               automatic
-    reset this page              reset
 
  The colours of the wax, the liquid and
  the text.

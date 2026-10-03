@@ -4,8 +4,9 @@
 //! - **Heat** 1..=5 ([`World::set_heat`]): more heat = more, smaller,
 //!   faster blobs. The level the sim *uses* eases toward the chosen one over
 //!   a few seconds, so buoyancy, blob count and budding rate never jump.
-//! - **Reseed** ([`World::reseed`]): every blob melts into the pool in about
-//!   two seconds, then the pool buds a fresh lamp from the new seed.
+//! - **Reseed** ([`World::reseed`]): every blob melts into the pool (or
+//!   the top layer it hangs from) in about two seconds, then the pool buds
+//!   a fresh lamp from the new seed.
 //! - **Heat pulse** ([`World::heat_pulse`]): warms the wax around a point
 //!   (in [`super::Field`] coordinates) for about a second so it rises; on
 //!   the pool it raises a bud there.
@@ -130,8 +131,19 @@ impl World {
         self.rng = super::Rng::new(seed);
         self.reseed = Some(Reseed::Melting);
         self.pulses.clear();
+        // What hangs from the top layer melts up into it; the top layer
+        // itself stays.
+        // (as does a drip still letting go): its skirt already reaches up.
         for blob in &mut self.blobs {
-            blob.phase = Phase::Melting;
+            let joined = blob.attach > 0.0 || blob.prev.attach > 0.0;
+            if blob.phase.at_top() || (blob.top && joined) {
+                blob.phase = Phase::Capping {
+                    left: f64::INFINITY,
+                };
+            } else {
+                blob.phase = Phase::Melting;
+                blob.top = false;
+            }
         }
     }
 

@@ -96,6 +96,8 @@ fn phases(world: &World) -> BTreeMap<u64, u8> {
         Phase::Budding { .. } => 0,
         Phase::Free => 1,
         Phase::Melting => 2,
+        Phase::Dripping { .. } => 3,
+        Phase::Capping { .. } => 4,
     };
     world
         .blobs()
@@ -116,11 +118,16 @@ fn events(
     for (id, &phase) in now {
         out.push(match (before.get(id), phase) {
             (None, 0) => "bud",
+            (None, 3) => "drip",
             (None, _) if split > 0 => "split",
             (None, _) => "new",
             (Some(0), 1) => "detach",
             (Some(1), 2) => "melt-start",
             (Some(0), 2) => "bud-dry",
+            (Some(3), 1) => "drip-off",
+            (Some(3), 4) => "drip-dry",
+            (Some(1), 4) => "cap-join",
+            (Some(4), 1) => "cap-off",
             (Some(&b), p) if b != p => "phase",
             _ => continue,
         });
@@ -130,6 +137,7 @@ fn events(
             out.push(match (merged > 0, phase) {
                 (true, _) => "merge",
                 (false, 2) => "melted",
+                (false, 4) => "capped",
                 _ => "gone",
             });
         }
@@ -202,10 +210,36 @@ fn jumps(
     out
 }
 
+/// Whether the top layer (`lamp.top_wax`) is on.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Top {
+    Off,
+    On,
+    /// On, but switched off for 10 s every 30 s.
+    Toggling,
+}
+
+impl Top {
+    fn on_at(self, t: f64) -> bool {
+        match self {
+            Top::Off => false,
+            Top::On => true,
+            Top::Toggling => t % 30.0 < 20.0,
+        }
+    }
+}
+
 /// Play `secs` seconds of a `cols × rows` half-block lamp and report pops.
-fn play(seed: u64, cols: usize, rows: usize, secs: f64, pacing: Pacing, grid: Grid) -> Report {
+fn play(
+    seed: u64,
+    (cols, rows): (usize, usize),
+    secs: f64,
+    (pacing, grid): (Pacing, Grid),
+    top: Top,
+) -> Report {
     let (w, h) = (cols, rows * 2);
     let mut world = World::new(seed, w as f64 / h as f64);
+    world.set_top_wax(top.on_at(0.0));
     world.prewarm(1200, 1.0 / 120.0);
     let mut clock = FixedStep::new(120);
     let mut field = Field::default();
@@ -226,6 +260,8 @@ fn play(seed: u64, cols: usize, rows: usize, secs: f64, pacing: Pacing, grid: Gr
             Pacing::Jittered => 1.0 / 60.0 + 0.008 * (lcg.unit() - 0.5),
         };
         t += dt;
+        let toggled = top.on_at(t) != top.on_at(t - dt);
+        world.set_top_wax(top.on_at(t));
         let before = world.stats();
         let steps = clock.advance(Duration::from_secs_f64(dt), 1.0);
         for _ in 0..steps {
@@ -252,6 +288,9 @@ fn play(seed: u64, cols: usize, rows: usize, secs: f64, pacing: Pacing, grid: Gr
         seen = now;
         if was != reduced {
             ev.push("grid-switch");
+        }
+        if toggled {
+            ev.push("top-toggle");
         }
         if frame < 2 {
             continue;
@@ -281,6 +320,7 @@ fn play(seed: u64, cols: usize, rows: usize, secs: f64, pacing: Pacing, grid: Gr
 }
 
 /// `cargo test --release -- --ignored --nocapture pop_harness`
+/// (`POP_TOP=on` or `POP_TOP=toggling` for the top layer).
 #[test]
 #[ignore = "long report"]
 fn pop_harness() {
@@ -288,22 +328,39 @@ fn pop_harness() {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(600.0);
-    for (cols, rows) in [(80, 24), (160, 45), (250, 70)] {
-        for (pacing, grid) in [
+    let top = match std::env::var("POP_TOP").as_deref() {
+        Ok("on") => Top::On,
+        Ok("toggling") => Top::Toggling,
+        _ => Top::Off,
+    };
+    for size in [(80, 24), (160, 45), (250, 70)] {
+        for timing in [
             (Pacing::Steady, Grid::Full),
             (Pacing::Jittered, Grid::Full),
             (Pacing::Steady, Grid::Flipping),
         ] {
-            let r = play(7, cols, rows, secs, pacing, grid);
-            println!("{cols}x{rows} {pacing:?} {grid:?}: {}", r.summary());
+            let r = play(7, size, secs, timing, top);
+            println!(
+                "{}x{} {:?} {:?} top {top:?}: {}",
+                size.0,
+                size.1,
+                timing.0,
+                timing.1,
+                r.summary()
+            );
         }
     }
 }
 
 #[test]
 fn wax_does_not_pop() {
-    for (seed, cols, rows) in [(3, 80, 24), (11, 160, 45)] {
-        let r = play(seed, cols, rows, 60.0, Pacing::Jittered, Grid::Flipping);
-        assert_eq!(r.pops, 0, "{cols}x{rows}: {}", r.summary());
+    let timing = (Pacing::Jittered, Grid::Flipping);
+    for (seed, size, top) in [
+        (3, (80, 24), Top::Off),
+        (11, (160, 45), Top::Off),
+        (5, (120, 35), Top::Toggling),
+    ] {
+        let r = play(seed, size, 60.0, timing, top);
+        assert_eq!(r.pops, 0, "{size:?} top {top:?}: {}", r.summary());
     }
 }
