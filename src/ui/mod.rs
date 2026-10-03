@@ -153,6 +153,8 @@ fn draw_lamp(
         options: LampOptions {
             reduced: model.quality.reduced_grid(),
             translucent: model.translucent_cells(),
+            keep: model.frozen,
+            same_field: model.field_same,
         },
     };
     frame.render_stateful_widget(view, area, lamp);

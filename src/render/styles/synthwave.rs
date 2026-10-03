@@ -37,6 +37,7 @@ const SCROLL_SECS: f64 = 4.0;
 impl LampStyle for Synthwave {
     const NAME: &'static str = "synthwave";
     const GRID: Grid = Grid::HALF_BLOCK;
+    const TIMED: bool = true;
 
     fn draw(c: &Canvas, buf: &mut Buffer) {
         let scroll = (c.time / SCROLL_SECS).fract() as f32;
@@ -520,6 +521,7 @@ mod tests {
                         options: LampOptions {
                             reduced: false,
                             translucent,
+                            ..LampOptions::default()
                         },
                     }
                     .render(area, &mut buf, &mut state);

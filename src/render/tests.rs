@@ -203,6 +203,83 @@ fn animation_is_a_pure_function_of_time() {
             "{name} should animate"
         );
     }
+    // Only `TIMED` styles move: a frozen lamp keeps the others' cells
+    // whatever the time.
+    for id in StyleId::all() {
+        let style = id.style();
+        let same = draw_at(style, 0.0) == draw_at(style, 2.5);
+        assert_eq!(same, !style.timed(), "{}", style.name());
+    }
+}
+
+/// lava-jop: a frozen lamp keeps its cells and draws them again while
+/// nothing it reads changes; anything that does change draws afresh.
+#[test]
+fn a_frozen_lamp_keeps_its_cells() {
+    let field = |seed| {
+        let mut world = World::new(seed, 1.6);
+        world.prewarm(400, 1.0 / 120.0);
+        let mut field = Field::default();
+        field.prepare(&world, 0.5);
+        field
+    };
+    let (a, b) = (field(7), field(8));
+    let area = Rect::new(1, 1, 30, 12);
+    let (tc, c256) = (theme(ColorDepth::TrueColor), theme(ColorDepth::Ansi256));
+    let draw = |state: &mut LampState, field, style, theme, time, options| {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 32, 14));
+        let view = LampView {
+            field,
+            style,
+            theme,
+            time,
+            options,
+        };
+        view.render(area, &mut buf, state);
+        buf
+    };
+    let fresh = |field, style, theme, time| {
+        let options = LampOptions::default();
+        draw(
+            &mut LampState::default(),
+            field,
+            style,
+            theme,
+            time,
+            options,
+        )
+    };
+    let frozen = |same_field| LampOptions {
+        keep: true,
+        same_field,
+        ..LampOptions::default()
+    };
+    for id in StyleId::all() {
+        let style = id.style();
+        let name = style.name();
+        let mut state = LampState::default();
+        let first = draw(&mut state, &a, style, &tc, 1.0, frozen(false));
+        assert_eq!(first, fresh(&a, style, &tc, 1.0), "{name}");
+        // Kept: told the field is the same, it draws the kept cells (even
+        // from another field: nothing is drawn again).
+        let later = if style.timed() { 1.0 } else { 9.0 };
+        let kept = draw(&mut state, &b, style, &tc, later, frozen(true));
+        assert_eq!(kept, first, "{name}");
+        assert_ne!(fresh(&b, style, &tc, 1.0), first, "{name}: fields differ");
+        // A new field, theme or time (for a timed style): drawn afresh.
+        let moved = draw(&mut state, &b, style, &tc, 1.0, frozen(false));
+        assert_eq!(moved, fresh(&b, style, &tc, 1.0), "{name}");
+        let recoloured = draw(&mut state, &b, style, &c256, 1.0, frozen(true));
+        assert_eq!(recoloured, fresh(&b, style, &c256, 1.0), "{name}");
+        if style.timed() {
+            let on = draw(&mut state, &b, style, &c256, 4.0, frozen(true));
+            assert_eq!(on, fresh(&b, style, &c256, 4.0), "{name}");
+        }
+        // Not frozen: nothing kept.
+        let _ = draw(&mut state, &a, style, &tc, 1.0, LampOptions::default());
+        let after = draw(&mut state, &b, style, &tc, 1.0, frozen(true));
+        assert_eq!(after, fresh(&b, style, &tc, 1.0), "{name}");
+    }
 }
 
 /// Matrix rain is only visible through the wax: liquid cells stay blank.
@@ -322,6 +399,7 @@ fn lamp_view_matches_origin_in_offset_wider_buffers() {
                             options: LampOptions {
                                 reduced,
                                 translucent: false,
+                                ..LampOptions::default()
                             },
                         }
                         .render(area, buf, &mut LampState::default());
@@ -467,6 +545,7 @@ fn bench_lamp() {
                         options: LampOptions {
                             reduced: false,
                             translucent,
+                            ..LampOptions::default()
                         },
                     }
                     .render(area, &mut next, &mut state);

@@ -455,6 +455,27 @@ fn frozen_sleeps_until_the_clock_changes() {
     assert!(!m.quality.degraded());
 }
 
+/// lava-jop: a frozen lamp's frames say when the wax hasn't moved (its
+/// cells can be kept).
+#[test]
+fn a_frozen_lamp_knows_when_the_wax_is_still() {
+    let (mut m, t0) = model("frozen-still");
+    let ms = |n| t0 + Duration::from_millis(n);
+    tick(&mut m, ms(16));
+    assert!(!m.field_same, "running");
+    m.update(Action::Freeze, ms(16));
+    tick(&mut m, ms(32));
+    tick(&mut m, ms(48));
+    assert!(m.field_same);
+    // A new pattern only starts once the wax moves again.
+    m.update(Action::Reseed, ms(48));
+    tick(&mut m, ms(64));
+    assert!(m.field_same);
+    m.update(Action::Freeze, ms(64));
+    tick(&mut m, ms(80));
+    assert!(!m.field_same, "thawed");
+}
+
 /// lava-ebq.3: slow frames drop the grid, then the frame rate (§7).
 #[test]
 fn slow_frames_degrade_quality() {

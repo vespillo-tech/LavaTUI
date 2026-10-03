@@ -30,7 +30,7 @@ mod tests;
 pub use canvas::{At, Canvas, LIQUID};
 pub use cell::{Pixel, fill_from_background, quadrant, sextant};
 
-use ratatui::buffer::Buffer;
+use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::Rect;
 use ratatui::widgets::StatefulWidget;
 
@@ -63,6 +63,9 @@ pub trait LampStyle {
     /// Sample pixels per cell. The canvas passed to [`draw`](Self::draw)
     /// is exactly `area.width × grid.x` by `area.height × grid.y`.
     const GRID: Grid;
+    /// Draws with [`Canvas::time`] (it moves by itself): a frame drawn at
+    /// one time isn't the one at another, even from the same field.
+    const TIMED: bool = false;
     /// Draw `canvas` into its `area` of `buf`. Must write every cell of the
     /// area and nothing outside it.
     fn draw(canvas: &Canvas, buf: &mut Buffer);
@@ -73,6 +76,7 @@ pub trait LampStyle {
 pub struct StyleEntry {
     name: &'static str,
     grid: Grid,
+    timed: bool,
     draw: fn(&Canvas, &mut Buffer),
 }
 
@@ -81,6 +85,7 @@ impl StyleEntry {
         StyleEntry {
             name: S::NAME,
             grid: S::GRID,
+            timed: S::TIMED,
             draw: S::draw,
         }
     }
@@ -91,6 +96,11 @@ impl StyleEntry {
 
     pub fn grid(&self) -> Grid {
         self.grid
+    }
+
+    /// See [`LampStyle::TIMED`].
+    pub fn timed(&self) -> bool {
+        self.timed
     }
 
     pub fn draw(&self, canvas: &Canvas, buf: &mut Buffer) {
@@ -189,6 +199,34 @@ pub struct LampState {
     reduced: Option<bool>,
     switch: f32,
     other: Vec<Sample>,
+    /// While frozen ([`LampOptions::keep`]): the last frame's cells and
+    /// what they were drawn with, to draw again while nothing changes.
+    kept: Option<Kept>,
+}
+
+/// A frame's lamp cells and everything they were drawn from but the field.
+#[derive(Debug)]
+struct Kept {
+    area: Rect,
+    style: &'static str,
+    theme: Theme,
+    /// For a [`LampStyle::TIMED`] style only.
+    time: Option<u64>,
+    options: LampOptions,
+    cells: Vec<Cell>,
+}
+
+impl Kept {
+    /// Drawn from the same as `view` would be at `area` (but the field).
+    fn matches(&self, view: &LampView, area: Rect) -> bool {
+        let time = view.style.timed().then_some(view.time.to_bits());
+        let (a, b) = (self.options, view.options);
+        self.area == area
+            && self.style == view.style.name()
+            && self.time == time
+            && (a.reduced, a.translucent) == (b.reduced, b.translucent)
+            && self.theme == *view.theme
+    }
 }
 
 /// Frames a switch between the full and reduced sample grids takes.
@@ -257,6 +295,12 @@ pub struct LampOptions {
     /// The terminal shows cell backgrounds see-through but glyphs opaque
     /// (`display.cells`): half blocks never split wax across two colours.
     pub translucent: bool,
+    /// The lamp is frozen: keep this frame's cells, to draw again.
+    pub keep: bool,
+    /// The field is the one the last frame was drawn from (frozen, and
+    /// nothing moved the wax): the kept cells are good, if nothing else
+    /// changed either.
+    pub same_field: bool,
 }
 
 /// Samples a frame of `n` grid pixels actually takes: the budget caps it,
@@ -281,6 +325,19 @@ impl StatefulWidget for LampView<'_> {
         if area.is_empty() {
             return;
         }
+        let mut spare = Vec::new();
+        if let Some(kept) = std::mem::take(&mut state.kept).filter(|_| self.options.keep) {
+            if self.options.same_field && state.switch >= 1.0 && kept.matches(&self, area) {
+                // A frozen lamp under music or lyrics that redraw: the
+                // same cells as last frame, without sampling or drawing.
+                for (p, cell) in area.positions().zip(&kept.cells) {
+                    buf[p].clone_from(cell);
+                }
+                state.kept = Some(kept);
+                return;
+            }
+            spare = kept.cells;
+        }
         // In 256 colours styles draw blends as RGB, dithered at the end.
         let dithering = self.theme.dithering();
         let theme = dithering.as_ref().unwrap_or(self.theme);
@@ -301,6 +358,18 @@ impl StatefulWidget for LampView<'_> {
         self.style.draw(&canvas, buf);
         if let Some(theme) = &dithering {
             dither256::resolve(theme, area, buf, self.options.translucent);
+        }
+        if self.options.keep {
+            spare.clear();
+            spare.extend(area.positions().map(|p| buf[p].clone()));
+            state.kept = Some(Kept {
+                area,
+                style: self.style.name(),
+                theme: self.theme.clone(),
+                time: self.style.timed().then_some(self.time.to_bits()),
+                options: self.options,
+                cells: spare,
+            });
         }
     }
 }
