@@ -13,7 +13,8 @@ and a scratch config, and records:
                 to the screen it opens on: check this, not the request)
   <case>.mov    with --record: the main display, from 15 s in, recorded
                 from inside the window, so Ghostty's Screen Recording
-                permission covers it
+                permission covers it (screencapture's own output in
+                <case>.mov.log, never on LavaTUI's screen)
   <case>.gpu    GPU "Device Utilization %" once a second (ioreg, no sudo)
   <case>.load   load averages at start and end
 
@@ -66,9 +67,12 @@ detail = "auto"
 WRAPPER = """\
 #!/bin/sh
 # <sizefile> <movfile|-> <record secs> <binary> args...
+# Helpers share LavaTUI's terminal: anything they print would land under
+# the lamp (screencapture's "couldn't save" on a full disk did), so their
+# output goes to a log next to the recording.
 size=$1 mov=$2 secs=$3; shift 3
-sleep 0.5; stty size > "$size"
-if [ "$mov" != - ]; then (sleep 15; /usr/sbin/screencapture -x -v -V "$secs" -D1 "$mov") & fi
+sleep 0.5; stty size > "$size" 2> /dev/null
+if [ "$mov" != - ]; then (sleep 15; /usr/sbin/screencapture -x -v -V "$secs" -D1 "$mov") > "$mov.log" 2>&1 & fi
 "$@"
 wait
 """

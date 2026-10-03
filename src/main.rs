@@ -101,4 +101,21 @@ mod tests {
             "CLAUDE.md and AGENTS.md differ from `## Project: LavaTUI` on: copy one over the other"
         );
     }
+
+    /// tools/ghostty_native.py runs helpers in LavaTUI's own terminal:
+    /// one that prints (screencapture failing to save on a full disk) puts
+    /// text under the lamp, so each sends its output elsewhere.
+    #[test]
+    fn the_native_harness_keeps_its_helpers_off_the_screen() {
+        let tool = include_str!("../tools/ghostty_native.py");
+        let start = tool.find("WRAPPER = ").expect("the wrapper script");
+        let end = start + tool[start..][12..].find("\"\"\"").expect("its end") + 12;
+        for line in tool[start..end].lines() {
+            for helper in ["screencapture", "stty"] {
+                if line.contains(helper) && !line.trim_start().starts_with('#') {
+                    assert!(line.contains("2>"), "{helper} may print on screen: {line}");
+                }
+            }
+        }
+    }
 }
