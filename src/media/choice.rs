@@ -1,5 +1,5 @@
-//! Which player to follow when several are open (Linux MPRIS, Windows
-//! SMTC; macOS talks to Spotify only).
+//! Which player to follow when several are open (macOS: Spotify and Apple
+//! Music; Linux: MPRIS players; Windows: SMTC sessions).
 //!
 //! LavaTUI is a controller for whatever is playing, with Spotify first
 //! only while it is actually playing. In order:
@@ -21,7 +21,8 @@
 pub struct Player {
     pub spotify: bool,
     pub playing: bool,
-    /// The one the system calls current (Windows' current session).
+    /// The one the system calls current (Windows' current session; never
+    /// on macOS or Linux).
     pub current: bool,
     /// The one followed last.
     pub in_use: bool,

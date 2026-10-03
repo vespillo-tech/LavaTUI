@@ -28,6 +28,15 @@ What changed in each version of LavaTUI, in plain words.
 
 **Music**
 
+- Apple Music works on a Mac. LavaTUI shows the song, the cover and the
+  lyrics, and you can play, pause, skip, seek, change the volume, and
+  turn shuffle and repeat on or off. With both Spotify and Music open,
+  LavaTUI follows the one that's playing, Spotify first. It never opens
+  either app. The first time, your Mac asks if your terminal may control
+  Music.
+- Liking songs and adding them to playlists say they're for Spotify
+  songs only when another app is playing. Playing a playlist from your
+  library pauses that app, and Spotify takes over.
 - A short hiccup no longer hides a song's cover, lyrics or like and add
   buttons until the next song. If Spotify is slow to answer for a moment,
   the music stays on screen. A cover or lyrics that couldn't load are

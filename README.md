@@ -311,9 +311,10 @@ settings, under music & lyrics). Press `o` for a large album cover.
 
 ### Works with no setup
 
-- **On a Mac:** the Spotify app. The first time, your Mac asks if your
-  terminal may control Spotify. Say OK. (If you said no, change it in
-  System Settings › Privacy & Security › Automation.)
+- **On a Mac:** the Spotify app and Apple Music. The first time, your
+  Mac asks if your terminal may control each one. Say OK. (If you said
+  no, change it in System Settings › Privacy & Security › Automation.)
+  Other apps, like web browsers and podcast apps, aren't shown yet.
 - **On Linux:** most music players.
 - **On Windows:** most apps that show up in the Windows media controls.
 
@@ -327,6 +328,11 @@ offering them. You also get the
 album cover and lyrics, all with no account and no setup. LavaTUI shows
 whatever is already playing. It won't open your music app or start music
 on its own.
+
+Liking songs, adding them to playlists and your playlists are for
+Spotify songs only. If Apple Music or another app is playing, LavaTUI
+tells you so. When you play a playlist from your library, that app
+pauses and Spotify takes over.
 
 The cover is a real picture in kitty, Ghostty, iTerm2, WezTerm, foot,
 mlterm and Konsole. In other terminals it's drawn with text blocks.
@@ -439,12 +445,12 @@ Check that the mouse is on: press `,` to open the settings, go to the
 to `~/.tmux.conf`. Some terminals don't pass clicks on at all (see
 [Terminals](#terminals)); there, use the keys instead.
 
-**The music card says Spotify isn't open.**
+**The music card says to open your music player.**
 Just open your music app and start a song, and the card will pick it up
 in a moment. LavaTUI leaves it to you to open your music app, so it
 never starts playing anything unexpectedly. On a Mac, if the card still
 doesn't show your song, check that your terminal is allowed to control
-Spotify in System Settings › Privacy & Security › Automation.
+Spotify or Music in System Settings › Privacy & Security › Automation.
 
 **Space doesn't start the timer.**
 The music controls may be on (a line at the top says so). Press `Esc`
@@ -503,10 +509,10 @@ Each settings page has a reset line. Or delete `config.toml` (see
 |---|---|---|---|
 | The lamp, clock and timer | ✓ | ✓ | ✓ |
 | Tested on a real computer | ✓ | in a test setup, with a stand-in music player | not yet |
-| Music | the Spotify app | most players | most players (untested) |
+| Music | the Spotify app and Apple Music | most players | most players (untested) |
 | Album covers | ✓ | ✓ | ✓ (untested) |
 | Volume control | ✓ | most players | – |
-| Shuffle and repeat | with Spotify login and Premium | most players; Spotify with login and Premium | most players |
+| Shuffle and repeat | Apple Music; Spotify with login and Premium | most players; Spotify with login and Premium | most players |
 | Spotify library | ✓ | ✓ | ✓ (untested) |
 
 Windows music support is new and hasn't been tried on a real Windows

@@ -17,8 +17,9 @@
 //! track has one. It's drawn the cover widget's way (pixels or text cells);
 //! until it has loaded a quiet placeholder holds its place, so nothing
 //! jumps when it arrives. With no player to show, the widget is one calm
-//! sentence instead (`Open Spotify to show music`), and its chip the short
-//! of it (`♪ open Spotify`, else `♪ see Shift+A`: the music controls show
+//! sentence instead (`Open your music player to show music`), and its chip
+//! the short of it (`♪ open your player`, `♪ open Spotify`, else `♪ see
+//! Shift+A`: the music controls show
 //! the whole sentence when the widget has no room for it).
 
 use ratatui::buffer::Buffer;

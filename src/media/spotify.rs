@@ -1,66 +1,41 @@
 //! The Spotify desktop app on macOS, driven through AppleScript (the
 //! module only exists on macOS).
 //!
-//! One `osascript` process stays up for the backend's life
-//! ([`Osascript`](super::runner::Osascript)) running [`script`]: a loop
-//! that reads a request line, runs its commands, reads the state and
-//! writes it back as one record. Starting osascript is what costs (~80 ms
-//! of CPU); a poll on the running process is two Apple events and ~3 ms.
-//!
-//! Never launching Spotify: compiling a `tell application` block launches
-//! the app to load its dictionary, and sending it an event launches it
-//! too. So each request first checks `application id … is running` (the
-//! id in a variable, resolved at run time) and only then compiles the
-//! Spotify part (`run script`, once, kept until Spotify is seen gone) and
-//! calls it.
-//!
-//! A request is `lavatui1 ␞ known track id ␞ command…`, a command being a
-//! verb and its arguments (`seek 61250`, `uri spotify:album:…`,
-//! `context spotify:track:… spotify:playlist:…`).
-//!
-//! The reply is `lavatui1 ␞ state ␞ position ms ␞ shuffle ␞ repeat ␞
-//! volume [␞ id [␞ duration ms ␞ artwork url ␞ artist ␞ album ␞ name]]`,
-//! fields split by U+001E (record separator), numbers as integers (no
-//! locale decimal separators). The track's details come only when its id
-//! isn't the known one (they cost five more Apple events), its free text
-//! last, name last of all, so a stray separator inside a name only ever
-//! lands in the name. When the details are read the position is read
-//! again after them, so it's always taken just before the reply (the
-//! worker's `Baseline` puts it there). Not running is `lavatui1 ␞ not running`; an
-//! AppleScript error is `lavatui1 ␞ error ␞ number ␞ message`.
+//! [`spotify_part`] is the Spotify part of the shared AppleScript loop
+//! ([`applescript`](super::applescript): one long-lived `osascript`, the
+//! never-launch guard, the record format). A request is `lavatui1 ␞ known
+//! track id ␞ command…`, a command being a verb and its arguments (`seek
+//! 61250`, `uri spotify:album:…`, `context spotify:track:…
+//! spotify:playlist:…`). The track's details come only when its id isn't
+//! the known one (they cost five more Apple events). When the details are
+//! read the position is read again after them, so it's always taken just
+//! before the reply (the worker's `Baseline` puts it there).
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
+use super::applescript::{self, App, EVENT_TIMEOUT_SECS, HEADER, Known, TIMEOUT};
 use super::runner::{RunError, Runner};
 use super::worker::{Backend, Nudge};
 use super::{Capabilities, Command, Snapshot, Status, Track, Unavailable};
 
-const BUNDLE_ID: &str = "com.spotify.client";
-const HEADER: &str = "lavatui1";
-const SEP: char = '\u{1e}';
-const NOT_RUNNING: &str = "not running";
-const ERROR: &str = "error";
-/// One request, from writing it to the end of the reply (the first one
-/// includes starting osascript).
-const TIMEOUT: Duration = Duration::from_secs(5);
-/// Apple event timeout inside the script, below [`TIMEOUT`] so a busy
-/// Spotify reports -1712 rather than being killed.
-const EVENT_TIMEOUT_SECS: u32 = 4;
+pub const BUNDLE_ID: &str = "com.spotify.client";
+pub const APP: App = App {
+    bundle: BUNDLE_ID,
+    name: "Spotify",
+};
 
 /// The Spotify backend, over a [`Runner`] (an [`Osascript`] running
-/// [`script`] in the app).
+/// [`script`], or the shared one through a
+/// [`Routed`](super::applescript::Routed) runner).
 ///
 /// [`Osascript`]: super::runner::Osascript
 pub struct Spotify<R> {
     runner: R,
     name: Arc<str>,
     /// The last track read in full: its details aren't asked for again
-    /// while it plays (unless some were missing, see [`REREADS`]).
-    known: Option<Arc<Track>>,
-    /// Full reads left for the known track while its details are
-    /// incomplete.
-    rereads: u8,
+    /// while it plays (unless some were missing).
+    known: Known,
     /// Listen for the app's change notifications ([`watching`](Self::watching)).
     watch: bool,
 }
@@ -68,26 +43,19 @@ pub struct Spotify<R> {
 /// What the Spotify app posts when it plays, pauses or changes track.
 pub const NOTIFICATION: &str = "com.spotify.client.PlaybackStateChanged";
 
-/// A track that came back with details missing (Spotify still loading them
-/// as it changes track, a read that failed) is read in full again on this
-/// many polls (about as many seconds) before it's taken as it is (local
-/// files and ads lack some for good). Without this, a song's cover and
-/// lyrics stayed missing until the next song (lava-75z.22).
-const REREADS: u8 = 8;
-
 impl<R: Runner> Spotify<R> {
     pub fn new(runner: R) -> Self {
         Self {
             runner,
-            name: Arc::from("Spotify"),
-            known: None,
-            rereads: 0,
+            name: Arc::from(APP.name),
+            known: Known::default(),
             watch: false,
         }
     }
 
     /// Also listen for the app's change notifications ([`NOTIFICATION`],
     /// through [`super::notify`]), polling at once on each.
+    #[cfg(test)]
     pub fn watching(mut self) -> Self {
         self.watch = true;
         self
@@ -104,39 +72,23 @@ impl<R: Runner> Backend for Spotify<R> {
     }
 
     fn exchange(&mut self, commands: &[Command]) -> Snapshot {
-        let reread = self.rereads > 0 && self.known.as_deref().is_some_and(incomplete);
-        let named = match &self.known {
-            Some(track) if !reread => track.id.as_str(),
-            _ => "",
-        };
-        let result = self.runner.run(&request(commands, named), TIMEOUT);
+        let named = self.known.named(incomplete).to_owned();
+        let result = self.runner.run(&request(commands, &named), TIMEOUT);
         let now = Instant::now();
         let mut snapshot = match result {
-            Ok(out) => parse(&out, now, self.known.as_ref()),
+            Ok(out) => parse(&out, now, self.known.track.as_ref()),
             Err(err) => Snapshot::new(Status::Unavailable(classify(&err)), now),
         };
-        if let Some(track) = &mut snapshot.track {
-            match &self.known {
-                Some(known) if known.id == track.id => {
-                    if reread {
-                        self.rereads -= 1;
-                        // What the earlier read had and this one lacks stays.
-                        *track = fill_in(track, known);
-                    }
-                }
-                _ => self.rereads = REREADS,
-            }
-            if incomplete(track) && !self.known.as_ref().is_some_and(|k| Arc::ptr_eq(k, track)) {
-                crate::diag::note(|| {
-                    format!(
-                        "spotify: track {} read without {} ({} rereads left)",
-                        crate::diag::tag(&track.id),
-                        missing(track).join(", "),
-                        self.rereads
-                    )
-                });
-            }
-            self.known = Some(Arc::clone(track));
+        if self.known.update(&mut snapshot, incomplete)
+            && let Some(track) = snapshot.track.as_deref().filter(|t| incomplete(t))
+        {
+            crate::diag::note(|| {
+                format!(
+                    "spotify: track {} read without {}",
+                    crate::diag::tag(&track.id),
+                    missing(track).join(", "),
+                )
+            });
         }
         snapshot.player = Some(Arc::clone(&self.name));
         snapshot
@@ -154,72 +106,19 @@ impl<R: Runner> Backend for Spotify<R> {
     }
 }
 
-/// The long-lived script: a request loop around the guard and the
-/// Spotify part (see the module docs).
+/// The loop with only the Spotify part (the live tests' own process).
+#[cfg(test)]
 pub fn script() -> String {
-    format!(
-        "use framework \"Foundation\"\n\
-         use scripting additions\n\
-         property spot : missing value\n\
-         on reply(t)\n\
-         set s to current application's NSString's stringWithString:t\n\
-         set s to s's stringByReplacingOccurrencesOfString:(character id 4) withString:\"\"\n\
-         set s to s's stringByAppendingString:((character id 4) & linefeed)\n\
-         (current application's NSFileHandle's fileHandleWithStandardOutput())'s writeData:(s's dataUsingEncoding:4)\n\
-         end reply\n\
-         on answer(req)\n\
-         set rs to character id 30\n\
-         set AppleScript's text item delimiters to rs\n\
-         set parts to text items of req\n\
-         set AppleScript's text item delimiters to \"\"\n\
-         set bid to \"{BUNDLE_ID}\"\n\
-         try\n\
-         if application id bid is running then\n\
-         if spot is missing value then set spot to run script \"{}\"\n\
-         return spot's poll(parts)\n\
-         end if\n\
-         set spot to missing value\n\
-         return \"{HEADER}\" & rs & \"{NOT_RUNNING}\"\n\
-         on error m number n\n\
-         set spot to missing value\n\
-         return \"{HEADER}\" & rs & \"{ERROR}\" & rs & n & rs & m\n\
-         end try\n\
-         end answer\n\
-         set stdin to current application's NSFileHandle's fileHandleWithStandardInput()\n\
-         set buf to current application's NSMutableData's |data|()\n\
-         repeat\n\
-         set d to stdin's availableData()\n\
-         if (d's |length|()) as integer is 0 then exit repeat\n\
-         buf's appendData:d\n\
-         set s to current application's NSString's alloc()'s initWithData:buf encoding:4\n\
-         if s is not missing value then\n\
-         set req to s as text\n\
-         if req ends with linefeed then\n\
-         my reply(answer(text 1 thru -2 of req))\n\
-         set buf to current application's NSMutableData's |data|()\n\
-         end if\n\
-         end if\n\
-         end repeat\n",
-        escape(&spotify_part())
-    )
+    applescript::script(&[(BUNDLE_ID, spotify_part())])
 }
 
 /// The Spotify part, compiled only once Spotify is known to be running: a
 /// script object whose `poll(parts)` runs the request's commands and reads
 /// the state.
-fn spotify_part() -> String {
-    let mut s = format!(
-        "script\n\
-         on act(c)\n\
-         set v to c\n\
-         set a to \"\"\n\
-         if c contains \" \" then\n\
-         set o to offset of \" \" in c\n\
-         set v to text 1 thru (o - 1) of c\n\
-         set a to text (o + 1) thru -1 of c\n\
-         end if\n\
-         tell application id \"{BUNDLE_ID}\"\n\
-         if v is \"playpause\" then\n\
+pub fn spotify_part() -> String {
+    let act = applescript::act_handler(
+        BUNDLE_ID,
+        "if v is \"playpause\" then\n\
          playpause\n\
          else if v is \"next\" then\n\
          next track\n\
@@ -238,9 +137,11 @@ fn spotify_part() -> String {
          else if v is \"context\" then\n\
          set o to offset of \" \" in a\n\
          play track (text 1 thru (o - 1) of a) in context (text (o + 1) thru -1 of a)\n\
-         end if\n\
-         end tell\n\
-         end act\n\
+         end if\n",
+    );
+    let mut s = format!(
+        "script\n\
+         {act}\
          on poll(parts)\n\
          set rs to character id 30\n\
          tell application id \"{BUNDLE_ID}\"\n\
@@ -278,13 +179,7 @@ fn spotify_part() -> String {
         ("al", "album of t"),
         ("nm", "name of t"),
     ] {
-        s += &format!(
-            "set {var} to \"\"\n\
-             try\n\
-             set {var} to {expr}\n\
-             if {var} is missing value then set {var} to \"\"\n\
-             end try\n"
-        );
+        s += &applescript::detail(var, expr);
     }
     // The position comes from the first read, unless the track's details
     // were read too (five more Apple events, up to seconds at a track
@@ -311,18 +206,7 @@ fn spotify_part() -> String {
 
 /// One request line: the header, the known track id, the commands.
 pub fn request(commands: &[Command], known_id: &str) -> String {
-    // An id that would break the framing is just not known.
-    let known_id = if known_id.contains([SEP, '\n', '\r']) {
-        ""
-    } else {
-        known_id
-    };
-    let mut out = format!("{HEADER}{SEP}{known_id}");
-    for command in commands {
-        out.push(SEP);
-        out += &command_word(command);
-    }
-    out
+    applescript::request(known_id, commands.iter().map(command_word))
 }
 
 fn command_word(command: &Command) -> String {
@@ -352,78 +236,10 @@ fn command_word(command: &Command) -> String {
     }
 }
 
-/// Escape text for an AppleScript string literal.
-fn escape(text: &str) -> String {
-    text.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
 /// Turn a reply into a snapshot sampled at `now`. `known` is the track
 /// whose id the request named: a reply with only that id means it.
 pub fn parse(out: &str, now: Instant, known: Option<&Arc<Track>>) -> Snapshot {
-    let unexpected = || {
-        let shown: String = out.trim().chars().take(60).collect();
-        Snapshot::new(
-            Status::Unavailable(Unavailable::Error(format!(
-                "unexpected answer from Spotify: {shown:?}"
-            ))),
-            now,
-        )
-    };
-    let fields: Vec<&str> = out.split(SEP).collect();
-    if fields.first() != Some(&HEADER) {
-        return unexpected();
-    }
-    let status = match fields.get(1) {
-        Some(&NOT_RUNNING) if fields.len() == 2 => {
-            return Snapshot::new(Status::Unavailable(Unavailable::NotRunning), now);
-        }
-        Some(&ERROR) if fields.len() >= 4 => {
-            // As osascript itself would print it: "message (number)".
-            let message = format!("{} ({})", fields[3..].join(" "), fields[2].trim());
-            return Snapshot::new(
-                Status::Unavailable(classify(&RunError::Failed(message))),
-                now,
-            );
-        }
-        Some(&"playing") => Status::Playing,
-        Some(&"paused") => Status::Paused,
-        Some(&"stopped") => Status::Stopped,
-        _ => return unexpected(),
-    };
-    let int = |i: usize| fields.get(i).and_then(|f| f.trim().parse::<i64>().ok());
-    let (Some(position), Some(shuffle), Some(repeat), Some(volume)) =
-        (int(2), int(3), int(4), int(5))
-    else {
-        return unexpected();
-    };
-    let track = match fields.len() {
-        7 => match known {
-            Some(known) if known.id == fields[6] => Some(Arc::clone(known)),
-            _ => return unexpected(),
-        },
-        12.. => Some(Arc::new(Track {
-            id: fields[6].to_owned(),
-            uri: super::spotify_track_uri(fields[6]),
-            duration: millis(fields[7].trim().parse().unwrap_or(0)),
-            artwork_url: fields[8].to_owned(),
-            artist: fields[9].to_owned(),
-            album: fields[10].to_owned(),
-            // Anything past the album is the name (it held a separator).
-            name: fields[11..].join(" "),
-        })),
-        // None loaded, or a short record: ignored rather than misread.
-        _ => None,
-    };
-    Snapshot {
-        player: None,
-        status,
-        track,
-        position: millis(position),
-        sampled_at: now,
-        shuffle: shuffle != 0,
-        repeat: repeat != 0,
-        volume: volume.clamp(0, 100) as u8,
-    }
+    applescript::parse(out, now, known, APP)
 }
 
 /// The details a read of `track` came back without, of those a track
@@ -446,63 +262,10 @@ fn incomplete(track: &Track) -> bool {
     !missing(track).is_empty()
 }
 
-/// `fresh`, with any detail it lacks taken from `old` (the same track read
-/// earlier), so a re-read never loses what an earlier one had.
-fn fill_in(fresh: &Arc<Track>, old: &Track) -> Arc<Track> {
-    let pick = |new: &str, old: &str| if new.trim().is_empty() { old } else { new }.to_owned();
-    Arc::new(Track {
-        id: fresh.id.clone(),
-        uri: fresh.uri.clone(),
-        name: pick(&fresh.name, &old.name),
-        artist: pick(&fresh.artist, &old.artist),
-        album: pick(&fresh.album, &old.album),
-        duration: if fresh.duration.is_zero() {
-            old.duration
-        } else {
-            fresh.duration
-        },
-        artwork_url: pick(&fresh.artwork_url, &old.artwork_url),
-    })
-}
-
-fn millis(ms: i64) -> Duration {
-    Duration::from_millis(ms.max(0) as u64)
-}
-
 /// Map a failure (osascript's, or an error the script reported) to a
 /// reason the UI can explain.
 pub fn classify(err: &RunError) -> Unavailable {
-    match err {
-        RunError::Timeout => Unavailable::NotResponding,
-        RunError::Missing => Unavailable::Unsupported,
-        RunError::Io(message) => Unavailable::Error(message.clone()),
-        RunError::Failed(stderr) => match error_number(stderr) {
-            // errAEEventNotPermitted: Automation permission refused.
-            Some(-1743) => Unavailable::PermissionDenied,
-            // The guard can't find an app with that bundle id.
-            Some(-1728) if stderr.contains(BUNDLE_ID) => Unavailable::NotInstalled,
-            // procNotFound / connectionInvalid: quit while we were asking.
-            Some(-600 | -609) => Unavailable::NotRunning,
-            // errAETimeout.
-            Some(-1712) => Unavailable::NotResponding,
-            _ => Unavailable::Error(format!("Spotify: {}", error_text(stderr))),
-        },
-    }
-}
-
-/// The `(-1743)` at the end of an osascript error.
-fn error_number(stderr: &str) -> Option<i32> {
-    let open = stderr.trim_end().strip_suffix(')')?.rfind('(')?;
-    stderr.trim_end()[open + 1..stderr.trim_end().len() - 1]
-        .parse()
-        .ok()
-}
-
-/// The message without osascript's `12:34: execution error: ` prefix.
-fn error_text(stderr: &str) -> &str {
-    let text = stderr.trim();
-    text.find("error: ")
-        .map_or(text, |at| &text[at + "error: ".len()..])
+    applescript::classify(err, APP)
 }
 
 #[cfg(test)]
@@ -510,8 +273,10 @@ mod tests {
     use std::collections::VecDeque;
     use std::sync::Mutex;
     use std::thread;
+    use std::time::Duration;
 
     use super::super::MediaSource;
+    use super::super::applescript::{REREADS, Routed, SEP};
     use super::super::runner::Osascript;
     use super::super::worker::{Polled, testing};
     use super::*;
@@ -693,11 +458,16 @@ mod tests {
         assert_eq!(classify(&RunError::Missing), Unavailable::Unsupported);
     }
 
+    /// A fresh process running the loop with the Spotify part only.
+    fn own_process() -> Routed<Osascript> {
+        Routed::new(BUNDLE_ID, Osascript::new(script()))
+    }
+
     #[test]
     fn script_guards_before_touching_spotify() {
         let s = script();
         let guard = s.find("is running").unwrap();
-        let tell = s.find("run script").unwrap();
+        let tell = s.find("my part(bid)").unwrap();
         assert!(guard < tell);
         // The guard's id is a variable, so a missing app is a run-time
         // error the loop reports, not a script that won't start.
@@ -752,11 +522,6 @@ mod tests {
         assert_eq!(request(&[], ""), "lavatui1\u{1e}");
         assert_eq!(request(&[], "bad\nid"), "lavatui1\u{1e}");
         assert!(!request(&[], "a\u{1e}b").contains('b'));
-    }
-
-    #[test]
-    fn escaping_keeps_quotes_inside_the_literal() {
-        assert_eq!(escape(r#"a"b\c"#), r#"a\"b\\c"#);
     }
 
     /// A runner that answers from a list and records the requests.
@@ -1006,7 +771,10 @@ mod tests {
     #[test]
     fn script_runs_and_a_missing_app_is_not_installed() {
         let s = script().replace(BUNDLE_ID, "com.lavatui.nonexistent");
-        let mut spotify = Spotify::new(Patient(Osascript::new(s)));
+        let mut spotify = Spotify::new(Routed::new(
+            "com.lavatui.nonexistent",
+            Patient(Osascript::new(s)),
+        ));
         for commands in [&[][..], &[Command::Next, Command::SetVolume(3)], &[]] {
             let snap = spotify.exchange(commands);
             // The bundle id differs, so this is a plain error naming it.
@@ -1030,7 +798,7 @@ mod tests {
 
         const SETTLE: Duration = Duration::from_millis(400);
 
-        type Live = Spotify<Osascript>;
+        type Live = Spotify<Routed<Osascript>>;
 
         fn exchange(spotify: &mut Live, label: &str, commands: &[Command]) -> (Snapshot, f64) {
             let start = Instant::now();
@@ -1059,7 +827,7 @@ mod tests {
         struct Restore(Snapshot);
         impl Drop for Restore {
             fn drop(&mut self) {
-                let spotify = &mut Spotify::new(Osascript::new(script()));
+                let spotify = &mut Spotify::new(own_process());
                 let now = exchange(spotify, "restore check", &[]).0;
                 let mut fix = Vec::new();
                 if now.status != self.0.status {
@@ -1070,7 +838,7 @@ mod tests {
             }
         }
 
-        let spotify = &mut Spotify::new(Osascript::new(script()));
+        let spotify = &mut Spotify::new(own_process());
         exchange(spotify, "start", &[]);
         let mut polls: Vec<f64> = (0..9).map(|_| exchange(spotify, "poll", &[]).1).collect();
         polls.sort_by(f64::total_cmp);
@@ -1096,7 +864,7 @@ mod tests {
         assert_eq!(s.volume, orig.volume);
 
         // Through the worker: optimistic at once, confirmed after.
-        let source = Polled::spawn(Spotify::new(Osascript::new(script())), Cadence::default());
+        let source = Polled::spawn(Spotify::new(own_process()), Cadence::default());
         let start = Instant::now();
         while !source.snapshot().status.is_available() {
             assert!(start.elapsed() < Duration::from_secs(5));
@@ -1159,7 +927,7 @@ mod tests {
         }
         let (tx, rx) = mpsc::channel();
         let truth = thread::spawn(move || {
-            let mut runner = Osascript::new(script());
+            let mut runner = own_process();
             let mut known = String::new();
             while t0.elapsed() < run + Duration::from_secs(2) {
                 let send = Instant::now();
@@ -1189,7 +957,7 @@ mod tests {
         // The app's source, with change events unless
         // LAVATUI_TIMING_EVENTS=0 (polling alone, as before events).
         let events = std::env::var("LAVATUI_TIMING_EVENTS").as_deref() != Ok("0");
-        let backend = Spotify::new(Osascript::new(script()));
+        let backend = Spotify::new(own_process());
         let backend = if events { backend.watching() } else { backend };
         let source = Polled::spawn(backend, Cadence::default());
         // When Spotify's notifications arrive, for the report.

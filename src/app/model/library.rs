@@ -1471,7 +1471,8 @@ impl Model {
             return;
         }
         let Some(uri) = self.playing_uri().map(str::to_owned) else {
-            self.toast("nothing to like");
+            let why = self.not_spotify("liked").unwrap_or("nothing to like");
+            self.toast(why);
             return;
         };
         let on = !self.library.liked(&uri).unwrap_or(false);
@@ -1486,6 +1487,18 @@ impl Model {
         self.library.request(request, Want::Like { uri, on });
         let g = self.glyphs();
         self.toast(if on { g.liked_toast } else { g.unliked_toast });
+    }
+
+    /// Another player's song (Apple Music, VLC…) can't be `done` (liked,
+    /// added): only Spotify songs can. `None` for a Spotify player or
+    /// nothing to show.
+    fn not_spotify(&self, done: &str) -> Option<&'static str> {
+        let snap = self.music.snapshot.as_ref()?;
+        let other = snap.status.is_available() && snap.track.is_some() && !snap.is_spotify();
+        other.then_some(match done {
+            "liked" => "only Spotify songs can be liked",
+            _ => "only Spotify songs can be added to playlists",
+        })
     }
 
     /// A Client ID to log in with (or the demo's made-up account).
@@ -1518,7 +1531,10 @@ impl Model {
             return;
         }
         if kind == ListKind::AddTo && self.library.logged_in() && self.playing_uri().is_none() {
-            self.toast("nothing playing to add");
+            let why = self
+                .not_spotify("added")
+                .unwrap_or("nothing playing to add");
+            self.toast(why);
             return;
         }
         self.refresh_playlists();
@@ -1867,7 +1883,10 @@ impl Model {
                     return true;
                 };
                 let Some(uri) = self.playing_uri().map(str::to_owned) else {
-                    self.toast("nothing playing to add");
+                    let why = self
+                        .not_spotify("added")
+                        .unwrap_or("nothing playing to add");
+                    self.toast(why);
                     return true;
                 };
                 let p = &self.library.playlists.items[at];
@@ -1917,6 +1936,8 @@ impl Model {
             name: name.to_owned(),
         };
         if self.library.modes().is_some() {
+            // Spotify takes over from another player that's playing.
+            self.music.pause_other(self.now);
             let request = Request::Play {
                 context_uri: playing.context.clone(),
                 offset_uri: playing.track.clone(),
