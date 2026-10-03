@@ -34,6 +34,18 @@ impl Error {
     pub fn needs_login(&self) -> bool {
         matches!(self, Error::NotLoggedIn | Error::LoginExpired)
     }
+
+    /// When asking again may help: after Spotify's `Retry-After` for a
+    /// rate limit (at least `pause`), after `pause` for no network or a
+    /// server error. `None`: it won't (refused, not found, a bad reply).
+    pub fn retry_after(&self, pause: Duration) -> Option<Duration> {
+        match self {
+            Error::RateLimited { retry_after } => Some((*retry_after).max(pause)),
+            Error::Offline(_) => Some(pause),
+            Error::Api { status, .. } if *status >= 500 => Some(pause),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for Error {

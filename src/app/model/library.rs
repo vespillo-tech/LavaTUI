@@ -36,10 +36,11 @@ use crate::ui::picker::{self, Hit, Placement};
 
 /// How often the player state is read again while nothing changes.
 const PLAYER_EVERY: Duration = Duration::from_secs(30);
-/// A failed "is it liked?" is asked again after this (or Spotify's
-/// `Retry-After`, if longer): not every frame, which kept a rate limit
-/// going and the heart and `+` away (lava-75z.22).
-const LIKED_RETRY: Duration = Duration::from_secs(5);
+/// A read that failed (no network, a server error, a rate limit) is
+/// asked again after this, or Spotify's `Retry-After` if longer: not
+/// every frame, which kept a rate limit going and the heart and `+` away
+/// (lava-75z.22).
+pub(super) const RETRY: Duration = Duration::from_secs(5);
 /// The second `i` within this logs out.
 const LOGOUT_WINDOW: Duration = Duration::from_secs(2);
 /// Events handled per frame at most (the rest wait for the next one).
@@ -239,8 +240,10 @@ struct Contents {
     uris: HashSet<String>,
     /// Where the next page starts; `None` once every page is read.
     next: Option<u32>,
-    /// Spotify wouldn't say: not asked again until the snapshot changes.
+    /// Spotify wouldn't say: not asked again until the snapshot changes,
+    /// or after `retry` when that may help (no network, a server error).
     failed: bool,
+    retry: Option<Instant>,
 }
 
 impl Contents {
@@ -541,6 +544,10 @@ impl Library {
             if c.snapshot != p.snapshot_id {
                 *c = Contents::new(&p.snapshot_id);
             }
+            if c.failed && c.retry.is_some_and(|at| now >= at) {
+                c.failed = false;
+                c.retry = None;
+            }
             let Some(offset) = c.next.filter(|_| !c.failed) else {
                 continue;
             };
@@ -593,7 +600,12 @@ impl Library {
                 self.read_after = Some(now + retry_after);
                 None
             }
-            _ => {
+            Err(e) => {
+                c.failed = true;
+                c.retry = e.retry_after(RETRY).map(|wait| now + wait);
+                None
+            }
+            Ok(_) => {
                 c.failed = true;
                 None
             }
@@ -648,7 +660,8 @@ impl Library {
         let old = std::mem::replace(&mut p.snapshot_id, snapshot.clone());
         p.total += 1;
         if let Some(c) = self.contents.get_mut(playlist_id) {
-            if c.snapshot == old {
+            // A check that failed is asked again under the new snapshot.
+            if c.snapshot == old && !c.failed {
                 c.snapshot = snapshot;
                 c.uris.insert(uri);
             } else {
@@ -869,14 +882,10 @@ impl Library {
                     format!("library: is {} liked? failed: {e}", crate::diag::tag(&uri))
                 });
                 if self.liked_asked.as_deref() == Some(&uri) {
-                    let wait = match e {
-                        Error::RateLimited { retry_after } => retry_after.max(LIKED_RETRY),
-                        _ => LIKED_RETRY,
-                    };
-                    self.liked_retry = Some(now + wait);
+                    self.liked_retry = Some(now + e.retry_after(RETRY).unwrap_or(RETRY));
                 }
             }
-            (Want::Liked(_), Ok(_)) => self.liked_retry = Some(now + LIKED_RETRY),
+            (Want::Liked(_), Ok(_)) => self.liked_retry = Some(now + RETRY),
             (Want::Like { .. }, Ok(_)) => {}
             (Want::Like { uri, on }, Err(e)) => {
                 if self.liked.as_ref().is_some_and(|(u, _)| *u == uri) {
@@ -1161,17 +1170,26 @@ impl Model {
         let Some(adding) = &lib.adding else {
             return;
         };
-        let Stage::Checking { since, .. } = adding.stage else {
+        let Stage::Checking { since, read, total } = adding.stage else {
             return;
         };
+        if lib.playlists.loading {
+            // Waiting for the playlists to be read again isn't a stall.
+            if let Some(a) = &mut lib.adding {
+                a.stage = Stage::Checking {
+                    since: now,
+                    read,
+                    total,
+                };
+            }
+            return;
+        }
         let playlist = lib
             .playlists
             .items
             .iter()
             .find(|p| p.id == adding.playlist_id);
-        let has = playlist
-            .filter(|_| !lib.playlists.loading)
-            .and_then(|p| lib.has(p, &adding.uri));
+        let has = playlist.and_then(|p| lib.has(p, &adding.uri));
         let failed = playlist.is_none_or(|p| {
             lib.contents
                 .get(&p.id)

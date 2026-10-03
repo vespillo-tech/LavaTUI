@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::library::{CHECK_STALL, KEYCHAIN_HEADS_UP, PENDING_FOR};
+use super::library::{CHECK_STALL, KEYCHAIN_HEADS_UP, PENDING_FOR, RETRY};
 use super::*;
 use crate::media::{Capabilities, Command, FakeSource, Snapshot, Status as Play, Track};
 use crate::spotify_web::fake::{FakeWeb, demo, track as web_track};
@@ -1535,6 +1535,65 @@ fn a_failed_check_still_adds_and_says_so() {
         "added to Lamplight Mix · couldn't check it first"
     );
     assert_eq!(account.state().tracks["mix"].len(), 61);
+}
+
+/// lava-jop: a hiccup (no network) reading a playlist is asked again a
+/// little later, not given up on for the session.
+#[test]
+fn a_check_that_failed_for_a_moment_is_asked_again() {
+    let account = demo();
+    account.state().fail_uris = Some(Error::Offline("no network".into()));
+    let (mut m, t0) = add_picker("check-hiccup", &account);
+    assert_eq!(m.list_row(ListKind::AddTo, 0).unwrap().detail, "60");
+    let failed = reads(&account);
+    account.state().fail_uris = None;
+    settle(&mut m, t0 + RETRY - Duration::from_millis(1));
+    assert_eq!(reads(&account), failed, "not every frame");
+    settle(&mut m, t0 + RETRY);
+    assert_eq!(m.list_row(ListKind::AddTo, 0).unwrap().detail, "✓ 60");
+    m.update(Action::Keep, t0 + RETRY);
+    assert_eq!(stage(&m), Some(super::Stage::Confirm));
+}
+
+/// lava-jop: an add to a playlist whose check failed doesn't carry the
+/// failure over to the playlist's new snapshot: it's read again.
+#[test]
+fn an_add_after_a_failed_check_reads_the_playlist_again() {
+    let account = demo();
+    account.state().fail_uris = Some(Error::Forbidden("no".into()));
+    let (mut m, t0) = add_picker("check-failed-add", &account);
+    m.update(Action::Keep, t0);
+    settle(&mut m, t0);
+    assert_eq!(
+        toast(&m),
+        "added to Lamplight Mix · couldn't check it first"
+    );
+    account.state().fail_uris = None;
+    let before = reads(&account);
+    key(&mut m, t0, P::AddToPlaylist);
+    settle(&mut m, t0);
+    assert!(reads(&account) > before, "read again");
+    assert_eq!(m.list_row(ListKind::AddTo, 0).unwrap().detail, "✓ 61");
+}
+
+/// lava-jop: the stall clock waits while the playlists are read again:
+/// what's known of the chosen one still decides.
+#[test]
+fn a_check_waiting_on_the_playlists_is_not_stalled() {
+    let account = demo();
+    let (mut m, t0) = add_picker("check-reload", &account);
+    m.update(Action::Close, t0);
+    account.state().hold = true;
+    key(&mut m, t0, P::AddToPlaylist);
+    assert!(m.library.playlists.loading);
+    m.update(Action::Keep, t0);
+    assert!(matches!(stage(&m), Some(super::Stage::Checking { .. })));
+    let late = t0 + CHECK_STALL * 2;
+    settle(&mut m, late);
+    assert_eq!(adds(&account), 0, "not added unchecked");
+    account.release();
+    settle(&mut m, late);
+    assert_eq!(stage(&m), Some(super::Stage::Confirm));
 }
 
 #[test]
