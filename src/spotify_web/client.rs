@@ -12,9 +12,11 @@ use super::error::{self, Error};
 use super::form;
 use super::http::{Body, Http, Method, Request, Response};
 use super::store::{TokenStore, Tokens};
+#[cfg(test)]
+use super::types::RawSearch;
 use super::types::{
-    Page, PlayerState, Playlist, RawPage, RawPlayer, RawPlaylist, RawPlaylistItem, RawSearch,
-    RawSnapshot, RawUriItem, Repeat, Track, Uris, User,
+    Page, PlayerState, Playlist, RawPage, RawPlayer, RawPlaylist, RawPlaylistItem, RawSnapshot,
+    RawUriItem, Repeat, Track, Uris, User,
 };
 use super::{ACCOUNTS_BASE, API_BASE, REDIRECT_URI};
 
@@ -38,6 +40,7 @@ const PLAYLIST_CHUNK: usize = 100;
 /// since Feb 2026, `track` before) and the paging.
 const URI_FIELDS: &str = "items(item(uri),track(uri)),next,total";
 /// Search's `limit` maximum for development-mode apps (Feb 2026).
+#[cfg(test)]
 pub const SEARCH_MAX: u32 = 10;
 
 pub struct Client<H> {
@@ -67,6 +70,7 @@ struct TokenReply {
 
 impl<H: Http> Client<H> {
     /// A client for `client_id`, logged in if `store` holds its tokens.
+    #[cfg(test)]
     pub fn new(http: H, client_id: String, store: Box<dyn TokenStore>) -> Self {
         let mut client = Self::unloaded(http, client_id, store);
         client.load();
@@ -115,11 +119,6 @@ impl<H: Http> Client<H> {
         self.clock = Box::new(clock);
         self.sleep = Box::new(sleep);
         self
-    }
-
-    #[cfg(test)]
-    pub fn http(&self) -> &H {
-        &self.http
     }
 
     pub fn is_logged_in(&self) -> bool {
@@ -305,6 +304,7 @@ impl<H: Http> Client<H> {
     }
 
     /// Creates a playlist owned by the user (`POST /me/playlists`).
+    #[cfg(test)]
     pub fn create_playlist(&mut self, name: &str, public: bool) -> Result<Playlist, Error> {
         let body = serde_json::json!({ "name": name, "public": public }).to_string();
         let raw: RawPlaylist =
@@ -382,6 +382,7 @@ impl<H: Http> Client<H> {
     }
 
     /// Track search; `limit` is clamped to 1..=10 (the development-mode cap).
+    #[cfg(test)]
     pub fn search_tracks(
         &mut self,
         query: &str,
@@ -408,6 +409,7 @@ impl<H: Http> Client<H> {
     /// Tracks by an artist, for "more like this". `GET /artists/{id}/
     /// top-tracks` is gone for development-mode apps (Feb 2026), so this is
     /// a field-filtered search.
+    #[cfg(test)]
     pub fn artist_tracks(&mut self, artist: &str) -> Result<Vec<Track>, Error> {
         let query = format!("artist:\"{}\"", artist.replace('"', ""));
         Ok(self.search_tracks(&query, SEARCH_MAX, 0)?.items)

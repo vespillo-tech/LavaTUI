@@ -12,8 +12,6 @@ use super::{
     User, Web,
 };
 
-// Some knobs only tests turn.
-#[cfg_attr(not(test), allow(dead_code))]
 pub struct FakeState {
     pub logged_in: bool,
     /// A login completes at once (`--demo`: no browser to wait for).
@@ -40,7 +38,8 @@ pub struct FakeState {
     pub liked: BTreeSet<String>,
     /// What `Player` answers; `Err` also refuses the setters.
     pub player: Result<Option<PlayerState>, Error>,
-    /// Requests seen, in order.
+    /// Requests seen, in order (tests only: `--demo` runs for hours).
+    #[cfg(test)]
     pub requests: Vec<Request>,
     /// Hold replies until `release` (to look at loading states).
     pub hold: bool,
@@ -72,6 +71,7 @@ impl Default for FakeState {
             holes: HashMap::new(),
             liked: BTreeSet::new(),
             player: Ok(None),
+            #[cfg(test)]
             requests: Vec::new(),
             hold: false,
             fail: None,
@@ -293,9 +293,8 @@ fn answer(s: &mut FakeState, request: Request) -> Result<Reply, Error> {
             s.player.clone()?;
             Reply::Done
         }
-        Request::CreatePlaylist { .. }
-        | Request::SearchTracks { .. }
-        | Request::ArtistTracks { .. } => return Err(Error::NotFound("fake".into())),
+        #[cfg(test)]
+        Request::CreatePlaylist { .. } => return Err(Error::NotFound("fake".into())),
     })
 }
 
@@ -361,6 +360,7 @@ impl Web for FakeWeb {
         let mut s = self.state();
         s.next_id += 1;
         let id = s.next_id;
+        #[cfg(test)]
         s.requests.push(request.clone());
         if s.hold {
             s.held.push((id, request));

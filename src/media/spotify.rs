@@ -516,8 +516,6 @@ mod tests {
     use super::super::worker::{Polled, testing};
     use super::*;
 
-    const MS: Duration = Duration::from_millis(1);
-
     /// Recorded from Spotify 1.2 (macOS 26), playing.
     const PLAYING: &str = "lavatui1\u{1e}playing\u{1e}240497\u{1e}0\u{1e}1\u{1e}100\u{1e}\
         spotify:track:0DZXVpUtPUom1VO6h5a0SU\u{1e}303440\u{1e}\

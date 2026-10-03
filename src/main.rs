@@ -12,14 +12,9 @@ mod dock;
 mod glyphs;
 mod graphics;
 mod lyrics;
-// Partly used so far: the music widget (lava-75z.2) reads it; play_uri&co are
-// for the library UI (lava-75z.5).
-#[allow(dead_code, unused_imports)]
 mod media;
 mod render;
 mod sim;
-// Not wired into the UI yet (lava-75z.5 does that).
-#[allow(dead_code)]
 mod spotify_web;
 mod theme;
 mod thread_qos;

@@ -102,7 +102,9 @@ pub enum Request {
     /// whether it has a song already → [`Reply::Uris`]. Same rules as
     /// `PlaylistTracks`.
     PlaylistUris { playlist_id: String, offset: u32 },
-    /// A new playlist owned by the user → [`Reply::Playlist`].
+    /// A new playlist owned by the user → [`Reply::Playlist`]. (Not asked
+    /// for by the app yet: the live tests use it.)
+    #[cfg(test)]
     CreatePlaylist { name: String, public: bool },
     /// Append to a playlist → [`Reply::Snapshot`].
     AddToPlaylist {
@@ -115,15 +117,6 @@ pub enum Request {
     Like { uris: Vec<String> },
     /// Unlike (remove from library) → [`Reply::Done`].
     Unlike { uris: Vec<String> },
-    /// Track search, `limit` clamped to 1..=10 → [`Reply::Tracks`].
-    SearchTracks {
-        query: String,
-        limit: u32,
-        offset: u32,
-    },
-    /// Up to 10 tracks by the artist, for "more like this" →
-    /// [`Reply::TrackList`].
-    ArtistTracks { artist: String },
     /// The active device's state → [`Reply::Player`] (Premium; else
     /// `Forbidden`).
     Player,
@@ -143,10 +136,10 @@ pub enum Request {
 pub enum Reply {
     User(User),
     Playlists(Vec<Playlist>),
+    #[cfg(test)]
     Playlist(Playlist),
     Tracks(Page<Track>),
     Uris(Uris),
-    TrackList(Vec<Track>),
     Contains(Vec<bool>),
     /// The playlist's new snapshot id.
     Snapshot(String),
@@ -227,6 +220,7 @@ fn token_file_env() -> Option<std::path::PathBuf> {
 
 /// Whether reading the saved login from `choice` may make the system ask
 /// the user (the macOS Keychain, for a program it doesn't know yet).
+#[cfg_attr(test, allow(dead_code))] // tests never start a real client
 pub fn store_prompts(choice: LoginStore) -> bool {
     cfg!(target_os = "macos") && choice == LoginStore::System && token_file_env().is_none()
 }
@@ -238,6 +232,7 @@ impl SpotifyWeb {
     /// [`is_logged_in`](Self::is_logged_in) may turn true a moment later
     /// ([`Event::Unlocked`]); where it can (macOS Keychain), only after
     /// [`unlock`](Self::unlock).
+    #[cfg_attr(test, allow(dead_code))] // tests never start a real client
     pub fn new(client_id: impl Into<String>, choice: LoginStore) -> Self {
         let client_id = client_id.into();
         let id = client_id.clone();
@@ -509,6 +504,7 @@ fn handle<H: Http>(client: &mut Client<H>, request: Request) -> Result<Reply, Er
             playlist_id,
             offset,
         } => Reply::Uris(client.playlist_uris(&playlist_id, offset)?),
+        #[cfg(test)]
         Request::CreatePlaylist { name, public } => {
             Reply::Playlist(client.create_playlist(&name, public)?)
         }
@@ -524,12 +520,6 @@ fn handle<H: Http>(client: &mut Client<H>, request: Request) -> Result<Reply, Er
             client.library_remove(&uris)?;
             Reply::Done
         }
-        Request::SearchTracks {
-            query,
-            limit,
-            offset,
-        } => Reply::Tracks(client.search_tracks(&query, limit, offset)?),
-        Request::ArtistTracks { artist } => Reply::TrackList(client.artist_tracks(&artist)?),
         Request::Player => Reply::Player(client.player()?),
         Request::SetShuffle(on) => {
             client.set_shuffle(on)?;
