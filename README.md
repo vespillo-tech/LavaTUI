@@ -11,12 +11,7 @@ A clock, a focus timer and the song you're playing can sit beside the
 lamp or float on top of it. Or turn everything off and just watch the
 wax.
 
-A one-minute tour, filmed in Ghostty with its glow shader. You'll see
-the nine styles, the music card with lyrics that light up word by word,
-the menus, and the clock and music floating on the lamp. Can't play it?
-Here's the [same tour as an animated picture](docs/screenshots/demo.gif).
-
-https://github.com/user-attachments/assets/6c1b3b67-9f77-4415-9f26-ef6d210070ca
+![A one-minute tour of LavaTUI in Ghostty, with a soft glow. The welcome card. The wax in all nine styles and a few colour themes. The music card, with an album cover that comes into focus and lyrics that light up word by word. The playlists, and a song liked and added. The help and settings screens. The clock, timer and music move onto the lamp. Then the lamp on its own](docs/screenshots/demo.gif)
 
 It runs in the terminal window you already use, on macOS, Linux and
 Windows. It's one small program. For the best look, we recommend a

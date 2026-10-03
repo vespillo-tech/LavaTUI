@@ -463,14 +463,14 @@ signed with the same Developer ID keep the answer.
 
 ## The README's pictures
 
-The README shows two videos filmed in native Ghostty (the trailer and
-a big-screen showcase), the hero (a still PNG) and 15 short loops
-(GIFs). The videos are MP4s on GitHub's attachment storage
-(`github.com/user-attachments/assets/…` URLs, each on its own line in
-the README, which GitHub plays inline), not in the repo: they are
-uploaded through GitHub's web editor. `docs/screenshots/demo.gif` is the
-same trailer drawn headlessly (take A), kept as the fallback for places
-that can't play video, and linked under the trailer.
+The README shows the trailer (`docs/screenshots/demo.gif`: take C,
+filmed in native Ghostty with the user's shaders, as a GIF), a
+big-screen showcase video, the hero (a still PNG) and 15 short loops
+(GIFs). The showcase is an MP4 on GitHub's attachment storage (a
+`github.com/user-attachments/assets/…` URL on its own line, which
+GitHub plays inline), not in the repo: it was uploaded through GitHub's
+web editor. The trailer is a GIF in the repo, so it plays everywhere a
+picture shows.
 
 Everything else is drawn from the release binary in sized ptys, with a
 fixed seed and a scratch config, by pyte + Pillow: no window is filmed.
@@ -492,8 +492,11 @@ half-drawn frame is ever kept. Keys can be timed by frame: `f42:x` is
 sent as soon as frame 42 is drawn, so the app handles it before frame
 43 in every run.
 
-**The trailer** (`docs/screenshots/trailer.py`, about 60 s, under 5 MB):
-a tour told as one continuous recording. Each scene state is its own run
+**The trailer's takes and cuts** (`docs/screenshots/trailer.py`, about
+60 s): a tour told as one continuous recording. `trailer.py` defines it
+and draws it headlessly (take A, written to the temp dir, not the repo:
+for checking cuts); the README's film is the same takes in Ghostty
+(below). Each scene state is its own run
 (a *take*) with the same seed, window and frame clock; the film is
 frames of one take, then the next, cut at exact frame numbers. At a cut
 the style, colours and widgets change in one frame while the wax carries
@@ -531,9 +534,15 @@ window (shaders add display latency that wanders), and the result is
 cropped to the window (its border off, its rounded corners filled from
 inside). `record B|C` needs the window in front, hands off, for about
 five minutes; `film` makes the 60 fps MP4 (`--width`, `--crf`,
-`--mp4-only`) and the frames either side of each cut; `small` a
-GIF that fits 5 MB (native text and shader texture compress far worse
-than take A's flat cells). Ghostty's cells are a little taller than
+`--mp4-only`), the 10 fps film frames and the frames either side of
+each cut; `small` the GIF: scaled, a palette per part, and an 8×8 block
+noise gate (a block keeps its last picture unless a pixel in it moved by
+more than 8; whole glyphs refresh together, so no faint text is left
+behind). `demo.gif` is C at 800 px and 128 colours a part (the commands
+are in the script's docstring): 10.6 MB. Native text and the shader's
+glow and texture compress far worse than headless flat cells: the same
+frames are 18.0 MB without the gate, 14.9 MB at 256 colours; at 64
+colours (8.7 MB) the glow bands and the wax turns blotchy. Ghostty's cells are a little taller than
 take A's (2.1 vs 2.0 high per wide), so the lamp is a slightly different
 shape and the wax plays out differently from take A, the same in B and
 C.
@@ -546,12 +555,13 @@ with the shaders), `--fullscreen-on 2`, `--seed 7`, `--styles outline
 --palette abyss`, `--record --record-at --record-secs
 --keep-recordings` (see the tool's docstring).
 
-**Budget.** Trailer under 5 MB; the loops together under 4 MB, none over
-1.5 MB (the styles sheet is the heaviest: its matrix tile changes every
-frame); the README's GIFs and stills about 8.2 MB in all (the two videos stream
-from GitHub's storage: the trailer 7.6 MB, the showcase 6.6 MB). GIF is used throughout: in these
-flat-colour pictures it beat lossy WebP (smaller and sharper) and APNG,
-and every GitHub client plays it.
+**Budget.** The trailer GIF about 10–15 MB (now 10.6); the loops
+together under 4 MB, none over 1.5 MB (the styles sheet is the
+heaviest: its matrix tile changes every frame); the README's GIFs and
+stills about 14.8 MB in all, plus the showcase (6.6 MB, streamed from
+GitHub's storage). The loops are GIFs too: in these flat-colour
+pictures GIF beat lossy WebP (smaller and sharper) and APNG, and every
+GitHub client plays it.
 
 Pictures with music use the hidden `--demo` flag (`src/demo.rs`): a
 made-up player with invented songs and artists, original covers embedded
@@ -578,5 +588,6 @@ cargo build --release
 python3 -m venv /tmp/v && /tmp/v/bin/pip install pyte pillow   # + ffmpeg, gifsicle
 /tmp/v/bin/python docs/screenshots/capture.py        # the stills (PNG)
 /tmp/v/bin/python docs/screenshots/capture.py loops  # the 15 README loops (GIF)
-/tmp/v/bin/python docs/screenshots/trailer.py check  # demo.gif + its cut frames
+/tmp/v/bin/python docs/screenshots/trailer.py check  # take A + its cut frames (temp dir)
+# demo.gif (take C): docs/screenshots/trailer_native.py (record, film, small)
 ```

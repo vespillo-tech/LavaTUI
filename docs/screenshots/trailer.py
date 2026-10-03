@@ -1,4 +1,8 @@
-"""The README trailer: docs/screenshots/demo.gif (lava-0bl).
+"""The README trailer's takes and cuts, drawn headlessly: take A (lava-0bl).
+
+The README shows the same film filmed in native Ghostty (take C, made by
+trailer_native.py from these TAKES and CUT); this draws it with pyte, for
+checking the cuts and for the README loops' frame-clock method.
 
 A tour, cut together so it plays as one calm recording: the welcome
 card; all nine styles and two colour themes as a slideshow of the same
@@ -28,7 +32,7 @@ before its first frame in the film have faded by then.
 
 Frames are drawn by capture.py's renderer (pyte), each part (PALETTES)
 gets its own palette (ffmpeg, no dither) and gifsicle joins them. Output:
-$LAVATUI_TRAILER_OUT (default docs/screenshots/demo.gif).
+$LAVATUI_TRAILER_OUT (default <tmp>/lavatui-trailer-A.gif).
 """
 import os, subprocess, sys, tempfile
 from concurrent.futures import ThreadPoolExecutor
@@ -216,7 +220,7 @@ def main(args):
         survey([int(s) for s in args[1:]] or [SEED], os.environ.get("LAVATUI_SURVEY_OUT", "/tmp/lavatui-survey.png"))
         return
     takes = record(list(TAKES))
-    out = os.environ.get("LAVATUI_TRAILER_OUT", os.path.join(capture.HERE, "demo.gif"))
+    out = os.environ.get("LAVATUI_TRAILER_OUT", os.path.join(tempfile.gettempdir(), "lavatui-trailer-A.gif"))
     encode(film(takes), out)
     end = max(e for _, _, e in CUT) + DISSOLVE
     print(out, os.path.getsize(out), f"{end / FPS:.1f} s")

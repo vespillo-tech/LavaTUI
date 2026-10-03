@@ -190,15 +190,15 @@ and a second copy), and keeps helper output off the screen
 (`docs/perf/frame-trace.md`).
 `docs/screenshots/capture.py` does exactly this (pyte + Pillow) and
 regenerates the README pictures: stills (no arguments) and the 15 loops
-(`capture.py loops`); `docs/screenshots/trailer.py check` makes the
-README trailer (`demo.gif`, match cuts between takes on the hidden
-`--frame-clock`) and the frames either side of each cut;
-`docs/screenshots/trailer_native.py` films the same takes in native
-Ghostty (the README's trailer video is take C, uploaded to GitHub, not in
-the repo; `demo.gif` is its headless fallback). Rerun them
+(`capture.py loops`); `docs/screenshots/trailer.py` defines the README
+trailer's takes and match cuts (on the hidden `--frame-clock`) and
+`check` draws it headlessly (take A, temp dir) with the frames either
+side of each cut; `docs/screenshots/trailer_native.py` films the same
+takes in native Ghostty, and take C (the user's shaders) becomes
+`demo.gif` (`film` + `small`, see its docstring). Rerun them
 after visible changes, and look at every image and cut. Music shots use
 `--demo`; never commit real album art or real song names. Budgets:
-trailer < 5 MB, loops < 4 MB together (docs/architecture.md).
+trailer GIF about 10–15 MB, loops < 4 MB together (docs/architecture.md).
 `tools/linux/run.sh [--amd64]` builds, lints and tests on real Linux in Docker,
 runs the MPRIS live tests against `tools/linux/fake_mpris.py` (also as Spotify)
 and drives lavatui in a pty with the music widget (`tools/linux/pty_check.py`;
