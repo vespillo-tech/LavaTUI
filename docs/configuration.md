@@ -92,6 +92,12 @@ detail = "auto"          # auto (= sharp) | sharp (the real picture where the te
 size = "medium"          # small (16 cols) | medium (24) | large (34) | fill (up to 64)
 inline = true            # the music card's own small cover (while the cover widget is off)
 
+[lyrics]
+delay_ms = 0             # lyrics timing, by ear: positive shows lyrics (lines and words)
+                         # later, negative sooner; -1000..=1000, the settings screen
+                         # steps by 50 ("lyrics timing"). Bluetooth headphones often
+                         # want a little later.
+
 [spotify]
 client_id = ""           # for the Spotify library, see spotify.md
                          # ("" = off; LAVATUI_SPOTIFY_CLIENT_ID works too)

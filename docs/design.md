@@ -1306,7 +1306,11 @@ stays within a few ms of it (measured: `live_timing_audit`, docs/
 architecture.md); before, the first reading of a song set it for the
 whole song, 60–100 ms off. While synced lyrics are on screen the player
 is polled every 250 ms instead of every second (`follow_closely`), so a
-pause, resume or seek made in the player shows within about ¼ s. Lines
+pause, resume or seek made in the player shows within about ¼ s. Then
+*lyrics timing* (`lyrics.delay_ms`, ±1 s, settings › music & lyrics)
+moves it by ear, for every player and for lines and words alike (the
+player's position, not what the ear hears: Bluetooth headphones play
+~0.2 s late). Lines
 light up 150 ms early (the eye reads a line ahead of the voice), words
 50 ms early (with the voice: a hair early reads as on time). A new
 reading a little behind (< 400 ms) holds the highlight still until
@@ -1437,8 +1441,9 @@ keys do; `ui/settings.rs` places and draws it.
   focus / break lengths, long break after, sound at the end), *widgets*
   (each widget beside the lamp / on the lamp / off, its position while on
   the lamp, what things on the lamp sit on), *music & lyrics* (Spotify,
-  lyrics with what lrclib.net is sent, cover picture / size, small cover
-  with music), *controls* (mouse), *window* (lamp only, hint line,
+  lyrics with what lrclib.net is sent, lyrics timing (`on time`, `0.25 s
+  later`, `0.1 s sooner`: ±1 s in 50 ms steps, by ear), cover picture /
+  size, small cover with music), *controls* (mouse), *window* (lamp only, hint line,
   smoothness, lamp-only clock). Each ends with *reset this page*, which
   asks for a second `⏎` (the Spotify Client ID is never reset). Labels
   and values are lowercase words, never config keys: `beside the lamp`,

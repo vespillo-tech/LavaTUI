@@ -98,8 +98,9 @@ impl LyricsState {
     }
 
     /// Once a frame: start or stop the service, ask about a new track, take
-    /// in an answer, and move the cursor to `now`.
-    pub fn sync(&mut self, on: bool, snapshot: Option<&Snapshot>, now: Instant) {
+    /// in an answer, and move the cursor to `now`, the lyrics `delay_ms`
+    /// later than the player's position (sooner if negative).
+    pub fn sync(&mut self, on: bool, snapshot: Option<&Snapshot>, delay_ms: i32, now: Instant) {
         if !on {
             self.service = None;
             self.forget();
@@ -164,8 +165,13 @@ impl LyricsState {
             });
         }
 
+        let shift = Duration::from_millis(u64::from(delay_ms.unsigned_abs()));
         let playback = Playback {
-            position: snap.position,
+            position: if delay_ms >= 0 {
+                snap.position.saturating_sub(shift)
+            } else {
+                snap.position + shift
+            },
             sampled_at: snap.sampled_at,
             playing: snap.status == Status::Playing,
         };
@@ -220,7 +226,9 @@ impl Model {
     /// Each frame, after the music state has read the player.
     pub(super) fn sync_lyrics(&mut self) {
         let on = self.lyrics_on();
-        self.lyrics.sync(on, self.music.snapshot.as_ref(), self.now);
+        let delay = self.settings.lyrics.delay_ms;
+        self.lyrics
+            .sync(on, self.music.snapshot.as_ref(), delay, self.now);
         // Words on screen: poll the player more often, so a pause or seek
         // made in it shows sooner.
         self.music.follow_closely(self.lyrics.synced().is_some());

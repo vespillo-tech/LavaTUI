@@ -78,6 +78,7 @@
 
   ▸ spotify                 not set up
     lyrics                         off
+    lyrics timing              on time
     cover picture                 auto
     cover size                  medium
     small cover with music          on
@@ -85,9 +86,8 @@
     reset this page              reset
 
  Play, pause and skip work with the
- Spotify app on its own. Playlists and
- likes need a one-time setup: press
- enter.
+ Spotify app on its own.
+
 ── controls ──
  settings · controls           esc back
 

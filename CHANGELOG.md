@@ -58,6 +58,9 @@ What changed in each version of LavaTUI, in plain words.
   you make in Spotify shows up within about a quarter of a second.
 - Browsing a playlist that has removed songs no longer shows some songs
   twice when you scroll to the next batch.
+- If lyrics come too early or too late for your ears (Bluetooth
+  headphones often play a little late), move them: settings (`,`) ›
+  music & lyrics › lyrics timing, up to a second sooner or later.
 
 ## 1.2.0 — 2026-10-02 — first public release
 

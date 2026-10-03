@@ -53,9 +53,9 @@
 
   ▸ spotify
     lyrics         off
+    lyrics timing
     cover picture
     cover size  medium
-    small cover with m…
 
  ‹ not set up ›
 ── controls ──

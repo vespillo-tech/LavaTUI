@@ -627,6 +627,17 @@ fn lyrics_highlight_the_word_being_sung() {
     let buf = draw(&m, 160, 40);
     assert!(karaoke(&m, &buf, "Wax rises").ends_with("TTT TTTTT TTTTTT TT TT TTT TTTTT"));
 
+    // Lyrics timing (`lyrics.delay_ms`) moves lines and words alike: a
+    // second later, the first word; 0.8 s sooner, the third.
+    for (delay, word) in [(1000, "AAA "), (-800, " AAAAAA ")] {
+        let (mut m, t) = model(160, 40, 7);
+        m.settings.lyrics.delay_ms = delay;
+        lyrics_lrc(&mut m, t, 1, 6, TAGGED);
+        let buf = draw(&m, 160, 40);
+        let shown = karaoke(&m, &buf, "Wax rises");
+        assert!(shown.contains(word), "{delay}: {shown}");
+    }
+
     // Line times only: words estimated, two seconds into a five-second
     // line: about half way.
     let (mut m, t) = model(160, 40, 7);

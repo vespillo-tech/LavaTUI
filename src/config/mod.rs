@@ -41,6 +41,7 @@ pub struct Settings {
     pub dock: DockSettings,
     /// Covers: the cover widget's detail and size, the music card's own.
     pub art: ArtSettings,
+    pub lyrics: Lyrics,
     pub spotify: Spotify,
 }
 
@@ -127,6 +128,18 @@ impl Default for Input {
         Self { mouse: true }
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct Lyrics {
+    /// Lyrics timing, in ms: positive shows them later, negative sooner
+    /// (by ear: Bluetooth headphones play late). Lines and words alike.
+    pub delay_ms: i32,
+}
+
+/// `lyrics.delay_ms`'s range, and the step the settings screen moves it by.
+pub const LYRICS_DELAY: (i32, i32) = (-1000, 1000);
+pub const LYRICS_DELAY_STEP: i32 = 50;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
@@ -307,9 +320,9 @@ const RETIRED_STYLES: [&str; 3] = ["heatmap", "dither", "crt"];
 
 impl Settings {
     /// The sections of `config.toml`, in file order.
-    const SECTIONS: [&str; 11] = [
+    const SECTIONS: [&str; 12] = [
         "display", "lamp", "theme", "clock", "pomodoro", "ui", "minimal", "input", "dock", "art",
-        "spotify",
+        "lyrics", "spotify",
     ];
 
     /// Parse a hand-editable `config.toml`. Only a TOML syntax error fails;
@@ -340,6 +353,7 @@ impl Settings {
             input: section("input", &file, ig, un),
             dock: section("dock", &file, ig, un),
             art: section("art", &file, ig, un),
+            lyrics: section("lyrics", &file, ig, un),
             spotify: section("spotify", &file, ig, un),
         };
         settings.check_names(&mut out.ignored);
@@ -426,6 +440,7 @@ impl Settings {
             *min = (*min).clamp(1, 24 * 60);
         }
         p.cycles = p.cycles.clamp(1, 12);
+        self.lyrics.delay_ms = self.lyrics.delay_ms.clamp(LYRICS_DELAY.0, LYRICS_DELAY.1);
         // A Client ID is 32 hex digits; anything with other characters (a
         // pasted secret, a quote) is no ID at all.
         let id = self.spotify.client_id.trim();
@@ -604,6 +619,17 @@ mod tests {
         assert!(Settings::parse("").unwrap().settings.input.mouse);
         let off = Settings::parse("[input]\nmouse = false\n").unwrap();
         assert!(!off.settings.input.mouse, "an explicit value is kept");
+    }
+
+    #[test]
+    fn lyrics_timing_stays_within_a_second() {
+        let parsed = Settings::parse("[lyrics]\ndelay_ms = -250\n").unwrap();
+        assert_eq!(parsed.settings.lyrics.delay_ms, -250);
+        assert!(parsed.ignored.is_empty() && parsed.unknown.is_empty());
+        let parsed = Settings::parse("[lyrics]\ndelay_ms = 5000\n").unwrap();
+        assert_eq!(parsed.settings.lyrics.delay_ms, 1000);
+        assert_eq!(parsed.clamped.len(), 1, "{:?}", parsed.clamped);
+        assert_eq!(Settings::default().lyrics.delay_ms, 0);
     }
 
     #[test]
