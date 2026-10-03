@@ -489,7 +489,9 @@ the layout/visual contract.
                 every exchange: `modes.rs`'s `ModesCheck` (MPRIS, Music)
                 withdraws shuffle/repeat from a player seen to ignore them),
                 `FakeSource` for tests and `--demo` (what was sent is kept
-                only in tests); `runner.rs`: `Osascript`, the long-lived
+                only in tests); under `cfg(test)` `detect()` never starts a
+                real backend: a "not running" source unless a test injects
+                one (live `#[ignore]` tests build backends directly); `runner.rs`: `Osascript`, the long-lived
                 script process the macOS players ask one request at a
                 time; `worker.rs`'s `Baseline` pins the
                 position down over polls (each reading bounded by its
