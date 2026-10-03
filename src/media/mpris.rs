@@ -1,4 +1,5 @@
-//! Linux: any MPRIS player on the D-Bus session bus, Spotify preferred.
+//! Linux: any MPRIS player on the D-Bus session bus, Spotify first while
+//! it plays ([`choice`](super::choice)).
 //!
 //! [`Mpris`] (Linux only) is a [`Backend`](super::worker::Backend) over
 //! zbus's blocking API: each exchange lists the bus names, picks a player
@@ -80,19 +81,36 @@ impl Meta {
     }
 }
 
-/// The player to show: Spotify if it's on the bus, else the first MPRIS
-/// player by name (so the choice is stable).
-pub fn choose<'a>(names: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
+/// The player to show among the bus `names`, by the shared rule
+/// ([`choice`](super::choice): Spotify while it plays, else whatever plays,
+/// else the one in use). `in_use` is the bus name followed last;
+/// `playing(name)` asks a player whether it's playing (only when there's
+/// more than one to choose from). Ties go to the first by name, so the
+/// choice is stable.
+pub fn choose<'a>(
+    names: impl IntoIterator<Item = &'a str>,
+    in_use: Option<&str>,
+    mut playing: impl FnMut(&str) -> bool,
+) -> Option<&'a str> {
     let mut players: Vec<&str> = names
         .into_iter()
         .filter(|name| name.starts_with(PREFIX) && name.len() > PREFIX.len())
         .collect();
     players.sort_unstable();
-    players
-        .iter()
-        .find(|name| **name == SPOTIFY || name.starts_with(&format!("{SPOTIFY}.")))
-        .or(players.first())
-        .copied()
+    let several = players.len() > 1;
+    let i = super::choice::pick(players.iter().map(|&name| super::choice::Player {
+        spotify: is_spotify(name),
+        playing: several && playing(name),
+        current: false,
+        in_use: in_use == Some(name),
+    }))?;
+    Some(players[i])
+}
+
+/// Spotify's bus name, or one of its instances' (`….spotify.instance7`).
+fn is_spotify(name: &str) -> bool {
+    name.strip_prefix(SPOTIFY)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
 }
 
 /// A name for the player when it has no `Identity`: the bus name's last
@@ -378,7 +396,16 @@ mod bus {
                 )?
                 .body()
                 .deserialize()?;
-            let Some(bus) = choose(names.iter().map(String::as_str)).map(str::to_owned) else {
+            let in_use = self.player.as_ref().map(|(name, _)| name.as_str());
+            let playing = |name: &str| {
+                get(&conn, name, PLAYER, "PlaybackStatus")
+                    .ok()
+                    .and_then(|v| String::try_from(v).ok())
+                    .is_some_and(|status| status == "Playing")
+            };
+            let Some(bus) =
+                choose(names.iter().map(String::as_str), in_use, playing).map(str::to_owned)
+            else {
                 self.player = None;
                 return Ok(Snapshot::new(
                     Status::Unavailable(Unavailable::NotRunning),
@@ -788,12 +815,13 @@ mod live {
 
     #[test]
     #[ignore = "needs a D-Bus session bus and python3-dbus-next (tools/linux/run.sh mpris)"]
-    fn spotify_is_preferred_and_its_quirks_handled() {
-        let _other = Fake::start(&["--name", "aplayer"]);
+    fn spotify_quirks_are_handled() {
+        // Paused, so pausing Spotify below doesn't hand over to it.
+        let _other = Fake::start(&["--name", "aplayer", "--paused"]);
         let _spotify = Fake::start(&["--spotify"]);
         let mut mpris = Mpris::new();
         let snap = mpris.exchange(&[]);
-        // Chosen over "aplayer", which sorts first.
+        // Chosen over "aplayer", which sorts first: Spotify plays.
         assert_eq!(snap.player.as_deref(), Some("Spotify"));
         assert_eq!(snap.track.as_ref().unwrap().id, "/com/spotify/track/faket0");
         // Position always reads 0: unknown on the first read ...
@@ -854,6 +882,26 @@ mod live {
         assert!(caps.volume && caps.uris, "{caps:?}");
         // Volume works.
         assert_eq!(mpris.exchange(&[Command::SetVolume(70)]).volume, 70);
+    }
+
+    #[test]
+    #[ignore = "needs a D-Bus session bus and python3-dbus-next (tools/linux/run.sh mpris)"]
+    fn spotify_first_only_while_it_plays() {
+        let _spotify = Fake::start(&["--spotify"]);
+        let _vlc = Fake::start(&["--name", "vlc"]);
+        let mut mpris = Mpris::new();
+        // Both playing: Spotify.
+        assert_eq!(mpris.exchange(&[]).player.as_deref(), Some("Spotify"));
+        // Spotify paused: the player that plays takes over.
+        assert_eq!(mpris.exchange(&[Command::PlayPause]).status, Status::Paused);
+        let snap = mpris.exchange(&[]);
+        assert_eq!(snap.player.as_deref(), Some("Fake Player"));
+        assert_eq!(snap.status, Status::Playing);
+        // Paused too: it keeps the keys (play resumes it, not Spotify).
+        mpris.exchange(&[Command::PlayPause]);
+        let snap = mpris.exchange(&[Command::PlayPause]);
+        assert_eq!(snap.player.as_deref(), Some("Fake Player"));
+        assert_eq!(snap.status, Status::Playing);
     }
 
     #[test]
@@ -1113,7 +1161,7 @@ mod tests {
     }
 
     #[test]
-    fn spotify_is_preferred_then_the_first_player() {
+    fn spotify_first_while_it_plays_then_whatever_plays() {
         let names = [
             "org.freedesktop.DBus",
             ":1.42",
@@ -1121,26 +1169,57 @@ mod tests {
             "org.mpris.MediaPlayer2.spotify",
             "org.mpris.MediaPlayer2.",
         ];
-        assert_eq!(choose(names), Some("org.mpris.MediaPlayer2.spotify"));
+        const VLC: &str = "org.mpris.MediaPlayer2.vlc";
+        const SPOTIFY: &str = "org.mpris.MediaPlayer2.spotify";
+        let all = |_: &str| true;
+        let none = |_: &str| false;
+        let only = |who: &'static str| move |name: &str| name == who;
+        assert_eq!(choose(names, None, all), Some(SPOTIFY));
+        // An idle Spotify doesn't win over a player that plays (codex
+        // review #3), even while it's the one in use.
+        assert_eq!(choose(names, None, only(VLC)), Some(VLC));
+        assert_eq!(choose(names, Some(SPOTIFY), only(VLC)), Some(VLC));
+        // Nothing playing: the one in use stays, else Spotify.
+        assert_eq!(choose(names, Some(VLC), none), Some(VLC));
+        assert_eq!(choose(names, None, none), Some(SPOTIFY));
+        // A lone player isn't asked; the first by name otherwise.
+        let mut asked = 0;
+        let one = choose(names[..3].iter().copied(), None, |_| {
+            asked += 1;
+            true
+        });
+        assert_eq!((one, asked), (Some(VLC), 0));
         assert_eq!(
-            choose(names[..3].iter().copied()),
-            Some("org.mpris.MediaPlayer2.vlc")
+            choose(
+                ["org.mpris.MediaPlayer2.b", "org.mpris.MediaPlayer2.a"],
+                None,
+                none
+            ),
+            Some("org.mpris.MediaPlayer2.a")
         );
         assert_eq!(
-            choose([
-                "org.mpris.MediaPlayer2.spotify.instance7",
-                "org.mpris.MediaPlayer2.a"
-            ]),
+            choose(
+                [
+                    "org.mpris.MediaPlayer2.spotify.instance7",
+                    "org.mpris.MediaPlayer2.a"
+                ],
+                None,
+                none
+            ),
             Some("org.mpris.MediaPlayer2.spotify.instance7")
         );
         assert_eq!(
-            choose([
-                "org.mpris.MediaPlayer2.spotifyd2",
-                "org.mpris.MediaPlayer2.z"
-            ]),
+            choose(
+                [
+                    "org.mpris.MediaPlayer2.spotifyd2",
+                    "org.mpris.MediaPlayer2.z"
+                ],
+                None,
+                none
+            ),
             Some("org.mpris.MediaPlayer2.spotifyd2")
         );
-        assert_eq!(choose(["org.freedesktop.Notifications"]), None);
+        assert_eq!(choose(["org.freedesktop.Notifications"], None, all), None);
         assert_eq!(
             fallback_name("org.mpris.MediaPlayer2.vlc.instance123"),
             "Vlc"

@@ -6,6 +6,8 @@
 //! - [`lrc`]: the LRC parser ([`Synced`]: timed lines, metadata, offset).
 //! - [`sync`]: [`Syncer`] maps an extrapolated position to the current
 //!   line, its progress and the lines around it.
+//! - [`breaks`]: where a line breaks onto rows, in any script (nothing
+//!   allocated).
 //! - [`client`]: the LRCLIB HTTP client (`/api/get`, `/api/search`
 //!   fallback) over a small [`client::Http`] trait, so tests mock it.
 //! - [`cache`]: the on-disk cache, negative results included, with TTLs.
@@ -15,6 +17,7 @@
 //! Privacy: a fetch sends title/artist/album/duration to lrclib.net, so the
 //! app only starts the service when the user opts in (placing the widget).
 
+pub mod breaks;
 pub mod cache;
 pub mod client;
 pub mod lrc;

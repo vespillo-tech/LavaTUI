@@ -21,6 +21,7 @@ pub mod music;
 pub mod picture;
 mod pomodoro;
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use ratatui::buffer::Buffer;
@@ -34,9 +35,11 @@ use crate::theme::Role;
 pub use clock::clock_forms;
 pub use clock::{Clock, clock_parts};
 pub use cover::Cover;
-pub use lyrics::{Lyrics, Sizing as LyricsSizing};
+pub use lyrics::{
+    ChipLine as LyricsChip, Lyrics, Messages as LyricsMessages, Sizing as LyricsSizing,
+};
 #[cfg(test)]
-pub use lyrics::{Show as LyricsShow, lyrics_forms};
+pub use lyrics::{Show as LyricsShow, lyrics_forms, show as lyrics_show};
 pub use music::{Music, fit, hit as music_hit, wrap};
 #[cfg(test)]
 pub use music::{Show, music_forms};
@@ -338,10 +341,11 @@ pub struct Look {
     pub align: Alignment,
 }
 
-/// A widget's one-line fallback.
+/// A widget's one-line fallback (borrowed where the widget keeps it
+/// built: the lyrics line).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ChipText {
-    pub text: String,
+pub struct ChipText<'a> {
+    pub text: Cow<'a, str>,
     pub ink: Role,
 }
 
@@ -376,7 +380,7 @@ pub trait DockWidget: Sync {
 
     /// The one-line chip shown when this widget's place has no room, or
     /// `None` when it has nothing to say there.
-    fn chip(&self, model: &Model) -> Option<ChipText>;
+    fn chip<'m>(&self, model: &'m Model) -> Option<ChipText<'m>>;
 }
 
 /// What the user reads for widget `name` (its config key): the pomodoro

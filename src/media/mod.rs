@@ -18,10 +18,11 @@
 //! - `spotify` (macOS): the Spotify desktop app, through one long-lived
 //!   `osascript` process (`runner`: requests over stdin, replies with a
 //!   timeout). It never launches Spotify.
-//! - [`mpris`] (Linux): any MPRIS player on the session bus, Spotify
-//!   preferred, over zbus.
-//! - [`smtc`] (Windows): the System Media Transport Controls session,
-//!   Spotify's preferred.
+//! - [`mpris`] (Linux): any MPRIS player on the session bus, over zbus.
+//! - [`smtc`] (Windows): the System Media Transport Controls sessions.
+//! - [`choice`]: which player those two follow when several are open:
+//!   Spotify first only while it plays, else whatever plays, else the one
+//!   in use.
 //! - [`fake`]: [`FakeSource`], an in-memory player for tests and for
 //!   building the UI without a real one.
 //! - [`art`]: [`ArtLoader`](art::ArtLoader), album covers fetched, cached
@@ -30,6 +31,9 @@
 //! No terminal code, and no I/O on the caller's thread.
 
 pub mod art;
+// Which player to follow (Linux and Windows have several).
+#[cfg(any(target_os = "linux", windows, test))]
+pub mod choice;
 pub mod fake;
 // The pure parts of the Linux and Windows backends are tested everywhere
 // (elsewhere the rest of each is unused).

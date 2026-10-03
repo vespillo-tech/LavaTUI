@@ -47,6 +47,9 @@ What changed in each version of LavaTUI, in plain words.
 - Lyrics beside the lamp never cut off the line being sung: long lines
   wrap onto more rows, nearby lines are shortened after a whole word, and
   on big screens the panel widens to fit them.
+- Lyrics in Chinese, Japanese, Korean or Thai are no longer cut off.
+  Lines written without spaces now wrap onto more rows like any other,
+  and still light up word by word.
 - When a song has no lyrics, the lyrics widget now says whose shelf is
   bare: "no lyrics on lrclib.net for this song" (just "not on
   lrclib.net" where space is tight). Songs that are instrumental say
@@ -87,6 +90,14 @@ What changed in each version of LavaTUI, in plain words.
 - Performance info (`d`) also shows the lyrics' timing while they play:
   where the song is, the line and word, and whether the word times are
   exact or a guess. Handy for telling us what you see.
+- On Linux and Windows, a paused Spotify no longer takes the music
+  controls away from another app that is playing. LavaTUI follows
+  whatever is playing, Spotify first only while it plays. When you pause,
+  the keys stay with the player you paused.
+- On Windows, after you quit and reopen your music app, LavaTUI again
+  hears about play, pause and skip straight away, instead of up to a
+  second late. Lyrics also keep better time when the app is slow to
+  share a song's details.
 
 ## 1.2.0 — 2026-10-02 — first public release
 

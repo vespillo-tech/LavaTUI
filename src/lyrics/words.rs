@@ -114,7 +114,7 @@ fn tokens(text: &str) -> Vec<Token> {
 
 /// A character of a script written without spaces between words: CJK
 /// ideographs, kana, hangul.
-fn unspaced(c: char) -> bool {
+pub(crate) fn unspaced(c: char) -> bool {
     matches!(c as u32,
         0x3040..=0x30ff     // hiragana, katakana
         | 0x3400..=0x4dbf   // CJK extension A

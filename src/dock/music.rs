@@ -237,7 +237,7 @@ impl DockWidget for Music {
 
     /// `▶ title – artist` while playing, `‖ …` while paused; nothing
     /// without a track.
-    fn chip(&self, model: &Model) -> Option<ChipText> {
+    fn chip<'m>(&self, model: &'m Model) -> Option<ChipText<'m>> {
         let snap = model.music.snapshot.as_ref()?;
         if let Status::Unavailable(reason) = &snap.status {
             return problem_chip(reason, snap.player_name(), glyphs(model));
@@ -247,7 +247,7 @@ impl DockWidget for Music {
             return None;
         }
         Some(ChipText {
-            text: fit(&line_text(snap, glyphs(model)), CHIP_MAX),
+            text: fit(&line_text(snap, glyphs(model)), CHIP_MAX).into(),
             ink: Role::Text,
         })
     }
@@ -255,7 +255,7 @@ impl DockWidget for Music {
 
 /// The chip for a player problem: the next step when it's short, else
 /// where to read it (the music controls' note).
-fn problem_chip(reason: &Unavailable, player: &str, g: &Glyphs) -> Option<ChipText> {
+fn problem_chip(reason: &Unavailable, player: &str, g: &Glyphs) -> Option<ChipText<'static>> {
     let note = g.note;
     let text = match reason {
         Unavailable::Unsupported => return None,
@@ -264,7 +264,7 @@ fn problem_chip(reason: &Unavailable, player: &str, g: &Glyphs) -> Option<ChipTe
         _ => format!("{note}see Shift+A"),
     };
     Some(ChipText {
-        text: fit(&text, CHIP_MAX),
+        text: fit(&text, CHIP_MAX).into(),
         ink: Role::Text,
     })
 }

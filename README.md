@@ -314,9 +314,12 @@ settings, under music & lyrics). Press `o` for a large album cover.
 - **On a Mac:** the Spotify app. The first time, your Mac asks if your
   terminal may control Spotify. Say OK. (If you said no, change it in
   System Settings › Privacy & Security › Automation.)
-- **On Linux:** most music players, Spotify first.
-- **On Windows:** most apps that show up in the Windows media controls,
-  Spotify first.
+- **On Linux:** most music players.
+- **On Windows:** most apps that show up in the Windows media controls.
+
+If more than one player is open, LavaTUI follows the one that's playing.
+Spotify comes first, but only while it plays. When you pause, the keys
+stay with the player you paused.
 
 You can play, pause, skip, seek and change the volume. Some players
 ignore shuffle and repeat. LavaTUI notices, tells you, and stops

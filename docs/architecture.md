@@ -60,7 +60,8 @@ cache and data go where each OS expects them. Only now playing differs:
 | Builds in CI | ✓ | ✓ | ✓ |
 | Tested on real hardware | ✓ | in Docker with a stand-in MPRIS player (`tools/linux/run.sh`); not yet on a desktop | not yet |
 | Now playing via | AppleScript, one long-lived `osascript` | MPRIS on the D-Bus session bus (zbus) | System Media Transport Controls |
-| Players | the Spotify desktop app | any MPRIS player, Spotify first | any app in the media flyout, Spotify first |
+| Players | the Spotify desktop app | any MPRIS player | any app in the media flyout |
+| Which one, when several are open (`media/choice.rs`) | – | Spotify while it plays, else one that plays, else the one in use | same, and the session Windows calls current before an idle Spotify |
 | Play/pause, next/previous, seek | ✓ | ✓ | ✓ |
 | Volume | ✓ | ✓ if the player has it | – (SMTC has no volume) |
 | Shuffle / repeat | through the Web API only (Spotify's AppleScript setters do nothing) | ✓ if the player honours them (Spotify: through your account) | ✓ if the app honours them |

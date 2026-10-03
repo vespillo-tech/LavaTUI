@@ -382,10 +382,13 @@ the layout/visual contract.
                 `detect()` picks a backend: macOS `spotify.rs` (one
                 long-lived `osascript` fed requests on stdin, never
                 launches Spotify, can't shuffle/repeat), Linux `mpris.rs`
-                (any MPRIS player via zbus, Spotify first), Windows
-                `smtc.rs` (system media controls, Spotify first; no
+                (any MPRIS player via zbus), Windows
+                `smtc.rs` (system media controls; no
                 volume/URIs; covers from the thumbnail stream via
-                `art::stash`); `capabilities()` says what each can do (read after
+                `art::stash`; event handlers kept on the session object
+                in use, all or none: `Subscribed`); both pick the player
+                by `choice.rs` (Spotify only while it plays, else whatever
+                plays, else the one in use); `capabilities()` says what each can do (read after
                 every exchange: MPRIS's `ModesCheck` withdraws shuffle/repeat
                 from a player seen to ignore them),
                 `FakeSource` for tests and `--demo` (what was sent is kept
