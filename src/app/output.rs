@@ -1,16 +1,103 @@
 //! Terminal writer and measurements at the actual I/O boundary.
+use ratatui::Terminal;
+use ratatui::backend::{Backend, ClearType, CrosstermBackend, WindowSize};
+use ratatui::buffer::Cell;
 use ratatui::crossterm::{
     queue,
     terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate},
 };
-use ratatui::{Terminal, backend::CrosstermBackend};
+use ratatui::layout::{Position, Size};
 use std::io::{self, Write};
 use std::time::Instant;
 
-pub type AppTerminal = Terminal<CrosstermBackend<Output<io::Stdout>>>;
+pub type AppTerminal = Terminal<AppBackend>;
 
 pub fn new_terminal(measure: bool) -> io::Result<AppTerminal> {
-    Terminal::new(CrosstermBackend::new(Output::new(io::stdout(), measure)))
+    let crossterm = CrosstermBackend::new(Output::new(io::stdout(), measure));
+    Terminal::new(AppBackend(crossterm))
+}
+
+/// crossterm's backend with the window size read from stdout itself:
+/// ratatui asks for it every frame (to follow resizes), and crossterm opens
+/// `/dev/tty` for every answer. Anything else, and wherever stdout can't
+/// say, is crossterm's.
+pub struct AppBackend(CrosstermBackend<Output<io::Stdout>>);
+
+impl AppBackend {
+    pub fn writer_mut(&mut self) -> &mut Output<io::Stdout> {
+        self.0.writer_mut()
+    }
+}
+
+impl Write for AppBackend {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0.write(bytes)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Write::flush(&mut self.0)
+    }
+}
+
+impl Backend for AppBackend {
+    type Error = io::Error;
+
+    fn draw<'a, I>(&mut self, content: I) -> io::Result<()>
+    where
+        I: Iterator<Item = (u16, u16, &'a Cell)>,
+    {
+        self.0.draw(content)
+    }
+    fn hide_cursor(&mut self) -> io::Result<()> {
+        self.0.hide_cursor()
+    }
+    fn show_cursor(&mut self) -> io::Result<()> {
+        self.0.show_cursor()
+    }
+    fn get_cursor_position(&mut self) -> io::Result<Position> {
+        self.0.get_cursor_position()
+    }
+    fn set_cursor_position<P: Into<Position>>(&mut self, at: P) -> io::Result<()> {
+        self.0.set_cursor_position(at)
+    }
+    fn clear(&mut self) -> io::Result<()> {
+        self.0.clear()
+    }
+    fn clear_region(&mut self, clear_type: ClearType) -> io::Result<()> {
+        self.0.clear_region(clear_type)
+    }
+    fn size(&self) -> io::Result<Size> {
+        stdout_size().map_or_else(|| self.0.size(), Ok)
+    }
+    fn window_size(&mut self) -> io::Result<WindowSize> {
+        self.0.window_size()
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        Backend::flush(&mut self.0)
+    }
+}
+
+/// The terminal's size in cells as stdout's own terminal reports it, if
+/// it does.
+#[cfg(unix)]
+fn stdout_size() -> Option<Size> {
+    fd_size(libc::STDOUT_FILENO)
+}
+
+/// The size of the terminal `fd` is (one `ioctl`), if it is one.
+#[cfg(unix)]
+fn fd_size(fd: libc::c_int) -> Option<Size> {
+    // SAFETY: TIOCGWINSZ writes one `winsize` through the pointer, which
+    // points at a live, zeroed one.
+    let mut size: libc::winsize = unsafe { std::mem::zeroed() };
+    let ok = unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, &mut size) } == 0;
+    (ok && size.ws_col > 0 && size.ws_row > 0).then(|| Size::new(size.ws_col, size.ws_row))
+}
+
+/// Windows: crossterm asks the console directly.
+#[cfg(not(unix))]
+fn stdout_size() -> Option<Size> {
+    None
 }
 
 // Legacy Windows consoles mix WinAPI cursor/colour operations with text
@@ -163,9 +250,6 @@ mod fallback_tests {
 #[cfg(test)]
 mod backend_tests {
     use super::*;
-    use ratatui::backend::{Backend, ClearType, WindowSize};
-    use ratatui::buffer::Cell;
-    use ratatui::layout::{Position, Size};
     use ratatui::{TerminalOptions, Viewport, layout::Rect};
 
     /// Batching must preserve every colour change over successive lamp
@@ -232,6 +316,34 @@ mod backend_tests {
                 }
             }
         }
+    }
+
+    /// lava-jop: the size comes from the terminal's own answer, one
+    /// `ioctl` (no `/dev/tty` opened); anything not a terminal says nothing.
+    #[cfg(unix)]
+    #[test]
+    fn the_size_is_read_from_the_terminal_itself() {
+        // SAFETY: plain libc calls on a pty this test opens and closes.
+        unsafe {
+            let master = libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY);
+            assert!(master >= 0, "no pty here");
+            assert_eq!(libc::grantpt(master), 0);
+            assert_eq!(libc::unlockpt(master), 0);
+            let name = std::ffi::CStr::from_ptr(libc::ptsname(master)).to_owned();
+            let tty = libc::open(name.as_ptr(), libc::O_RDWR | libc::O_NOCTTY);
+            assert!(tty >= 0);
+            let mut ws: libc::winsize = std::mem::zeroed();
+            for (cols, rows) in [(123, 45), (80, 24)] {
+                (ws.ws_col, ws.ws_row) = (cols, rows);
+                assert_eq!(libc::ioctl(tty, libc::TIOCSWINSZ, &ws), 0);
+                assert_eq!(fd_size(tty), Some(Size::new(cols, rows)));
+            }
+            libc::close(tty);
+            libc::close(master);
+        }
+        let file = std::fs::File::open(std::env::current_exe().unwrap()).unwrap();
+        use std::os::fd::AsRawFd;
+        assert_eq!(fd_size(file.as_raw_fd()), None);
     }
 
     #[test]
