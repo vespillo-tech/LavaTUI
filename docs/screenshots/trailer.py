@@ -42,6 +42,8 @@ DISSOLVE = 8
 def toml(**sections):
     """capture.py's `;`-separated TOML from {section: {key: value}}."""
     def lit(v):
+        if isinstance(v, dict):
+            return "{ " + ", ".join(f"{k} = {lit(x)}" for k, x in v.items()) + " }"
         return ("true" if v else "false") if isinstance(v, bool) else f'"{v}"' if isinstance(v, str) else str(v)
     return ";".join(f"[{s}];" + ";".join(f"{k}={lit(v)}" for k, v in kv.items()) for s, kv in sections.items())
 
@@ -63,40 +65,80 @@ def scene(style, palette, dock=None, minimal=False, art=None):
 
 # The side panel is 30 columns at 100, whatever it holds, so the lamp is
 # the same in every take until night's `m` lets the walls ease out.
-MUSIC = dict(music="side", lyrics="side", cover="overlay")
-# The next song (Blob Merge: brisk, every word timed) from 0:00, its first
-# line just before the evening starts; A turns the player keys on and off.
-SONG = "4.3:A,4.5:n,4.7:A"
+# The tour (lava-0bl v3). Times are frames (10 a second); keys are sent
+# right after the frame they name, so every take handles them identically.
+ESC, ENTER, RIGHT, COMMA = "\\x1b", "\\r", "\\x1b[C", "\\x2c"
 
-# name: (config, keys, the clock's start)
+
+def keys(*pairs):
+    return ",".join(f"f{f}:{k}" for f, k in pairs)
+
+
+# Looks: eight style steps (all nine styles), two palettes, then the style
+# picker previewing two styles live and cancelling back.
+LOOKS = keys((18, ESC), *((40 + 12 * i, "s") for i in range(8)), (136, "p"), (148, "p"),
+             (160, "S"), (168, "k"), (176, "k"), (184, ESC))
+# The next song (Blob Merge: brisk, every word timed): its first line comes
+# just as the music scene starts.
+SONG = keys((173, "A"), (175, "n"), (177, "A"))
+# The library and the menus, all in the music scene.
+TOUR = keys((250, "A"), (258, "b"), (267, ENTER), (274, "j"), (278, ENTER), (287, ESC), (288, ESC),
+            (291, "s"), (302, "a"), (313, ENTER), (328, ESC), (329, ESC), (330, ESC),
+            (338, "?"), (347, "j"), (351, "j"), (355, "j"), (364, ESC))
+# Settings › look › wax at the top: on. It changes the wax, so every take
+# from here on does it at the same frames.
+TOP_WAX = keys((370, COMMA), (374, ENTER), (378, "jjjj"), (382, RIGHT), (400, ESC), (401, ESC))
+# Clock, timer and music card float out of the panel onto the lava, one
+# at a time; the panel empties at frame 465 (the music card leaves it) and
+# the lamp widens. They land in the user's groups (their anchors are set):
+# clock and timer top right, music card and cover bottom right.
+PANEL = keys((435, "t"), (450, "f"), (465, "a"))
+SIDE = dict(clock="side", pomodoro="side")
+MUSIC = dict(music="side", lyrics="side", cover="overlay")
+GROUPS = dict(
+    clock="side", pomodoro="side", music="side", cover="overlay", text="light",
+    anchor=dict(clock="top-right", pomodoro="top-right", music="bottom-right", cover="bottom-right"),
+)
+
+
+def join(*ks):
+    return ",".join(k for k in ks if k)
+
+
+# name: (config, keys, the clock's start[, welcome])
 TAKES = {
-    "morning": (scene("solid", "lava", dict(clock="side", pomodoro="side")), "2.5: ", "07:30"),
+    "open": (scene("solid", "lava", SIDE), LOOKS, "07:30", True),
     **{
-        f"evening-{d}": (scene("synthwave", "synthwave", MUSIC, art=d), SONG, "19:30")
-        for d in ["big-pixels", "medium-pixels", "small-pixels", "sharp"]
+        f"music-{d}": (scene("synthwave", "synthwave", MUSIC, art=d), SONG, "19:30")
+        for d in ["big-pixels", "medium-pixels", "small-pixels"]
     },
-    # Not lamp only: dropping the panel widens the lamp, and the wax then
-    # re-centres in one frame (the walls ease, the view doesn't).
-    "night": (scene("solid", "abyss", dict(clock="side")), "18:-", "23:30"),
+    "music-sharp": (scene("synthwave", "synthwave", MUSIC, art="sharp"), join(SONG, TOUR, TOP_WAX), "19:30"),
+    # Side panel → groups floating on the lava, held to enjoy.
+    "layout": (scene("topo", "lava", GROUPS), join(TOP_WAX, PANEL), "22:30"),
+    # The same history, then everything off before it shows: the lamp alone.
+    "end": (scene("synthwave", "abyss", GROUPS), join(TOP_WAX, PANEL, keys(
+        (470, "t"), (472, "f"), (474, "a"), (476, "o"))), "23:30"),
 }
 
 # (take, first frame, end frame): the film.
 CUT = [
-    ("morning", 0, 70),
-    ("evening-big-pixels", 70, 95),
-    ("evening-medium-pixels", 95, 103),
-    ("evening-small-pixels", 103, 111),
-    ("evening-sharp", 111, 155),
-    ("night", 155, 225),
+    ("open", 0, 200),
+    ("music-big-pixels", 200, 222),
+    ("music-medium-pixels", 222, 230),
+    ("music-small-pixels", 230, 238),
+    ("music-sharp", 238, 415),
+    ("layout", 415, 540),
+    ("end", 540, 590),
 ]
-# Which parts share a palette (a scene's colours).
-SCENES = [["morning"], [n for n in TAKES if n.startswith("evening")], ["night"]]
+# Film frames that share a palette (the colours on screen then).
+PALETTES = [(0, 136), (136, 148), (148, 200), (200, 415), (415, 540), (540, 590 + DISSOLVE)]
 
 
 def take(name, seed=SEED, frames=None):
-    cfg, keys, clock = TAKES[name]
+    cfg, ks, clock, *welcome = TAKES[name]
     end = frames or max(e for _, _, e in CUT) + DISSOLVE + 5
-    shot = capture.Shot(COLS, ROWS, cfg, keys, f"--seed {seed} --fps {FPS} --demo --frame-clock {clock}", frames=end)
+    shot = capture.Shot(COLS, ROWS, cfg, ks, f"--seed {seed} --fps {FPS} --demo --frame-clock {clock}",
+                        frames=end, welcome=bool(welcome and welcome[0]))
     snaps = []
     capture.run(shot, snaps)
     return snaps
@@ -104,7 +146,9 @@ def take(name, seed=SEED, frames=None):
 
 def record(names):
     with ThreadPoolExecutor(len(names)) as ex:
-        return dict(zip(names, ex.map(take, names)))
+        takes = dict(zip(names, ex.map(take, names)))
+    print("recorded:", {n: len(t) for n, t in takes.items()}, flush=True)
+    return takes
 
 
 def frame(takes, name, k):
@@ -129,12 +173,10 @@ def encode(parts, out):
 
 
 def film(takes):
-    parts = []
-    for names in SCENES:
-        parts.append([frame(takes, n, k) for n, a, b in CUT if n in names for k in range(a, b)])
-    first, (name, _, end) = parts[0][0], CUT[-1]
-    parts[-1] += [Image.blend(frame(takes, name, end + j), first, (j + 1) / (DISSOLVE + 1)) for j in range(DISSOLVE)]
-    return parts
+    frames = [frame(takes, n, k) for n, a, b in CUT for k in range(a, b)]
+    first, (name, _, end) = frames[0], CUT[-1]
+    frames += [Image.blend(frame(takes, name, end + j), first, (j + 1) / (DISSOLVE + 1)) for j in range(DISSOLVE)]
+    return [frames[a:b] for a, b in PALETTES]
 
 
 def check(takes, out_dir):
@@ -152,7 +194,7 @@ def check(takes, out_dir):
 
 def survey(seeds, out):
     """The morning take (no keys), a frame every 2 s for each seed: one row each."""
-    TAKES["plain"] = (TAKES["morning"][0], "", "07:30")
+    TAKES["plain"] = (TAKES["open"][0], "", "07:30")
     with ThreadPoolExecutor(len(seeds)) as ex:
         runs = list(ex.map(lambda s: take("plain", s, 24 * FPS), seeds))
     w, h = COLS * capture.CW // 3, ROWS * capture.CH // 3

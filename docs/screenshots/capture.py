@@ -107,15 +107,22 @@ class Snap:
 
 def run(args, snaps=None):
     """Run `args` in a pty and return its last screen. With `snaps` (a
-    list), also append a `Snap` at the end of every frame."""
+    list), also append a `Snap` at the end of every frame, and keys may be
+    timed by frame: `f42:x` sends x as soon as frame 42 has been drawn, so
+    the app handles it before frame 43 in every run."""
     cfg = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False)
     cfg.write(with_welcome(args.toml, args.welcome).replace(";", "\n"))
     cfg.close()
     argv = [BIN, "--config", cfg.name, "--frames", str(args.frames)] + args.app
-    keys = []
+    keys, frame_keys = [], []
     for k in filter(None, args.keys.split(",")):
         t, s = k.split(":", 1)
-        keys.append((float(t), s.encode().decode("unicode_escape").encode()))
+        data = s.encode().decode("unicode_escape").encode()
+        if t.startswith("f"):
+            frame_keys.append((int(t[1:]), data))
+        else:
+            keys.append((float(t), data))
+    frame_keys.sort(key=lambda k: k[0])
     env = dict(os.environ, TERM="xterm-256color", COLORTERM="truecolor")
     # A plain terminal: nothing from the one capture.py runs in (inside
     # Ghostex / zmx the app would draw its safe symbols).
@@ -163,7 +170,10 @@ def run(args, snaps=None):
                         stream.feed(buf[:j])
                         buf = buf[j:]
                         snaps.append(Snap(screen, time.time()))
-        if el > 60:
+                        while frame_keys and frame_keys[0][0] < len(snaps):
+                            os.write(fd, frame_keys.pop(0)[1])
+        # A minute, or more for long recordings (10 fps loops and films).
+        if el > max(60.0, args.frames / 10 + 15):
             os.kill(pid, 9)
             break
     os.waitpid(pid, 0)
