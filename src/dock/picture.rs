@@ -125,8 +125,7 @@ pub fn draw(
     if area.is_empty() || !theme.shows_images() {
         return;
     }
-    let key = (
-        source.to_owned(),
+    let rest = (
         area.width,
         area.height,
         mode,
@@ -134,9 +133,15 @@ pub fn draw(
         translucent,
     );
     CACHE.with_borrow_mut(|cache| {
-        if cache.key.as_ref() != Some(&key) {
+        // Compared before anything is copied: most frames it's the same.
+        let same = cache
+            .key
+            .as_ref()
+            .is_some_and(|(s, w, h, m, d, t)| s == source && (*w, *h, *m, *d, *t) == rest);
+        if !same {
             cache.cells = cells(art, area.width, area.height, (mode, translucent), theme);
-            cache.key = Some(key);
+            let (w, h, m, d, t) = rest;
+            cache.key = Some((source.to_owned(), w, h, m, d, t));
         }
         let w = usize::from(area.width);
         for (i, &(ch, fg, bg)) in cache.cells.iter().enumerate() {

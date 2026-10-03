@@ -109,6 +109,9 @@ fn stashed_in(stash: &Stash, url: &str) -> Option<Arc<[u8]>> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Art {
     pixels: Vec<Rgb>,
+    /// The average colour, worked out once (drawn behind the picture
+    /// every frame).
+    mean: Rgb,
     /// Up to [`HIRES_PX`]² as PNG, base64: what the kitty and iTerm2
     /// protocols send (and what a sixel picture is made from).
     pub hires: Option<Arc<String>>,
@@ -127,10 +130,7 @@ impl Art {
         let square = image.crop_imm((w - side) / 2, (h - side) / 2, side, side);
         let small = square.thumbnail_exact(ART_PX, ART_PX).to_rgb8();
         let pixels = small.pixels().map(|p| Rgb(p[0], p[1], p[2])).collect();
-        let mut art = Self {
-            pixels,
-            hires: None,
-        };
+        let mut art = Self::from_pixels(pixels);
         if hires {
             let n = side.min(HIRES_PX);
             let sharp = if n == side {
@@ -165,21 +165,17 @@ impl Art {
     /// A flat colour, for tests.
     #[cfg(test)]
     pub fn solid(c: Rgb) -> Self {
-        Self {
-            pixels: vec![c; (ART_PX * ART_PX) as usize],
-            hires: None,
-        }
+        Self::from_pixels(vec![c; (ART_PX * ART_PX) as usize])
     }
 
     /// Pixel (`x`, `y`) of the square source from `f`, for tests.
     #[cfg(test)]
     pub fn from_fn(f: impl Fn(u32, u32) -> Rgb) -> Self {
-        Self {
-            pixels: (0..ART_PX * ART_PX)
+        Self::from_pixels(
+            (0..ART_PX * ART_PX)
                 .map(|i| f(i % ART_PX, i / ART_PX))
                 .collect(),
-            hires: None,
-        }
+        )
     }
 
     /// With a sharp copy (`b64`, standing in for a PNG), for tests.
@@ -189,9 +185,20 @@ impl Art {
         self
     }
 
+    /// `ART_PX`² pixels, row by row, and no sharp copy.
+    fn from_pixels(pixels: Vec<Rgb>) -> Self {
+        let mut art = Self {
+            pixels,
+            mean: Rgb::default(),
+            hires: None,
+        };
+        art.mean = art.scaled(1, 1)[0];
+        art
+    }
+
     /// The cover's average colour.
     pub fn mean(&self) -> Rgb {
-        self.scaled(1, 1)[0]
+        self.mean
     }
 
     /// The cover at `w` × `h` pixels, row by row, each the average of the
@@ -594,6 +601,7 @@ mod tests {
         for (w, h) in [(1, 1), (3, 7), (64, 64), (100, 50)] {
             assert_eq!(art.scaled(w, h).len(), usize::from(w * h));
         }
+        assert_eq!(art.mean(), art.scaled(1, 1)[0], "worked out once");
         let Rgb(r, g, b) = art.mean();
         assert!((127..=128).contains(&r) && g == 0 && (127..=128).contains(&b));
         assert!(Art::decode(b"not an image", false).is_err());

@@ -1032,7 +1032,7 @@ fn windows_spotify_never_matches_a_state_from_before_the_track_changed() {
     assert_eq!(m.music.web_caps, Capabilities::NONE);
     // Once Spotify answers for this track, it is.
     settle(&mut m, t0);
-    assert_eq!(m.playing_uri().as_deref(), Some(PLAYING));
+    assert_eq!(m.playing_uri(), Some(PLAYING));
 }
 
 #[test]
@@ -1959,7 +1959,7 @@ fn the_demo_plays_from_the_browser_and_likes() {
     key(&mut m, t0, P::Like);
     settle(&mut m, t0);
     assert_eq!(m.liked(), Some(true));
-    let uri = m.playing_uri().unwrap();
+    let uri = m.playing_uri().unwrap().to_owned();
     assert!(account.state().liked.contains(&uri));
     key(&mut m, t0, P::Like);
     settle(&mut m, t0);

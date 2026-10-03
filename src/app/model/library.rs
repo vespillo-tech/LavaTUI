@@ -1147,7 +1147,7 @@ impl Model {
             .as_ref()
             .and_then(|s| s.track.as_ref())
             .map(|t| t.id.clone());
-        let uri = self.playing_uri();
+        let uri = self.playing_uri().map(str::to_owned);
         let toasts = self.library.sync(
             self.music_on() || self.spotify_setup_open(),
             self.now,
@@ -1385,18 +1385,18 @@ impl Model {
     /// Windows) what the Web API's matching player says. `None` for local
     /// files, ads, episodes and other players: like and add-to-playlist
     /// say there's nothing to act on.
-    pub(crate) fn playing_uri(&self) -> Option<String> {
+    pub(crate) fn playing_uri(&self) -> Option<&str> {
         let track = self.music.snapshot.as_ref()?.track.as_ref()?;
         if let Some(uri) = &track.uri {
-            return Some(uri.clone());
+            return Some(uri);
         }
         let item = self.web_player()?.item_uri()?;
-        item.starts_with("spotify:track:").then(|| item.to_owned())
+        item.starts_with("spotify:track:").then_some(item)
     }
 
     /// Whether the playing track is liked (for the heart), once known.
     pub fn liked(&self) -> Option<bool> {
-        self.library.liked(&self.playing_uri()?)
+        self.library.liked(self.playing_uri()?)
     }
 
     /// A library key with no Client ID (or music off) says why; one that
@@ -1469,7 +1469,7 @@ impl Model {
         if !self.library_ready(PlayerKey::Like) || !self.logged_in_or_say() {
             return;
         }
-        let Some(uri) = self.playing_uri() else {
+        let Some(uri) = self.playing_uri().map(str::to_owned) else {
             self.toast("nothing to like");
             return;
         };
@@ -1600,7 +1600,7 @@ impl Model {
                 let mut row = playlist_row(p, false);
                 // A quiet mark on the playlists that have the song already.
                 if let Some(uri) = self.playing_uri()
-                    && lib.has(p, &uri) == Some(true)
+                    && lib.has(p, uri) == Some(true)
                 {
                     row.detail = format!("{} {}", self.glyphs().has, row.detail);
                 }
@@ -1865,7 +1865,7 @@ impl Model {
                 let Some(&at) = self.library.editable().get(at) else {
                     return true;
                 };
-                let Some(uri) = self.playing_uri() else {
+                let Some(uri) = self.playing_uri().map(str::to_owned) else {
                     self.toast("nothing playing to add");
                     return true;
                 };
