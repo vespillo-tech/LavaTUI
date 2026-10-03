@@ -986,10 +986,9 @@ mod tests {
         let source = Polled::spawn(Spotify::new(runner.clone()), testing::fast());
         testing::wait_for(&source, "first poll", |s| s.status == Status::Playing);
         drop(source);
-        thread::sleep(MS * 60);
-        let runs = runner.0.lock().unwrap().requests.len();
-        thread::sleep(MS * 100);
-        assert_eq!(runner.0.lock().unwrap().requests.len(), runs);
+        // The worker owns the backend (and its runner): once that's
+        // dropped, nothing runs.
+        testing::released(&runner.0);
     }
 
     /// A real runner with all the time it needs: starting osascript and

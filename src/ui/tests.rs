@@ -512,14 +512,14 @@ fn check_items(l: &Layout, case: &Case, items: &[DockItem]) {
 /// Check every size in `cols × rows` for each case (items built once).
 fn sweep(cols: std::ops::RangeInclusive<u16>, rows: std::ops::RangeInclusive<u16>, cases: &[Case]) {
     let built: Vec<(Case, Vec<DockItem>)> = cases.iter().map(|c| (*c, c.items())).collect();
-    for c in cols {
+    super::render_tests::by_column(cols, |c| {
         for r in rows.clone() {
             for (case, items) in &built {
                 let l = layout(Rect::new(0, 0, c, r), &case.input(items));
                 check(&l, case);
             }
         }
-    }
+    });
 }
 
 /// `base` with the first four places and anchors given (lyrics on when
